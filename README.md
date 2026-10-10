@@ -42,7 +42,6 @@ if you can see those borders. Scissor is **disabled by default**.
 
 ## See it in action
 
-[Demo](https://gofile.io/d/0497e367-c9e8-4831-8618-0a52bc37e277) ·
 [VRS off](https://youtu.be/dfVtQ83cNbM) ·
 [VRS on](https://youtu.be/psoPj8rjUV8) ·
 [VRS + scissor](https://youtu.be/jXkz3hwZiLg)
