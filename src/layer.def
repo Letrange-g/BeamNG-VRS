@@ -1,0 +1,5 @@
+LIBRARY BeamNG_VRS
+EXPORTS
+    vkNegotiateLoaderLayerInterfaceVersion
+    vkGetInstanceProcAddr
+    vkGetDeviceProcAddr

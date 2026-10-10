@@ -1,0 +1,35 @@
+name: Build Windows beta ZIP
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Package version (for example 0.1.0-beta.1)
+        required: true
+        default: 0.1.0-beta.1
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build DLLs, run tests, and package
+        shell: pwsh
+        env:
+          PACKAGE_VERSION: ${{ inputs.version || '0.1.0-beta.1' }}
+        run: ./scripts/Build-Release.ps1 -Version $env:PACKAGE_VERSION
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BeamNG-VRS-windows-x64
+          path: |
+            out/releases/*.zip
+            out/releases/*.sha256
+          if-no-files-found: error

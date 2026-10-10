@@ -1,3 +1,4 @@
+#include "windows_config.hpp"
 // BeamNG VRS M5.7 - opt-in experimental shadow render-pass binding.
 #include "ffr_pattern.hpp"
 #include "beamng_gaze_shared.hpp"
@@ -34,12 +35,12 @@ std::atomic<uint32_t> m814ActiveWidth{5190},m814ActiveHeight{4168};
 // M8.25: suppression is DEBUG-OUTLINE ONLY; VRS never pauses during resize.
 std::atomic<uint64_t> m825LastResizeMs{0};
 uint32_t m825SettingMs(const char* name,uint32_t fallback,uint32_t max){
- char b[24]{};const DWORD len=GetEnvironmentVariableA(name,b,sizeof(b));
+ char b[24]{};const DWORD len=beamng_config::read(name,b,sizeof(b));
  if(!len || len>=sizeof(b))return fallback;
  char* end=nullptr;const unsigned long value=strtoul(b,&end,10);
  return end!=b && !*end && value<=max ? static_cast<uint32_t>(value):fallback;
 }
-uint32_t m825GraceMs(){static const uint32_t ms=m825SettingMs("BEAMNG_VRS_GAZE_GRACE_MS",150,1000);return ms;}
+uint32_t m825GraceMs(){static const uint32_t ms=m825SettingMs("BEAMNG_VRS_GAZE_GRACE_MS",30,1000);return ms;}
 uint32_t m825OutlinePauseMs(){static const uint32_t ms=m825SettingMs("BEAMNG_VRS_OUTLINE_RESIZE_PAUSE_MS",350,2000);return ms;}
 
 
@@ -94,12 +95,12 @@ struct DeviceDispatch {
 std::unordered_map<VkCommandBuffer, VkDevice> commandDevices;
 struct CropState { bool active=false; uint32_t width=0,height=0; VkRect2D renderArea{}; uint32_t subpass=0; };
 std::unordered_map<VkCommandBuffer,CropState> cropStates;
-bool cropEnabled() { char v[8]{}; return GetEnvironmentVariableA("BEAMNG_VRS_SCISSOR_ENABLE",v,sizeof(v)) && strcmp(v,"1")==0; }
+bool cropEnabled() { char v[8]{}; return beamng_config::read("BEAMNG_VRS_SCISSOR_ENABLE",v,sizeof(v)) && strcmp(v,"1")==0; }
 // Read at process startup (restart BeamNG to apply new crop settings).
 // Values are fractions of the eye framebuffer height, not percentages (0.20 = 20%).
 double cropFraction(const char* key, double fallback) {
   char buffer[64] = {};
-  DWORD len = GetEnvironmentVariableA(key, buffer, static_cast<DWORD>(sizeof(buffer)));
+  DWORD len = beamng_config::read(key, buffer, static_cast<DWORD>(sizeof(buffer)));
   if (!len || len >= sizeof(buffer)) return fallback;
   char* end = nullptr;
   const double value = strtod(buffer, &end);
@@ -125,7 +126,7 @@ VkRect2D intersectRect(VkRect2D a,VkRect2D b) {
 // the proven M8.13 boot path until the first actual eye target is identified.
 uint32_t m813Dimension(const char* key, uint32_t fallback) {
  char text[32]{};
- DWORD len=GetEnvironmentVariableA(key,text,sizeof(text));
+ DWORD len=beamng_config::read(key,text,sizeof(text));
  if(!len || len>=sizeof(text))return fallback;
  char* end=nullptr;
  unsigned long v=strtoul(text,&end,10);
@@ -210,7 +211,7 @@ std::unordered_set<VkCommandBuffer> m818MaskedCommands;
 std::atomic<unsigned long long> m818MaskedCount{0},m818NoStencilCount{0},m818NoMeshCount{0};
 std::atomic<unsigned long long> m818StencilPipelineBinds{0};
 bool m818Enabled(){static const bool value=[](){char b[8]{};
- return GetEnvironmentVariableA("BEAMNG_VRS_M818_STENCIL",b,sizeof(b))&&strcmp(b,"1")==0;
+ return beamng_config::read("BEAMNG_VRS_M818_STENCIL",b,sizeof(b))&&strcmp(b,"1")==0;
  }();return value;
 }
 // Geometry is immutable until session recreation, but resources change with resolution.
@@ -352,7 +353,7 @@ struct M821GazeStats {
 };
 M821GazeStats m821GazeStats;
 uint32_t m821UpdateIntervalMs(){static const uint32_t interval=[](){
- char value[16]{};const DWORD n=GetEnvironmentVariableA("BEAMNG_VRS_GAZE_UPDATE_MS",value,sizeof(value));
+ char value[16]{};const DWORD n=beamng_config::read("BEAMNG_VRS_GAZE_UPDATE_MS",value,sizeof(value));
  if(!n || n>=sizeof(value))return 8u; // <= one 90 Hz frame, ~125 Hz polling maximum
  char* end=nullptr;unsigned long requested=strtoul(value,&end,10);
  return (end==value || *end) ? 8u : beamng_gaze_timing::clampInterval(requested);
@@ -363,7 +364,7 @@ void m821RecordUploadAge(uint64_t ageMs){
  auto prior=m821GazeStats.uploadAgeMsMax.load(std::memory_order_relaxed);
  while(prior<ageMs && !m821GazeStats.uploadAgeMsMax.compare_exchange_weak(prior,ageMs,std::memory_order_relaxed)){}
 }
-bool m815AsyncEnabled(){char v[8]{};return GetEnvironmentVariableA("BEAMNG_VRS_M815_ASYNC",v,sizeof(v)) && strcmp(v,"1")==0;}
+bool m815AsyncEnabled(){char v[8]{};return beamng_config::read("BEAMNG_VRS_M815_ASYNC",v,sizeof(v)) && strcmp(v,"1")==0;}
 // Caller holds 'mu'. Polling never waits and never touches an in-use command pool.
 void m815PollLocked(VkDevice device,const DeviceDispatch& dispatch) {
  if(!dispatch.m812hGetFenceStatus)return;
@@ -404,7 +405,7 @@ struct M823LazyFramebuffer {
 std::unordered_map<VkFramebuffer,M823LazyFramebuffer> m823LazyPlans;
 std::mutex m823CreateMutex;
 bool m823LazyEnabled(){static const bool on=[](){char b[8]{};
- return GetEnvironmentVariableA("BEAMNG_VRS_M823_LAZY_FB",b,sizeof(b)) && strcmp(b,"1")==0;}();return on;}
+ return beamng_config::read("BEAMNG_VRS_M823_LAZY_FB",b,sizeof(b)) && strcmp(b,"1")==0;}();return on;}
 struct M823Stats {
  std::atomic<uint64_t> originals{0}, destroyed{0}, eligible{0}, lazyPlans{0};
  std::atomic<uint64_t> eagerVariants{0}, lazyVariants{0}, lazyFailures{0}, shadowSelections{0}, skipped{0};
@@ -423,7 +424,7 @@ std::unordered_map<VkFramebuffer,M812FramebufferPool> m812FramebufferPools;
 // pipeline variants, the experimental binding MUST remain off.
 bool m85UnsafeBindEnabled() {
  char v[8]{};
- return GetEnvironmentVariableA("BEAMNG_VRS_M85_UNSAFE_BIND",v,sizeof(v)) && strcmp(v,"1")==0;
+ return beamng_config::read("BEAMNG_VRS_M85_UNSAFE_BIND",v,sizeof(v)) && strcmp(v,"1")==0;
 }
 std::unordered_set<VkDevice> uploadAttempted;
 PFN_vkGetInstanceProcAddr lastGipa = nullptr;
@@ -434,12 +435,12 @@ VkInstance lastInstance = VK_NULL_HANDLE;
 // the currently detected 5190x4168 Dream Air path; no universal headset claim.
 int m58PatternMode() {
  char v[8] = {};
- if (!GetEnvironmentVariableA("BEAMNG_VRS_M58_PATTERN", v, sizeof(v))) return 0;
+ if (!beamng_config::read("BEAMNG_VRS_M58_PATTERN", v, sizeof(v))) return 0;
  return strcmp(v, "1") == 0 ? 1 : strcmp(v, "2") == 0 ? 2 : 0;
 }
 float m59Radius(const char* name, float fallback) {
  char v[64] = {};
- DWORD n = GetEnvironmentVariableA(name, v, sizeof(v));
+ DWORD n = beamng_config::read(name, v, sizeof(v));
  if (!n || n >= sizeof(v)) return fallback;
  char* end = nullptr;
  float value = strtof(v, &end);
@@ -449,7 +450,7 @@ float m59Radius(const char* name, float fallback) {
 // M8.24: user-friendly per-eye region shape. Default is a true pixel circle.
 beamng_ffr::Shape m824Shape() {
  char value[24]{};
- if(!GetEnvironmentVariableA("BEAMNG_VRS_SHAPE",value,sizeof(value)))
+ if(!beamng_config::read("BEAMNG_VRS_SHAPE",value,sizeof(value)))
   return beamng_ffr::Shape::Circle;
  if(!_stricmp(value,"square"))return beamng_ffr::Shape::Square;
  if(!_stricmp(value,"ellipse"))return beamng_ffr::Shape::Ellipse;
@@ -457,7 +458,7 @@ beamng_ffr::Shape m824Shape() {
 }
 uint8_t m59Rate(const char* name, uint8_t fallback) {
  char v[16] = {};
- if (!GetEnvironmentVariableA(name, v, sizeof(v))) return fallback;
+ if (!beamng_config::read(name, v, sizeof(v))) return fallback;
  if (!strcmp(v, "1x1")) return beamng_ffr::rate(1,1);
  if (!strcmp(v, "2x2")) return beamng_ffr::rate(2,2);
  if (!strcmp(v, "4x4")) return beamng_ffr::rate(4,4);
@@ -480,16 +481,16 @@ beamng_ffr::Pattern m58MakePattern(uint32_t width=0,uint32_t height=0) {
     m59Rate("BEAMNG_VRS_MID_RATE",beamng_ffr::rate(2,2)),
     m59Rate("BEAMNG_VRS_OUTER_RATE",beamng_ffr::rate(4,4)),shape);
 }
-bool m8Enabled() { char v[8] = {}; return GetEnvironmentVariableA("BEAMNG_VRS_M8_EXPERIMENTAL", v, sizeof(v)) && strcmp(v,"1") == 0; }
-bool m57BindEnabled() { char v[8] = {}; return GetEnvironmentVariableA("BEAMNG_VRS_M57_BIND_SHADOW", v, sizeof(v)) && strcmp(v,"1") == 0; }
-bool m55FramebufferEnabled() { char v[8] = {}; return GetEnvironmentVariableA("BEAMNG_VRS_M55_SHADOW_FRAMEBUFFERS", v, sizeof(v)) && strcmp(v,"1") == 0; }
-bool m54ShadowEnabled() { char v[8] = {}; return GetEnvironmentVariableA("BEAMNG_VRS_M54_SHADOW_PASSES", v, sizeof(v)) && strcmp(v,"1") == 0; }
+bool m8Enabled() { char v[8] = {}; return beamng_config::read("BEAMNG_VRS_M8_EXPERIMENTAL", v, sizeof(v)) && strcmp(v,"1") == 0; }
+bool m57BindEnabled() { char v[8] = {}; return beamng_config::read("BEAMNG_VRS_M57_BIND_SHADOW", v, sizeof(v)) && strcmp(v,"1") == 0; }
+bool m55FramebufferEnabled() { char v[8] = {}; return beamng_config::read("BEAMNG_VRS_M55_SHADOW_FRAMEBUFFERS", v, sizeof(v)) && strcmp(v,"1") == 0; }
+bool m54ShadowEnabled() { char v[8] = {}; return beamng_config::read("BEAMNG_VRS_M54_SHADOW_PASSES", v, sizeof(v)) && strcmp(v,"1") == 0; }
 // M8.17: logging is opt-in by severity, with one buffered file handle.
 // 0 = errors/warnings, 1 = lifecycle + periodic stats (default), 2 = full trace.
 int m817LogLevel() {
  static const int level=[]() {
   char v[8]{};
-  const DWORD n=GetEnvironmentVariableA("BEAMNG_VRS_LOG_LEVEL",v,sizeof(v));
+  const DWORD n=beamng_config::read("BEAMNG_VRS_LOG_LEVEL",v,sizeof(v));
   return n && n<sizeof(v) && v[0]=='0' && !v[1] ? 0 :
          n && n<sizeof(v) && v[0]=='2' && !v[1] ? 2 : 1;
  }();
@@ -523,7 +524,7 @@ void log(const char* message) {
  if(!attempted){
   attempted=true;
   char path[MAX_PATH]{};
-  const DWORD n=GetEnvironmentVariableA("TEMP",path,MAX_PATH);
+  const DWORD n=beamng_config::read("TEMP",path,MAX_PATH);
   if(n && n<MAX_PATH && strcat_s(path,"\\BeamNG_VRS_layer.log")==0){
    if(fopen_s(&stream.file,path,"a")==0 && stream.file)
     setvbuf(stream.file,stream.buffer,_IOFBF,sizeof(stream.buffer));
@@ -580,7 +581,7 @@ bool m817Verbose();
 void m74LogEyePass(VkCommandBuffer cmd, const VkRenderPassBeginInfo* info) {
   if (!m817Verbose()) return;
   char mode[16]{};
-  if (!GetEnvironmentVariableA("BEAMNG_VRS_FOVEATION_MODE",mode,sizeof(mode)) || strcmp(mode,"eye")) return;
+  if (!beamng_config::read("BEAMNG_VRS_FOVEATION_MODE",mode,sizeof(mode)) || strcmp(mode,"eye")) return;
   if (!info) return;
   VkDevice device=VK_NULL_HANDLE;
   FramebufferInfo fb{};
@@ -668,7 +669,7 @@ void m74LogEyePass(VkCommandBuffer cmd, const VkRenderPassBeginInfo* info) {
 // An explicit eye selection is required until framebuffer-to-eye ownership is known.
 int m74EyeSelection() {
  char v[16]{};
- if (!GetEnvironmentVariableA("BEAMNG_VRS_EYE_INDEX",v,sizeof(v))) return -1;
+ if (!beamng_config::read("BEAMNG_VRS_EYE_INDEX",v,sizeof(v))) return -1;
  return strcmp(v,"0")==0 ? 0 : strcmp(v,"1")==0 ? 1 : -1;
 }
 bool m74SampleEye(float& u,float& v,uint64_t& age) {
@@ -708,7 +709,7 @@ beamng_ffr::Pattern m74MakeEyeCandidate(float u,float v) {
 void m74LogEyeCandidate() {
  if(!m817Verbose())return;
  char mode[16]{};
- if (!GetEnvironmentVariableA("BEAMNG_VRS_FOVEATION_MODE",mode,sizeof(mode)) || strcmp(mode,"eye")) return;
+ if (!beamng_config::read("BEAMNG_VRS_FOVEATION_MODE",mode,sizeof(mode)) || strcmp(mode,"eye")) return;
  static std::atomic<unsigned> n{0};
  if(n.fetch_add(1,std::memory_order_relaxed)%240) return;
  float u=0,v=0;uint64_t age=0;
@@ -737,7 +738,7 @@ void logM44Pattern() {
 }
 bool diagnosticEnabled() {
  char value[8] = {};
- return GetEnvironmentVariableA("BEAMNG_VRS_M4_DIAGNOSTICS", value, sizeof(value)) && strcmp(value, "1") == 0;
+ return beamng_config::read("BEAMNG_VRS_M4_DIAGNOSTICS", value, sizeof(value)) && strcmp(value, "1") == 0;
 }
 void diagnosticLog(const char* message) {
  if (!diagnosticEnabled()) return;
@@ -749,11 +750,11 @@ void logResult(const char* label, VkResult r) {
 }
 bool uniformVrsEnabled() {
   char value[8] = {};
-  return GetEnvironmentVariableA("BEAMNG_VRS_UNIFORM_4X4", value, sizeof(value)) && strcmp(value, "1") == 0;
+  return beamng_config::read("BEAMNG_VRS_UNIFORM_4X4", value, sizeof(value)) && strcmp(value, "1") == 0;
 }
 bool enabledByEnv() {
   char value[8] = {};
-  return GetEnvironmentVariableA("BEAMNG_VRS_ENABLE_FEATURES", value, sizeof(value)) && strcmp(value, "1") == 0;
+  return beamng_config::read("BEAMNG_VRS_ENABLE_FEATURES", value, sizeof(value)) && strcmp(value, "1") == 0;
 }
 
 const VkBaseInStructure* findChain(const void* p, VkStructureType type) {
@@ -881,7 +882,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyDevice(VkDevice device, const VkA
 // render-pass substitution; all other layer features and gaze preview remain.
 static bool m811BaselineEnabled() {
  char value[8]{};
- return GetEnvironmentVariableA("BEAMNG_VRS_M811_BASELINE",value,sizeof(value)) && strcmp(value,"1")==0;
+ return beamng_config::read("BEAMNG_VRS_M811_BASELINE",value,sizeof(value)) && strcmp(value,"1")==0;
 }
 static void m811ReportMode() {
  static std::once_flag once;
@@ -893,12 +894,12 @@ static void m811ReportMode() {
 }
 static bool m89StaticEnabled() {
  char value[8]{};
- return GetEnvironmentVariableA("BEAMNG_VRS_M89_STATIC_TEST",value,sizeof(value)) && strcmp(value,"1")==0;
+ return beamng_config::read("BEAMNG_VRS_M89_STATIC_TEST",value,sizeof(value)) && strcmp(value,"1")==0;
 }
 // M8.12h: optional layer-owned completion markers, submitted AFTER the app's work
 // on the same queue. No VRS image copies, rotation, or slot retirement yet.
 namespace {
-bool m812hEnabled(){char v[8]{};return GetEnvironmentVariableA("BEAMNG_VRS_M812H_FENCE_TEST",v,sizeof(v)) && strcmp(v,"1")==0;}
+bool m812hEnabled(){char v[8]{};return beamng_config::read("BEAMNG_VRS_M812H_FENCE_TEST",v,sizeof(v)) && strcmp(v,"1")==0;}
 void m812hLog(const char* action, uint64_t serial, VkResult result, size_t pending){
  static std::atomic<unsigned> n{0};if(n.fetch_add(1)>=100)return;
  char b[240]{};sprintf_s(b,"M8.12h FENCE action=%s serial=%llu result=%d pending=%llu GPU_UPDATE=DISABLED",action,
@@ -954,7 +955,7 @@ void m812gReport(const char* api, VkQueue queue, uint32_t count, uint64_t comman
 // Submission fences own transfer command pools and staging slots until complete.
 // Multiple graphics queues use the conservative M8.14a device-idle fallback.
 namespace {
-bool m812liveEnabled(){char v[8]{};return GetEnvironmentVariableA("BEAMNG_VRS_M812_LIVE_GAZE",v,sizeof(v)) && strcmp(v,"1")==0;}
+bool m812liveEnabled(){char v[8]{};return beamng_config::read("BEAMNG_VRS_M812_LIVE_GAZE",v,sizeof(v)) && strcmp(v,"1")==0;}
 void m812liveBeforeSubmit(VkQueue queue){
  auto reportExit=[](const char* reason){
   static std::mutex logMu;
@@ -1552,11 +1553,11 @@ extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice
 // integration is implemented. Does not attach any image by itself.
 static bool attachmentCombinerOptIn() {
   char value[8] = {};
-  return GetEnvironmentVariableA("BEAMNG_VRS_ATTACHMENT_PIPELINES", value, sizeof(value)) && strcmp(value, "1") == 0;
+  return beamng_config::read("BEAMNG_VRS_ATTACHMENT_PIPELINES", value, sizeof(value)) && strcmp(value, "1") == 0;
 }
 static bool gpuUploadOptIn() {
   char value[8] = {};
-  return GetEnvironmentVariableA("BEAMNG_VRS_UPLOAD_TEST", value, sizeof(value)) && strcmp(value, "1") == 0;
+  return beamng_config::read("BEAMNG_VRS_UPLOAD_TEST", value, sizeof(value)) && strcmp(value, "1") == 0;
 }
 static void recordGraphicsQueue(VkDevice device, VkQueue queue, uint32_t family, uint32_t index) {
   if (!queue) { log("M5.2 queue hook returned null queue"); return; }
@@ -2660,7 +2661,7 @@ static bool m57SelectShadow(VkCommandBuffer cmd, const VkRenderPassBeginInfo* in
  // This override is deliberately named UNSAFE; it is not a functioning VRS mode.
  // M8.9 static experiment is explicitly opt-in; legacy unsafe flag remains supported.
  char m89Flag[8]{};
- const bool m89Static = GetEnvironmentVariableA("BEAMNG_VRS_M89_STATIC_TEST",m89Flag,sizeof(m89Flag)) && strcmp(m89Flag,"1")==0;
+ const bool m89Static = beamng_config::read("BEAMNG_VRS_M89_STATIC_TEST",m89Flag,sizeof(m89Flag)) && strcmp(m89Flag,"1")==0;
  if (m8Enabled() && !m85UnsafeBindEnabled() && !m89Static) return false;
  if (!(m57BindEnabled() || m8Enabled()) || !info || info->pNext ||
      !(m54ShadowEnabled() || m8Enabled()) || !(m55FramebufferEnabled() || m8Enabled())) return false;
@@ -3224,7 +3225,7 @@ M825EffectiveGaze m825EffectiveGaze(int eye){
 // in-flight transfer fence; the queue interceptor handles the GPU copies.
 void m84PrepareEyePatterns() {
  char flag[8]{};
- if(!GetEnvironmentVariableA("BEAMNG_VRS_M84_CPU_GAZE",flag,sizeof(flag)) || strcmp(flag,"1"))return;
+ if(!beamng_config::read("BEAMNG_VRS_M84_CPU_GAZE",flag,sizeof(flag)) || strcmp(flag,"1"))return;
  static std::atomic<uint64_t> lastTick{0};
  static std::array<std::atomic<LONG>,2> lastStagedSequence{};
  const uint64_t now=GetTickCount64();
@@ -3313,7 +3314,7 @@ void m84PrepareEyePatterns() {
 // immediately before the classified render pass ends. Intended only for single-subpass
 // color passes; a later compositor may overwrite it.
 void m81StartOutline(VkCommandBuffer cmd, const VkRenderPassBeginInfo* info) {
- const bool enabled = [] { char b[8]{};return GetEnvironmentVariableA("BEAMNG_VRS_DEBUG_OUTLINE",b,sizeof(b)) && strcmp(b,"1")==0; }();
+ const bool enabled = [] { char b[8]{};return beamng_config::read("BEAMNG_VRS_DEBUG_OUTLINE",b,sizeof(b)) && strcmp(b,"1")==0; }();
  std::lock_guard<std::mutex> guard(mu);
  m81OutlinePasses.erase(cmd);
  if(!enabled || !info || info->renderArea.extent.width==0) return;
@@ -3360,7 +3361,7 @@ void m81DrawOutline(VkCommandBuffer cmd, const DeviceDispatch& d) {
  // PREVIEW mode is intentionally separate from real VRS binding.
  // Never claim the gaze-following preview corresponds to a GPU rate image.
  char preview[8]{};
- const bool gazePreview=GetEnvironmentVariableA("BEAMNG_VRS_M82_GAZE_PREVIEW",preview,sizeof(preview))
+ const bool gazePreview=beamng_config::read("BEAMNG_VRS_M82_GAZE_PREVIEW",preview,sizeof(preview))
                        && strcmp(preview,"1")==0;
  // Live VRS now uploads gaze-following rate images; the preview boundary is useful.
  float centerU=.5f,centerV=.5f;

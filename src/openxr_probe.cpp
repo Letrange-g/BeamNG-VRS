@@ -1,3 +1,4 @@
+#include "windows_config.hpp"
 // M7.2b: opt-in OpenXR gaze action and pose sampling.
 // Vulkan VRS/scissor remain unchanged; samples are diagnostic only.
 #include <windows.h>
@@ -102,7 +103,7 @@ std::unordered_map<XrSession,M818SessionGeometry> m818Sessions;
 HANDLE m818Mapping=nullptr;
 beamng_visibility_mesh::Data* m818Shared=nullptr;
 bool m818Enabled() { char v[8]{};
- return GetEnvironmentVariableA("BEAMNG_VRS_M818_STENCIL",v,sizeof(v)) && strcmp(v,"1")==0;
+ return beamng_config::read("BEAMNG_VRS_M818_STENCIL",v,sizeof(v)) && strcmp(v,"1")==0;
 }
 bool m819EnsureShared(){
  if(m818Shared)return true;
@@ -258,7 +259,7 @@ void publishGaze(const XrSpaceLocation& loc, XrTime predictedTime) {
 int m817LogLevel() {
  static const int level=[](){
   char v[8]{};
-  const DWORD n=GetEnvironmentVariableA("BEAMNG_VRS_LOG_LEVEL",v,sizeof(v));
+  const DWORD n=beamng_config::read("BEAMNG_VRS_LOG_LEVEL",v,sizeof(v));
   return n && n<sizeof(v) && v[0]=='0' && !v[1] ? 0 :
          n && n<sizeof(v) && v[0]=='2' && !v[1] ? 2 : 1;
  }();
@@ -289,7 +290,7 @@ void logLine(const char* msg) {
  if(!attempted){
   attempted=true;
   char dir[MAX_PATH]{};
-  const DWORD n=GetEnvironmentVariableA("TEMP",dir,MAX_PATH);
+  const DWORD n=beamng_config::read("TEMP",dir,MAX_PATH);
   if(n && n<MAX_PATH && strcat_s(dir,"\\BeamNG_VRS_eye_probe.log")==0){
    if(fopen_s(&stream.file,dir,"a")==0 && stream.file)
     setvbuf(stream.file,stream.buffer,_IOFBF,sizeof(stream.buffer));
@@ -301,7 +302,7 @@ void logLine(const char* msg) {
 }
 
 void logResult(const char* what,XrResult r){char s[256]{};sprintf_s(s,sizeof(s),"%s result=%d",what,(int)r);logLine(s);}
-bool enabled(const char* name){char s[16]{};return GetEnvironmentVariableA(name,s,sizeof(s)) && strcmp(s,"1")==0;}
+bool enabled(const char* name){char s[16]{};return beamng_config::read(name,s,sizeof(s)) && strcmp(s,"1")==0;}
 }
 // M7.4e: read-only OpenXR stereo projection diagnostics.
 extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateSwapchain(XrSession session,const XrSwapchainCreateInfo* ci,XrSwapchain* out){

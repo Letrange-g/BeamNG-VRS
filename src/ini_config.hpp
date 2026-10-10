@@ -1,0 +1,131 @@
+#pragma once
+
+#include <algorithm>
+#include <cmath>
+#include <istream>
+#include <map>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+
+// Portable parser, shared by the two layers. No process environment is modified.
+namespace beamng_config {
+using Values = std::map<std::string, std::string>;
+
+inline std::string trim(std::string text) {
+ const auto first = text.find_first_not_of(" \t\r\n");
+ if(first == std::string::npos) return {};
+ return text.substr(first, text.find_last_not_of(" \t\r\n") - first + 1);
+}
+inline std::string lower(std::string text) {
+ for(char& c : text) if(c >= 'A' && c <= 'Z') c += 'a' - 'A';
+ return text;
+}
+inline void number(const std::string& value, double low, double high, bool integer = false) {
+ std::istringstream input(value);
+ input.imbue(std::locale::classic());
+ double parsed = 0;
+ if(!(input >> parsed) || input.peek() != std::char_traits<char>::eof() ||
+    !std::isfinite(parsed) || parsed < low || parsed > high ||
+    (integer && value.find_first_not_of("0123456789") != std::string::npos))
+  throw std::runtime_error("value is outside the allowed range");
+}
+inline std::string boolean(std::string value) {
+ value = lower(value);
+ if(value == "1" || value == "true") return "1";
+ if(value == "0" || value == "false") return "0";
+ throw std::runtime_error("expected 0, 1, false or true");
+}
+inline std::string choice(std::string value, std::initializer_list<std::string_view> choices) {
+ value = lower(value);
+ if(std::find(choices.begin(), choices.end(), value) == choices.end())
+  throw std::runtime_error("unsupported setting value");
+ return value;
+}
+
+inline void activation(Values& out, bool enabled) {
+ const std::string value = enabled ? "1" : "0";
+  // These gates together select the existing per-eye, compatible-pipeline path.
+  for(const char* name : {"BEAMNG_VRS_ENABLE_FEATURES", "BEAMNG_VRS_ATTACHMENT_PIPELINES",
+       "BEAMNG_VRS_UPLOAD_TEST", "BEAMNG_VRS_M8_EXPERIMENTAL", "BEAMNG_VRS_M89_STATIC_TEST",
+       "BEAMNG_VRS_M812_LIVE_GAZE", "BEAMNG_VRS_M84_CPU_GAZE", "BEAMNG_VRS_M815_ASYNC", "BEAMNG_EYE_SAMPLE",
+       "BEAMNG_EYE_FORCE_EXTENSION"}) out[name] = value;
+}
+inline Values defaults() {
+ Values out;
+ activation(out, true);
+ out["BEAMNG_VRS_SHAPE"] = "circle";
+ out["BEAMNG_VRS_FOVEATION_MODE"] = "eye";
+ out["BEAMNG_VRS_CENTER_RADIUS"] = "0.25";
+ out["BEAMNG_VRS_MID_RADIUS"] = "0.60";
+ out["BEAMNG_VRS_MID_RATE"] = "2x2";
+ out["BEAMNG_VRS_OUTER_RATE"] = "4x4";
+ out["BEAMNG_VRS_GAZE_UPDATE_MS"] = "8";
+ out["BEAMNG_VRS_GAZE_GRACE_MS"] = "30";
+ out["BEAMNG_VRS_M823_LAZY_FB"] = "1";
+ out["BEAMNG_VRS_DEBUG_OUTLINE"] = "0";
+ out["BEAMNG_VRS_OUTLINE_RESIZE_PAUSE_MS"] = "350";
+ out["BEAMNG_VRS_SCISSOR_ENABLE"] = "0";
+ out["BEAMNG_VRS_SCISSOR_TOP"] = "0.20";
+ out["BEAMNG_VRS_SCISSOR_BOTTOM"] = "0.20";
+ out["BEAMNG_VRS_M818_STENCIL"] = "0";
+ out["BEAMNG_VRS_LOG_LEVEL"] = "1";
+ return out;
+}
+inline void setting(Values& out, const std::string& section, const std::string& key, std::string value) {
+ const std::string id = section + "." + key;
+ if(id == "foveation.shape") out["BEAMNG_VRS_SHAPE"] = choice(value, {"circle", "square", "ellipse"});
+ else if(id == "foveation.size1x1" || id == "foveation.size2x2") {
+  number(value, 0, 1);
+  out[id == "foveation.size1x1" ? "BEAMNG_VRS_CENTER_RADIUS" : "BEAMNG_VRS_MID_RADIUS"] = value;
+ } else if(id == "tracking.gazerefreshms" || id == "tracking.graceperiodms") {
+  number(value, id == "tracking.gazerefreshms" ? 2 : 0, id == "tracking.gazerefreshms" ? 50 : 1000, true);
+  out[id == "tracking.gazerefreshms" ? "BEAMNG_VRS_GAZE_UPDATE_MS" : "BEAMNG_VRS_GAZE_GRACE_MS"] = value;
+ } else if(id == "debug.drawoutline" || id == "scissor.enabled")
+  out[id == "debug.drawoutline" ? "BEAMNG_VRS_DEBUG_OUTLINE" : "BEAMNG_VRS_SCISSOR_ENABLE"] = boolean(value);
+ else if(id == "scissor.top" || id == "scissor.bottom") {
+  number(value, 0, 0.49);
+  out[id == "scissor.top" ? "BEAMNG_VRS_SCISSOR_TOP" : "BEAMNG_VRS_SCISSOR_BOTTOM"] = value;
+ } else throw std::runtime_error("unknown section or setting");
+}
+
+inline Values parse(std::istream& input) {
+ Values out = defaults(), seen;
+ std::string line, section;
+ size_t lineNumber = 0;
+ while(std::getline(input, line)) {
+  ++lineNumber;
+  if(lineNumber == 1 && line.starts_with("\xEF\xBB\xBF")) line.erase(0, 3);
+  line = trim(line);
+  if(line.empty() || line[0] == ';' || line[0] == '#') continue;
+  try {
+   if(line[0] == '[') {
+    if(line.back() != ']') throw std::runtime_error("invalid section header");
+    section = lower(trim(line.substr(1, line.size() - 2)));
+    if(section != "foveation" && section != "debug" && section != "scissor" && section != "tracking")
+     throw std::runtime_error("unknown section");
+    continue;
+   }
+   const auto equals = line.find('=');
+   if(equals == std::string::npos) throw std::runtime_error("expected key=value");
+   const auto key = lower(trim(line.substr(0, equals)));
+   const auto value = trim(line.substr(equals + 1));
+   if(!seen.emplace(section + "." + key, value).second) throw std::runtime_error("duplicate setting");
+   setting(out, section, key, value);
+  } catch(const std::runtime_error& error) {
+   throw std::runtime_error("INI line " + std::to_string(lineNumber) + ": " + error.what());
+  }
+ }
+ if(input.bad()) throw std::runtime_error("could not read INI file");
+ if(seen.empty()) throw std::runtime_error("INI contains no settings");
+ const auto center = out.find("BEAMNG_VRS_CENTER_RADIUS"), middle = out.find("BEAMNG_VRS_MID_RADIUS");
+ if(center != out.end() && middle != out.end()) {
+  std::istringstream c(center->second), m(middle->second);
+  c.imbue(std::locale::classic()); m.imbue(std::locale::classic());
+  double cv = 0, mv = 0; c >> cv; m >> mv;
+  if(cv > mv) throw std::runtime_error("Size1x1 must not exceed Size2x2");
+ }
+ return out;
+}
+} // namespace beamng_config

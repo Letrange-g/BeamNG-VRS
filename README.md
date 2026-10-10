@@ -11,7 +11,19 @@ The project supports fixed center foveation without eye tracking, and eye-follow
 
 **Research beta source, not a plug-and-play release.** The latest source snapshot contains M8.26 dual outlines on top of M8.25 gaze grace, M8.24 region shapes, M8.23 lazy framebuffer creation, and M8.21 faster gaze polling. Testing has primarily covered a Pimax Dream Air and NVIDIA RTX 5090. Windows/MSVC builds and compatibility with other headsets/GPUs **are not yet validated from this repository**. Do not assume support for arbitrary games, headsets, Vulkan drivers, or VR runtimes.
 
-The project still uses **environment variables**, not an INI loader. The example launcher and `.ini` editor discussed in development are future work. **No compiled DLLs are included** in this repository.
+The layers read **`BeamNG-VRS.ini`** beside the DLLs. A portable ZIP launcher and a Windows build/package workflow are included. **No compiled DLLs are committed** in this repository. The new packaging path still requires a Windows build and a real BeamNG/headset smoke test before publication.
+
+## Portable installation
+
+1. Download the Windows x64 ZIP from [Releases](https://github.com/Letrange-g/BeamNG-VRS/releases) when a beta is available. Use the binary ZIP, not GitHub's source-code ZIP.
+2. Close BeamNG and extract the entire ZIP into its installation root, beside `Bin64`.
+3. Edit `BeamNG-VRS/BeamNG-VRS.ini` in Notepad if desired.
+4. Start Steam if your installation requires it, then double-click `Launch-BeamNG-VRS.cmd`.
+5. Enable VR in the game as usual. Restart after changing settings.
+
+The launcher validates settings, starts the game in Vulkan mode, and activates both layers for that process. The ZIP is for Windows x64 and remains an experimental beta; see the requirements below before using it.
+
+The ZIP keeps its DLLs and settings inside `BeamNG-VRS/`; it does not replace original game files or register layers globally. Launch BeamNG normally to stop using the layers. To uninstall, close the game and remove that folder and the launch shortcut. Back up the INI before extracting an update.
 
 ## Build
 
@@ -19,23 +31,30 @@ See [docs/BUILDING.md](docs/BUILDING.md) for required SDKs, CMake configuration 
 
 ## Configuration
 
-See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for key environment variables and safer defaults. Common controls include:
+See [docs/CONFIGURATION.md](docs/CONFIGURATION.md). The user-facing controls are:
 
-```powershell
-$env:BEAMNG_VRS_SHAPE = "circle"
-$env:BEAMNG_VRS_CENTER_RADIUS = "0.25"  # diameter, despite legacy name
-$env:BEAMNG_VRS_MID_RADIUS = "0.60"     # diameter, despite legacy name
-$env:BEAMNG_VRS_MID_RATE = "2x2"
-$env:BEAMNG_VRS_OUTER_RATE = "4x4"
-$env:BEAMNG_VRS_GAZE_UPDATE_MS = "8"
-$env:BEAMNG_VRS_GAZE_GRACE_MS = "0"
-$env:BEAMNG_VRS_M823_LAZY_FB = "1"
-$env:BEAMNG_VRS_DEBUG_OUTLINE = "0"
-$env:BEAMNG_VRS_M818_STENCIL = "0"
-$env:BEAMNG_VRS_LOG_LEVEL = "1"
+![Illustration of VRS region sizes, debug outlines, scissor cropping and gaze timing](docs/images/vrs-settings.png)
+
+```ini
+[Foveation]
+Size1x1=0.25
+Size2x2=0.60
+Shape=circle
+
+[Debug]
+DrawOutline=false
+
+[Scissor]
+Enabled=false
+Top=0.20
+Bottom=0.20
+
+[Tracking]
+GracePeriodMs=30
+GazeRefreshMs=8
 ```
 
-Restart BeamNG when changing environment settings. Variable names like `CENTER_RADIUS` are retained for compatibility but their behavior changed in M8.24: **0.5 means a diameter equal to half the eye-image height** for circle/square.
+Restart BeamNG after editing. Sizes are diameters or square side lengths relative to eye-image height: **0.5 means half the eye-image height** for circle/square. The public launcher uses the INI settings; existing environment overrides remain supported when loading the layers through developer scripts.
 
 ## Notes and limitations
 
@@ -51,4 +70,4 @@ Restart BeamNG when changing environment settings. Variable names like `CENTER_R
 
 Only curated source, manifests, and portable tests are included. No user logs, executables, graphics captures, API keys or personal settings are committed. See [docs/SECURITY.md](docs/SECURITY.md) before reporting an issue.
 
-**License:** not selected yet. Until a license is chosen, the repository is source-available to its owner but no public reuse license is granted. Decide on a license before making a public release.
+**License:** [MIT](LICENSE).

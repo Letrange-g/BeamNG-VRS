@@ -1,32 +1,27 @@
-# Configuration (environment variables in current implementation)
+# Configuration
 
-Configuration is currently read from the **BeamNG process environment**; there is no INI parser yet. Restart the game for changes.
+The release ZIP puts `BeamNG-VRS.ini` next to both DLLs in the `BeamNG-VRS` folder. Edit it in Notepad and restart BeamNG. The launcher validates it before starting the game. No INI editor application is required.
 
-| Variable | Example | Meaning |
-| --- | --- | --- |
-| `BEAMNG_VRS_SHAPE` | `circle` | `circle`, `square`, or `ellipse`. |
-| `BEAMNG_VRS_CENTER_RADIUS` | `0.25` | Legacy name: **diameter/side length**, from `0.0` to `1.0`. Circle and square are measured relative to eye render **height**. |
-| `BEAMNG_VRS_MID_RADIUS` | `0.60` | Outer diameter/side of the medium-quality zone; same scale. |
-| `BEAMNG_VRS_MID_RATE` | `2x2` | Medium-zone fragment shading rate; also accepts `1x1`, `4x4`. |
-| `BEAMNG_VRS_OUTER_RATE` | `4x4` | Peripheral fragment shading rate. |
-| `BEAMNG_VRS_FOVEATION_MODE` | `eye` | Use eye tracking when available (subject to OpenXR). Without valid tracking, fixed center applies. |
-| `BEAMNG_VRS_GAZE_UPDATE_MS` | `8` | Minimum CPU gaze poll interval in milliseconds. |
-| `BEAMNG_VRS_GAZE_GRACE_MS` | `0` | Hold the last valid gaze when tracking is temporarily unavailable (`0` avoids a perceived freeze). |
-| `BEAMNG_VRS_M823_LAZY_FB` | `1` | Create extra eye framebuffer variants only when needed. |
-| `BEAMNG_VRS_DEBUG_OUTLINE` | `0` | Red 1×1 edge; orange 2×2-to-4×4 edge (only with corresponding rates). |
-| `BEAMNG_VRS_OUTLINE_RESIZE_PAUSE_MS` | `350` | Delay debug border after a resolution change to avoid ghosts. |
-| `BEAMNG_VRS_SCISSOR_ENABLE` | `0` | Experimental cropping; keep off until GPU frame-time impact and visible edges are measured. |
-| `BEAMNG_VRS_M818_STENCIL` | `0` | Experimental hidden-area stencil; not beneficial on tested runtime. |
-| `BEAMNG_VRS_LOG_LEVEL` | `1` | Quiet logging. Level `2` is very verbose and can affect frame pacing. |
+| Section | Setting | Default | Meaning |
+| --- | --- | --- | --- |
+| Foveation | `Size1x1` | `0.25` | Inner full-quality region diameter, relative to eye-image height (0 to 1). |
+| Foveation | `Size2x2` | `0.60` | Outer diameter of the medium-quality region (0 to 1); must be at least `Size1x1`. Outside it, shading uses 4x4. |
+| Foveation | `Shape` | `circle` | `circle`, `square`, or `ellipse`. Square uses side length; ellipse uses eye-width-relative horizontal diameter and eye-height-relative vertical diameter. |
+| Debug | `DrawOutline` | `false` | Draw the red 1x1 boundary and orange 2x2-to-4x4 boundary. |
+| Scissor | `Enabled` | `false` | Experimental top/bottom crop. Test visible edges and frame times before enabling. |
+| Scissor | `Top` | `0.20` | Fraction of eye-image height cropped from the top when scissor is enabled (0 to 0.49). |
+| Scissor | `Bottom` | `0.20` | Fraction cropped from the bottom (0 to 0.49). |
+| Tracking | `GracePeriodMs` | `30` | Hold the last valid gaze for this many milliseconds during temporary tracking loss (0 to 1000). |
+| Tracking | `GazeRefreshMs` | `8` | Minimum CPU gaze polling interval (2 to 50 ms). This does not measure eye-to-display latency. |
 
-## Legacy feature gates
+Use a dot for decimals. Boolean values accept `true`/`false` or `1`/`0`; section/key names and shape values are case-insensitive. Put `;` or `#` comments on their own lines. Duplicate keys, unknown settings, empty files and invalid values are rejected. Omitted settings use the defaults above. Each layer loads the file once when first needed; editing a running game's file does not change its cached settings.
 
-This repository retains low-level opt-in flags from earlier milestones, such as `BEAMNG_VRS_M8_EXPERIMENTAL`, `BEAMNG_VRS_M812_LIVE_GAZE`, `BEAMNG_VRS_M815_ASYNC`, and `BEAMNG_VRS_M89_STATIC_TEST`. They are **not yet replaced by a single user-facing enable switch**. Advanced testers should preserve the known-good settings from their own working build while validating each change. A starter/launcher with safe consolidated defaults is planned.
+The launcher activates the existing per-eye VRS pipeline and eye sampling automatically. It keeps lazy framebuffer creation and asynchronous updates enabled, stencil disabled, quiet logging, and a 350 ms debug-outline pause after resolution changes. Legacy feature gates are internal details; users do not need to configure them. Eye-following foveation falls back to fixed center when valid gaze is unavailable after the grace period.
 
-## Region size example
+With `Size1x1=0.25`, `Size2x2=0.60`, and `Shape=circle`, the full-quality circle's diameter is 25% of each eye render height. The 2x2 region extends to 60%; 4x4 applies outside it. Sizes are not radii and do not resize the eye render targets. GPU savings depend on shaders and GPU bottlenecks; no measured FPS increase is claimed.
 
-With `CENTER_RADIUS=0.25`, `MID_RADIUS=0.60`, and `SHAPE=circle`, the central 1×1 circle has a diameter equal to 25% of each eye render **height**. The 2×2 ring extends to a circle 60% of that height; outside the ring the setting `OUTER_RATE=4x4` applies. Both eye regions start at the center on headsets without eye tracking.
+## Existing developer launch scripts
 
-## What users should not expect
+Existing `BEAMNG_VRS_*` and `BEAMNG_EYE_*` process environment variables continue to override corresponding INI values. The public launcher clears these project-specific settings only in the child process, so its INI is authoritative and the parent shell remains unchanged. The old `BEAMNG_VRS_CENTER_RADIUS` and `BEAMNG_VRS_MID_RADIUS` variables map to `Size1x1` and `Size2x2`; their names remain for compatibility, while their values represent diameters.
 
-These settings alter **fragment shader invocation rates**; they do not resize render targets or automatically reduce CPU draw calls. GPU savings depend on the game shaders and GPU bottlenecks. No benchmark-derived FPS increase is claimed.
+For custom layer-loading setups, the DLLs read `BeamNG-VRS.ini` beside their own modules. `BEAMNG_VRS_CONFIG` can select a different absolute file path, including Unicode paths. Without a file, the old environment-only behavior is retained. Invalid files disable the INI activation gates and emit a debugger diagnostic; existing environment overrides still take precedence. The packaged launcher instead rejects the file before launch and displays the parser error.

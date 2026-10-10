@@ -1,0 +1,48 @@
+BeamNG-VRS - experimental Windows x64 beta
+
+INSTALL
+1. Close BeamNG.
+2. Extract this entire ZIP into the BeamNG installation root (beside Bin64).
+   Keep the BeamNG-VRS folder and Launch-BeamNG-VRS.cmd together.
+3. Edit BeamNG-VRS/BeamNG-VRS.ini in Notepad if desired.
+4. Start Launch-BeamNG-VRS.cmd. It launches BeamNG in Vulkan mode.
+5. Enable VR in BeamNG as usual. Restart the game after every settings change.
+
+SETTINGS
+Open BeamNG-VRS/VRS-SETTINGS.png for a visual explanation.
+Size1x1=0.25 sets the inner full-quality region's diameter to 25% of eye height.
+Size2x2=0.60 sets the medium-quality region's outer diameter to 60%.
+Size2x2 must be at least Size1x1. Larger sizes preserve more detail.
+Shape can be circle, square or ellipse. Square uses side length instead of diameter.
+DrawOutline=true shows region borders. Leave it false for gameplay.
+Under [Scissor], Enabled=true activates experimental cropping. Top and Bottom
+are fractions of eye-image height: 0.20 crops 20% from that edge (range 0-0.49).
+Leave scissor disabled unless you have tested visible edges and performance.
+GracePeriodMs=30 holds the last valid gaze briefly; 0 disables that grace.
+GazeRefreshMs=8 sets the CPU gaze polling interval. It is not display latency.
+Valid eye tracking follows gaze; unavailable tracking uses fixed center.
+Use a dot in decimal numbers. Comments must be on separate lines.
+The launcher reports malformed settings and refuses to start the game.
+Direct layer loading disables activation for invalid INI files and reports
+the error to a debugger. The public launcher clears old project settings in
+the child process so the INI applies consistently; developer scripts that load
+the layers directly can still use environment overrides.
+
+REQUIREMENTS AND LIMITATIONS
+Windows x64, BeamNG in Vulkan VR mode, an OpenXR runtime, and a GPU/driver
+supporting attachment fragment shading rate. No universal headset support or
+FPS gain is promised. Test builds can cause crashes or rendering artifacts.
+No administrator rights, registry registration or original game-file edits.
+The game may require its normal Steam session. Start Steam first if needed.
+
+UNINSTALL / UPDATE
+Launch BeamNG normally to stop using these layers. To uninstall, close the
+game, then delete Launch-BeamNG-VRS.cmd and the BeamNG-VRS folder.
+Back up your INI before extracting an update: extraction can overwrite it.
+
+TROUBLESHOOTING
+Extract into the game installation folder, not its user-data folder.
+For an unusual layout, run BeamNG-VRS/Launch-BeamNG-VRS.ps1 with
+-GameExecutable "C:\path\to\Bin64\BeamNG.drive.x64.exe".
+Logs are in the Windows temporary folder; review/redact them before sharing.
+This package is unsigned. Build information and SHA256SUMS.txt are included.
