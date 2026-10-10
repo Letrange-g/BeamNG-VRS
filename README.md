@@ -48,6 +48,12 @@ logs; other choices are `errors`, `info` (default), and `debug`.
 
 ## See it in action
 
+![BeamNG VR with VRS quality outlines and black scissor borders](docs/images/vrs-scissor-showcase.png)
+
+**VRS + scissor in game:** red outlines the full-quality region; orange marks
+the outer 2x2 boundary. Black borders show the scissor crop. Turn debug outlines
+off for gameplay.
+
 [VRS off](https://youtu.be/dfVtQ83cNbM) ·
 [VRS on](https://youtu.be/psoPj8rjUV8) ·
 [VRS + scissor](https://youtu.be/jXkz3hwZiLg)
