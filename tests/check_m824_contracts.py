@@ -9,7 +9,8 @@ assert 'BEAMNG_VRS_SHAPE' in s and 'M8.24 SHAPE shape=' in s
 assert 'm824Shape());' in s
 assert 'beamng_ffr::inside(u,v,centerU,centerV,state.width,state.height,size,shape)' in s
 assert 'const bool centeredFallback=decision.phase==beamng_gaze_hold::Phase::Center;' in s
-assert 'if(lastStagedSequence[eye].load(std::memory_order_relaxed)==0)continue;' in s
+assert 'lastStagedSequence[eye].load(std::memory_order_relaxed)==0 &&' in s
+assert 'lastStagedGeneration[eye]' in s, 'Fallback must refresh a replaced resource generation'
 assert 'gaze.u=.5f;gaze.v=.5f;gaze.sourceSequence=0;gaze.sourceTickMs=0;' in s
 assert 'if(centeredFallback)' in s and 'M8.24 GAZE_FALLBACK' in s
 assert 'centerU=m825StagedCenters[state.eye].u;' in s and 'centerV=m825StagedCenters[state.eye].v;' in s

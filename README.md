@@ -7,9 +7,11 @@ An **unofficial, experimental** pair of Windows API layers for **BeamNG.drive** 
 
 The project supports fixed center foveation without eye tracking, and eye-following foveation when an OpenXR eye-tracking source is available. Center and middle regions can be **circle**, **square**, or **ellipse** (the default). Ellipse uses width/height-relative diameters; circle uses height-relative diameter and square uses height-relative side length. The debug view can show a red 1×1 boundary and an orange 2×2-to-4×4 boundary.
 
+[Watch the user's foveated VRS demonstration](https://gofile.io/d/0497e367-c9e8-4831-8618-0a52bc37e277) (video hosted on GoFile).
+
 ## Status
 
-**Experimental beta.** The latest source snapshot contains M8.26 dual outlines on top of M8.25 gaze grace, M8.24 region shapes, M8.23 lazy framebuffer creation, and M8.21 faster gaze polling. Earlier rendering tests primarily covered a Pimax Dream Air and NVIDIA RTX 5090. The Windows/MSVC build and automated configuration, DLL loading, and launcher checks pass in GitHub Actions. The new INI/launcher package still needs testing in BeamNG with the target GPU/headset. Do not assume support for arbitrary games, headsets, Vulkan drivers, or VR runtimes.
+**Experimental beta.** M8.27 reduces CPU pattern-generation and command-hook overhead, skips identical shading-rate uploads, reuses completed upload resources, and tracks gaze projection freshness independently of raw-pose diagnostics. It retains the earlier dual outlines, gaze grace, region shapes and lazy framebuffers. Earlier rendering tests primarily covered a Pimax Dream Air and NVIDIA RTX 5090. Automated checks cover configuration, DLL loading, launcher behavior and mock rendering lifetimes. These changes still need testing in BeamNG with the target GPU/headset; see [performance findings and the comparison procedure](docs/PERFORMANCE.md).
 
 The layers read **`BeamNG-VRS.ini`** beside the DLLs. A portable ZIP launcher and a Windows build/package workflow are included. **No compiled DLLs are committed** in this repository; binary beta packages are distributed through GitHub Releases.
 

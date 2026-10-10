@@ -11,7 +11,8 @@ assert 'M8.15 GPU_GAZE_UPLOADED' in s
 assert 'SYNC=%s pending=%zu cpuUs=%llu' in s
 assert 'if(!async){\n  const VkResult idle=api.deviceWaitIdle(device);' in s
 assert 'if(async){\n   // The fence will release this pool' in s
-pos=s.index('extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkQueueSubmit(VkQueue q,uint32_t count')
-block=s[pos:s.index('extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkQueueSubmit2(',pos)]
-assert block.index('std::lock_guard<std::mutex> queueSerial(m814ResourceMutex)') < block.index('m812liveBeforeSubmit(q)') < block.index('VkResult r=next(q,count,infos,fence)')
+for name in ('vkQueueSubmit','vkQueueSubmit2','vkQueueSubmit2KHR'):
+    pos=s.index(f'extern "C" VKAPI_ATTR VkResult VKAPI_CALL {name}(VkQueue q,uint32_t count')
+    block=s[pos:s.index('\n}',pos)]
+    assert block.index('std::lock_guard<std::mutex> queueSerial(m814ResourceMutex)') < block.index('m812liveBeforeSubmit(q)') < block.index('VkResult r=next(q,count,infos,fence)'), name
 print('M8.15 code-contract smoke checks passed')

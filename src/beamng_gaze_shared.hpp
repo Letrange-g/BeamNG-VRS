@@ -22,6 +22,21 @@ struct alignas(8) Data {
 static_assert(sizeof(Data)==88, "Unexpected gaze shared-memory layout");
 }
 
+// M8.27: live VRS reads projection freshness independently of raw-pose
+// diagnostics. Do not extend/reinterpret the legacy 88-byte mapping above.
+namespace beamng_projected_gaze {
+inline constexpr const char* mappingName="Local\\BeamNG_VRS_ProjectedGaze_M827";
+inline constexpr uint32_t magicValue=0x38323747;
+struct alignas(8) Data {
+ volatile LONG sequence;
+ uint32_t magic,processId,eyeValidMask;
+ uint64_t poseTickMs,projectionTickMs;
+ int64_t poseTime,projectionTime;
+ float eyeU[2],eyeV[2];
+};
+static_assert(sizeof(Data)==64,"Unexpected projected-gaze layout");
+}
+
 // M7.5a: separate process-local mapping for OpenXR projection-eye VkImages.
 // Never modify the legacy gaze Data ABI.
 namespace beamng_eye_images {

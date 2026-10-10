@@ -1,11 +1,11 @@
 [CmdletBinding()]
 param(
-    [string]$Version = '0.1.0-beta.5',
+    [string]$Version = '0.1.0-beta.6',
     [string]$BuildDirectory,
     [string]$OutputDirectory
 )
 $ErrorActionPreference = 'Stop'
-if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.]+)?$') { throw 'Use a version such as 0.1.0-beta.5.' }
+if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.]+)?$') { throw 'Use a version such as 0.1.0-beta.6.' }
 $root = Split-Path -Parent $PSScriptRoot
 if (-not $BuildDirectory) { $BuildDirectory = Join-Path $root 'build/windows-release' }
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $root 'out/releases' }
@@ -17,7 +17,7 @@ function Run-Native {
     if ($LASTEXITCODE -ne 0) { throw "$Command failed with exit code $LASTEXITCODE." }
 }
 Run-Native -Command cmake -CommandArguments @('-S', $root, '-B', $BuildDirectory, '-G', 'Visual Studio 17 2022', '-A', 'x64',
-    '-DBEAMNG_FETCH_HEADERS=ON', '-DBUILD_TESTING=ON')
+    '-DBEAMNG_FETCH_HEADERS=ON', '-DBUILD_TESTING=ON', '-DBEAMNG_BUILD_BENCHMARKS=ON')
 Run-Native -Command cmake -CommandArguments @('--build', $BuildDirectory, '--config', 'Release', '--parallel', '2')
 Run-Native -Command ctest -CommandArguments @('--test-dir', $BuildDirectory, '-C', 'Release', '--output-on-failure', '--no-tests=error')
 $release = Join-Path $BuildDirectory 'Release'

@@ -3,9 +3,11 @@
 #include "ffr_pattern.hpp"
 #include "beamng_gaze_shared.hpp"
 #include "ffr_gpu_image.hpp"
+#include "ffr_upload_commands.hpp"
 #include "m818_stencil_mask.hpp"
 #include "m821_gaze_timing.hpp"
 #include "m825_gaze_hold.hpp"
+#include "gaze_freshness.hpp"
 #include <windows.h>
 #include <cmath>
 #include <cstdlib>
@@ -23,6 +25,7 @@
 #include <unordered_set>
 #include <map>
 #include <string>
+#include <type_traits>
 
 // Forward declarations required by loader negotiation and dispatch lookup.
 extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance instance, const char* name);
@@ -60,7 +63,6 @@ struct DeviceDispatch {
  PFN_vkDestroyFence m812hDestroyFence = nullptr;
  PFN_vkDestroyDevice destroyDevice;
  VkPhysicalDevice physical = VK_NULL_HANDLE;
- std::vector<uint32_t> graphicsFamilies;
  PFN_vkCreateGraphicsPipelines createPipelines;
  PFN_vkCmdBindPipeline cmdBindPipeline;
  PFN_vkDestroyPipeline destroyPipeline;
@@ -92,10 +94,16 @@ struct DeviceDispatch {
  PFN_vkCmdNextSubpass cmdNextSubpass;
  PFN_vkCmdNextSubpass2 cmdNextSubpass2;
 };
+// Dispatch snapshots are copied on every intercepted command. Keep owning
+// containers out of this structure so copying it never allocates on the heap.
+static_assert(std::is_trivially_copyable_v<DeviceDispatch>);
+std::unordered_map<VkDevice,std::vector<uint32_t>> m827GraphicsFamilies;
 std::unordered_map<VkCommandBuffer, VkDevice> commandDevices;
 struct CropState { bool active=false; uint32_t width=0,height=0; VkRect2D renderArea{}; uint32_t subpass=0; };
 std::unordered_map<VkCommandBuffer,CropState> cropStates;
-bool cropEnabled() { char v[8]{}; return beamng_config::read("BEAMNG_VRS_SCISSOR_ENABLE",v,sizeof(v)) && strcmp(v,"1")==0; }
+bool settingFlag(const char* name){char v[8]{};return beamng_config::read(name,v,sizeof(v)) && strcmp(v,"1")==0;}
+bool cropEnabled(){static const bool on=settingFlag("BEAMNG_VRS_SCISSOR_ENABLE");return on;}
+bool outlineEnabled(){static const bool on=settingFlag("BEAMNG_VRS_DEBUG_OUTLINE");return on;}
 // Read at process startup (restart BeamNG to apply new crop settings).
 // Values are fractions of the eye framebuffer height, not percentages (0.30 = 30%).
 double cropFraction(const char* key, double fallback) {
@@ -343,11 +351,14 @@ struct M815Upload {
  VkCommandPool pool=VK_NULL_HANDLE;
  uint64_t resolution=0;
  std::array<int,2> slots{{-1,-1}};
+ VkCommandBuffer command=VK_NULL_HANDLE;
+ uint32_t family=0;
 };
 std::unordered_map<VkDevice,std::map<uint64_t,M815SlotState>> m815SlotStates;
 std::vector<M815Upload> m815Pending;
+std::unordered_map<VkDevice,beamng_ffr::UploadCommandCache> m827UploadCaches;
 struct M821GazeStats {
- std::atomic<uint64_t> staged{0}, unchanged{0}, stale{0}, noFreeSlot{0};
+ std::atomic<uint64_t> staged{0}, unchanged{0}, identicalPattern{0}, stale{0}, noFreeSlot{0};
  std::atomic<uint64_t> uploadSamples{0}, uploadAgeMsSum{0}, uploadAgeMsMax{0};
  std::atomic<uint64_t> prepareAgeMsSum{0};
 };
@@ -364,7 +375,7 @@ void m821RecordUploadAge(uint64_t ageMs){
  auto prior=m821GazeStats.uploadAgeMsMax.load(std::memory_order_relaxed);
  while(prior<ageMs && !m821GazeStats.uploadAgeMsMax.compare_exchange_weak(prior,ageMs,std::memory_order_relaxed)){}
 }
-bool m815AsyncEnabled(){char v[8]{};return beamng_config::read("BEAMNG_VRS_M815_ASYNC",v,sizeof(v)) && strcmp(v,"1")==0;}
+bool m815AsyncEnabled(){static const bool on=settingFlag("BEAMNG_VRS_M815_ASYNC");return on;}
 // Caller holds 'mu'. Polling never waits and never touches an in-use command pool.
 void m815PollLocked(VkDevice device,const DeviceDispatch& dispatch) {
  if(!dispatch.m812hGetFenceStatus)return;
@@ -378,8 +389,8 @@ void m815PollLocked(VkDevice device,const DeviceDispatch& dispatch) {
    if(gen!=state->second.end())for(int eye=0;eye<2;++eye)
     if(it->slots[eye]>=0)gen->second.busy[eye][it->slots[eye]]=false;
   }
-  dispatch.ffrApi.destroyFence(device,it->fence,nullptr);
-  dispatch.ffrApi.destroyCommandPool(device,it->pool,nullptr);
+  beamng_ffr::UploadCommands completed{it->pool,it->command,it->fence,it->family};
+  m827UploadCaches[device].recycle(dispatch.ffrApi,device,completed,status);
   it=m815Pending.erase(it);
  }
 }
@@ -482,10 +493,10 @@ beamng_ffr::Pattern m58MakePattern(uint32_t width=0,uint32_t height=0) {
     m59Rate("BEAMNG_VRS_MID_RATE",beamng_ffr::rate(2,2)),
     m59Rate("BEAMNG_VRS_OUTER_RATE",beamng_ffr::rate(4,4)),shape);
 }
-bool m8Enabled() { char v[8] = {}; return beamng_config::read("BEAMNG_VRS_M8_EXPERIMENTAL", v, sizeof(v)) && strcmp(v,"1") == 0; }
-bool m57BindEnabled() { char v[8] = {}; return beamng_config::read("BEAMNG_VRS_M57_BIND_SHADOW", v, sizeof(v)) && strcmp(v,"1") == 0; }
-bool m55FramebufferEnabled() { char v[8] = {}; return beamng_config::read("BEAMNG_VRS_M55_SHADOW_FRAMEBUFFERS", v, sizeof(v)) && strcmp(v,"1") == 0; }
-bool m54ShadowEnabled() { char v[8] = {}; return beamng_config::read("BEAMNG_VRS_M54_SHADOW_PASSES", v, sizeof(v)) && strcmp(v,"1") == 0; }
+bool m8Enabled(){static const bool on=settingFlag("BEAMNG_VRS_M8_EXPERIMENTAL");return on;}
+bool m57BindEnabled(){static const bool on=settingFlag("BEAMNG_VRS_M57_BIND_SHADOW");return on;}
+bool m55FramebufferEnabled(){static const bool on=settingFlag("BEAMNG_VRS_M55_SHADOW_FRAMEBUFFERS");return on;}
+bool m54ShadowEnabled(){static const bool on=settingFlag("BEAMNG_VRS_M54_SHADOW_PASSES");return on;}
 // M8.17: logging is opt-in by severity, with one buffered file handle.
 // 0 = errors/warnings, 1 = lifecycle + periodic stats (default), 2 = full trace.
 int m817LogLevel() {
@@ -501,7 +512,7 @@ bool m817Verbose() { return m817LogLevel()>=2; }
 int m817MessageLevel(const char* msg) {
  if(strstr(msg,"FAILED") || strstr(msg,"ERROR") || strstr(msg,"WARNING") ||
     strstr(msg,"FATAL") || strstr(msg,"VkResult=-") || strstr(msg,"result=-")) return 0;
- if(strstr(msg,"M8.17") || strstr(msg,"M8.18") || strstr(msg,"M8.21 ") || strstr(msg,"M8.23 ") || strstr(msg,"M8.24 ") || strstr(msg,"M8.25 ") || strstr(msg,"M8.14 AUTO_RESOLUTION") ||
+ if(strstr(msg,"M8.17") || strstr(msg,"M8.18") || strstr(msg,"M8.21 ") || strstr(msg,"M8.23 ") || strstr(msg,"M8.24 ") || strstr(msg,"M8.25 ") || strstr(msg,"M8.27 ") || strstr(msg,"M8.14 AUTO_RESOLUTION") ||
     strstr(msg,"M8.14 RESOURCE_") || strstr(msg,"M8.16 EYE_FB_STATS") ||
     strstr(msg,"M8.16 UNUSED_VRS") || strstr(msg,"M8.15 STATS") ||
     strstr(msg,"M3 VRS enabled") || strstr(msg,"M4.2 GPU:") ||
@@ -675,10 +686,10 @@ int m74EyeSelection() {
 }
 bool m74SampleEye(float& u,float& v,uint64_t& age) {
  static HANDLE mapping=nullptr;
- static const beamng_gaze::Data* shared=nullptr;
+ static const beamng_projected_gaze::Data* shared=nullptr;
  if (!shared) {
-  if (!mapping) mapping=OpenFileMappingA(FILE_MAP_READ,FALSE,beamng_gaze::mappingName);
-  if (mapping) shared=static_cast<const beamng_gaze::Data*>(MapViewOfFile(mapping,FILE_MAP_READ,0,0,sizeof(beamng_gaze::Data)));
+  if (!mapping) mapping=OpenFileMappingA(FILE_MAP_READ,FALSE,beamng_projected_gaze::mappingName);
+  if (mapping) shared=static_cast<const beamng_projected_gaze::Data*>(MapViewOfFile(mapping,FILE_MAP_READ,0,0,sizeof(beamng_projected_gaze::Data)));
  }
  if (!shared) return false;
  const int eye=m74EyeSelection();
@@ -686,12 +697,12 @@ bool m74SampleEye(float& u,float& v,uint64_t& age) {
  for(int retry=0;retry<3;++retry) {
   LONG a=shared->sequence;MemoryBarrier();if(a&1)continue;
   uint32_t magic=shared->magic, pid=shared->processId, mask=shared->eyeValidMask;
-  uint64_t tick=shared->tickMs;
+  uint64_t tick=shared->projectionTickMs,poseTick=shared->poseTickMs;
   float x=shared->eyeU[eye], y=shared->eyeV[eye];
   MemoryBarrier();LONG b=shared->sequence;
-  if(a!=b || (b&1) || magic!=beamng_gaze::magicValue || pid!=GetCurrentProcessId())continue;
+  if(a!=b || (b&1) || magic!=beamng_projected_gaze::magicValue || pid!=GetCurrentProcessId())continue;
   const uint64_t now=GetTickCount64();
-  if(now<tick || now-tick>100 || !(mask&(1u<<eye)) || !std::isfinite(x) || !std::isfinite(y) || x<0.f || x>1.f || y<0.f || y>1.f) return false;
+  if(!beamng_gaze_freshness::validProjection(now,poseTick,tick,mask,eye,x,y))return false;
   u=x;v=y;age=now-tick;return true;
  }
  return false;
@@ -791,12 +802,18 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyDevice(VkDevice device, const VkA
   {
     std::lock_guard<std::mutex> guard(mu);
     auto it = devices.find(device);
+    auto cache=m827UploadCaches.find(device);
+    if(cache!=m827UploadCaches.end()){
+     if(it!=devices.end())cache->second.destroyIdle(it->second.ffrApi,device);
+     m827UploadCaches.erase(cache);
+    }
     if (it != devices.end()) { m812hDestroy=it->second.m812hDestroyFence; m812hWaitIdle=it->second.ffrApi.deviceWaitIdle; next = it->second.destroyDevice; destroyPass = it->second.destroyRenderPass; destroyFb = it->second.destroyFramebuffer; api = it->second.ffrApi; devices.erase(it); }
     for(auto it=m815Pending.begin();it!=m815Pending.end();) {
       if(it->device==device){m815Orphans.push_back(*it);it=m815Pending.erase(it);}
       else ++it;
     }
     m815SlotStates.erase(device);
+    m827GraphicsFamilies.erase(device);
     m812liveUploaded.erase(device);
     for(auto it=m823LazyPlans.begin();it!=m823LazyPlans.end();){
      if(it->second.device==device)it=m823LazyPlans.erase(it);else ++it;
@@ -882,8 +899,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyDevice(VkDevice device, const VkA
 // M8.11: controlled A/B comparison. BASELINE=1 disables only the shadow
 // render-pass substitution; all other layer features and gaze preview remain.
 static bool m811BaselineEnabled() {
- char value[8]{};
- return beamng_config::read("BEAMNG_VRS_M811_BASELINE",value,sizeof(value)) && strcmp(value,"1")==0;
+ static const bool on=settingFlag("BEAMNG_VRS_M811_BASELINE");return on;
 }
 static void m811ReportMode() {
  static std::once_flag once;
@@ -894,13 +910,12 @@ static void m811ReportMode() {
  });
 }
 static bool m89StaticEnabled() {
- char value[8]{};
- return beamng_config::read("BEAMNG_VRS_M89_STATIC_TEST",value,sizeof(value)) && strcmp(value,"1")==0;
+ static const bool on=settingFlag("BEAMNG_VRS_M89_STATIC_TEST");return on;
 }
 // M8.12h: optional layer-owned completion markers, submitted AFTER the app's work
 // on the same queue. No VRS image copies, rotation, or slot retirement yet.
 namespace {
-bool m812hEnabled(){char v[8]{};return beamng_config::read("BEAMNG_VRS_M812H_FENCE_TEST",v,sizeof(v)) && strcmp(v,"1")==0;}
+bool m812hEnabled(){static const bool on=settingFlag("BEAMNG_VRS_M812H_FENCE_TEST");return on;}
 void m812hLog(const char* action, uint64_t serial, VkResult result, size_t pending){
  static std::atomic<unsigned> n{0};if(n.fetch_add(1)>=100)return;
  char b[240]{};sprintf_s(b,"M8.12h FENCE action=%s serial=%llu result=%d pending=%llu GPU_UPDATE=DISABLED",action,
@@ -956,7 +971,7 @@ void m812gReport(const char* api, VkQueue queue, uint32_t count, uint64_t comman
 // Submission fences own transfer command pools and staging slots until complete.
 // Multiple graphics queues use the conservative M8.14a device-idle fallback.
 namespace {
-bool m812liveEnabled(){char v[8]{};return beamng_config::read("BEAMNG_VRS_M812_LIVE_GAZE",v,sizeof(v)) && strcmp(v,"1")==0;}
+bool m812liveEnabled(){static const bool on=settingFlag("BEAMNG_VRS_M812_LIVE_GAZE");return on;}
 void m812liveBeforeSubmit(VkQueue queue){
  auto reportExit=[](const char* reason){
   static std::mutex logMu;
@@ -1019,15 +1034,11 @@ void m812liveBeforeSubmit(VkQueue queue){
  }
  VkCommandPool pool=VK_NULL_HANDLE;
  VkFence fence=VK_NULL_HANDLE;
+ VkCommandBuffer cmd=VK_NULL_HANDLE;
  bool submitted=false;
  try{
-  VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
-  pci.queueFamilyIndex=family;pci.flags=VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-  beamng_ffr::check(api.createCommandPool(device,&pci,nullptr,&pool),"M8.15 create pool");
-  VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-  ai.commandPool=pool;ai.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY;ai.commandBufferCount=1;
-  VkCommandBuffer cmd=VK_NULL_HANDLE;
-  beamng_ffr::check(api.allocateCommandBuffers(device,&ai,&cmd),"M8.15 alloc cmd");
+  const auto commands=m827UploadCaches[device].acquire(api,device,family);
+  pool=commands.pool;fence=commands.fence;cmd=commands.command;
   VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
   bi.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
   beamng_ffr::check(api.beginCommandBuffer(cmd,&bi),"M8.15 begin cmd");
@@ -1036,8 +1047,6 @@ void m812liveBeforeSubmit(VkQueue queue){
    beamng_ffr::recordGazeTransfer(api,cmd,slot,ii->second[eye]);
   }
   beamng_ffr::check(api.endCommandBuffer(cmd),"M8.15 end cmd");
-  VkFenceCreateInfo fci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-  beamng_ffr::check(api.createFence(device,&fci,nullptr,&fence),"M8.15 create fence");
   VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
   submit.commandBufferCount=1;submit.pCommandBuffers=&cmd;
   beamng_ffr::check(api.queueSubmit(queue,1,&submit,fence),"M8.15 submit");
@@ -1045,12 +1054,15 @@ void m812liveBeforeSubmit(VkQueue queue){
   if(async){
    // The fence will release this pool and both pinned staging slots, WITHOUT
    // a host-side wait. The application's submit follows on the same queue.
-   m815Pending.push_back({device,fence,pool,resolution,uploadSlots});
+   m815Pending.push_back({device,fence,pool,resolution,uploadSlots,cmd,family});
    for(int eye=0;eye<2;++eye)if(uploadSlots[eye]>=0)
     slotState.busy[eye][uploadSlots[eye]]=true;
    fence=VK_NULL_HANDLE;pool=VK_NULL_HANDLE;
   }else{
    beamng_ffr::check(api.waitForFences(device,1,&fence,VK_TRUE,UINT64_MAX),"M8.15 wait fence");
+   beamng_ffr::UploadCommands completed{pool,cmd,fence,family};
+   m827UploadCaches[device].recycle(api,device,completed,VK_SUCCESS);
+   fence=VK_NULL_HANDLE;pool=VK_NULL_HANDLE;
   }
   uploaded=next;
   for(int eye=0;eye<2;++eye)if(uploadSlots[eye]>=0){
@@ -1088,6 +1100,15 @@ void m812liveBeforeSubmit(VkQueue queue){
     (unsigned long long)m821GazeStats.uploadAgeMsMax.load(std::memory_order_relaxed),
     (unsigned long long)ages);
    log(ageReport);
+   const auto& cache=m827UploadCaches[device];
+   char cacheReport[220]{};
+   sprintf_s(cacheReport,"M8.27 UPLOAD_CACHE created=%llu reused=%llu idle=%zu",
+    (unsigned long long)cache.created(),(unsigned long long)cache.reused(),cache.idleCount());
+   log(cacheReport);
+   char patternReport[160]{};
+   sprintf_s(patternReport,"M8.27 PATTERN_STATS identicalSkipped=%llu",
+    (unsigned long long)m821GazeStats.identicalPattern.load(std::memory_order_relaxed));
+   log(patternReport);
   }
   static std::atomic<unsigned> reports{0};
   if(m817Verbose() && reports.fetch_add(1,std::memory_order_relaxed)<64){char msg[256]{};
@@ -1123,6 +1144,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkQueueSubmit2(VkQueue q,uint32_t coun
  uint64_t cmds=0;for(uint32_t i=0;infos&&i<count;++i)cmds+=infos[i].commandBufferInfoCount;
  m812gReport("vkQueueSubmit2",q,count,cmds,fence);
  std::lock_guard<std::mutex> queueSerial(m814ResourceMutex);
+ m812liveBeforeSubmit(q);
  VkResult r=next(q,count,infos,fence);m812hAfterSubmit(q,r);return r;
 }
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkQueueSubmit2KHR(VkQueue q,uint32_t count,const VkSubmitInfo2* infos,VkFence fence) {
@@ -1133,6 +1155,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkQueueSubmit2KHR(VkQueue q,uint32_t c
  uint64_t cmds=0;for(uint32_t i=0;infos&&i<count;++i)cmds+=infos[i].commandBufferInfoCount;
  m812gReport("vkQueueSubmit2KHR",q,count,cmds,fence);
  std::lock_guard<std::mutex> queueSerial(m814ResourceMutex);
+ m812liveBeforeSubmit(q);
  VkResult r=next(q,count,infos,fence);m812hAfterSubmit(q,r);return r;
 }
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(VkDevice, VkPipelineCache, uint32_t, const VkGraphicsPipelineCreateInfo*, const VkAllocationCallbacks*, VkPipeline*);
@@ -1331,6 +1354,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice physic
   }
   if (r == VK_SUCCESS) {
     std::lock_guard<std::mutex> guard(mu);
+    std::vector<uint32_t> graphicsFamilies;
     auto createPipelines = reinterpret_cast<PFN_vkCreateGraphicsPipelines>(gdpa(*out, "vkCreateGraphicsPipelines"));
     DeviceDispatch dispatch{};
     dispatch.getDeviceQueue = reinterpret_cast<PFN_vkGetDeviceQueue>(gdpa(*out, "vkGetDeviceQueue"));
@@ -1352,7 +1376,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice physic
       std::vector<VkQueueFamilyProperties> props(familyCount);
       if (familyCount) getFamilies(physical, &familyCount, props.data());
       for (uint32_t family = 0; family < familyCount; ++family)
-        if (props[family].queueFlags & VK_QUEUE_GRAPHICS_BIT) dispatch.graphicsFamilies.push_back(family);
+        if (props[family].queueFlags & VK_QUEUE_GRAPHICS_BIT) graphicsFamilies.push_back(family);
     }
     dispatch.gdpa = gdpa;
     // Resolve all calls from the NEXT layer, never from Vulkan loader exports.
@@ -1371,11 +1395,13 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice physic
     RESOLVE_FFR(unmapMemory, vkUnmapMemory);
     RESOLVE_FFR(createCommandPool, vkCreateCommandPool);
     RESOLVE_FFR(allocateCommandBuffers, vkAllocateCommandBuffers);
+    RESOLVE_FFR(resetCommandPool, vkResetCommandPool);
     RESOLVE_FFR(beginCommandBuffer, vkBeginCommandBuffer);
     RESOLVE_FFR(cmdPipelineBarrier, vkCmdPipelineBarrier);
     RESOLVE_FFR(cmdCopyBufferToImage, vkCmdCopyBufferToImage);
     RESOLVE_FFR(endCommandBuffer, vkEndCommandBuffer);
     RESOLVE_FFR(createFence, vkCreateFence);
+    RESOLVE_FFR(resetFences, vkResetFences);
     RESOLVE_FFR(queueSubmit, vkQueueSubmit);
     RESOLVE_FFR(waitForFences, vkWaitForFences);
     RESOLVE_FFR(createImageView, vkCreateImageView);
@@ -1416,6 +1442,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice physic
     dispatch.cmdEndRenderPass2 = reinterpret_cast<PFN_vkCmdEndRenderPass2>(gdpa(*out,"vkCmdEndRenderPass2"));
     dispatch.cmdNextSubpass = reinterpret_cast<PFN_vkCmdNextSubpass>(gdpa(*out,"vkCmdNextSubpass"));
     dispatch.cmdNextSubpass2 = reinterpret_cast<PFN_vkCmdNextSubpass2>(gdpa(*out,"vkCmdNextSubpass2"));
+    m827GraphicsFamilies[*out]=std::move(graphicsFamilies);
     devices[*out] = dispatch; lastGdpa = gdpa;
     log(inject && !fallback ? "M3 VRS enabled at device creation" : "M3 VRS not enabled on device");
   } else logResult("M2 vkCreateDevice failed", r);
@@ -1574,7 +1601,7 @@ static void recordGraphicsQueue(VkDevice device, VkQueue queue, uint32_t family,
     std::lock_guard<std::mutex> guard(mu);
     auto it = devices.find(device);
     if (it == devices.end()) { log("M5.2 queue device not tracked"); return; }
-    const auto& families = it->second.graphicsFamilies;
+    const auto& families = m827GraphicsFamilies[device];
     if (std::find(families.begin(), families.end(), family) == families.end()) { log("M5.2 queue family is not graphics-capable"); return; }
     auto& list = capturedQueues[device];
     bool found = false;
@@ -2948,6 +2975,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdBeginRenderPass2(
 // Static-scissor pipelines and dynamic-rendering passes are not cropped in this prototype.
 extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdSetScissor(VkCommandBuffer cmd,uint32_t first,uint32_t count,const VkRect2D* rects) {
  auto d=lookupCommand(cmd);
+ if(!cropEnabled()){if(d.cmdSetScissor)d.cmdSetScissor(cmd,first,count,rects);return;}
  if (!d.cmdSetScissor || !rects || !count) { if(d.cmdSetScissor) d.cmdSetScissor(cmd,first,count,rects); return; }
  CropState c{};
  { std::lock_guard<std::mutex> guard(mu); auto it=cropStates.find(cmd); if(it!=cropStates.end()) c=it->second; }
@@ -2959,11 +2987,17 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdSetScissor(VkCommandBuffer cmd,uint32
   d.cmdSetScissor(cmd,first,1,&clipped);
   return;
  }
+ if(count<=16){
+  std::array<VkRect2D,16> clipped{};
+  for(uint32_t i=0;i<count;++i)clipped[i]=intersectRect(rects[i],area);
+  d.cmdSetScissor(cmd,first,count,clipped.data());return;
+ }
  std::vector<VkRect2D> clipped(rects,rects+count);
  for(auto& r:clipped) r=intersectRect(r,area);
  d.cmdSetScissor(cmd,first,count,clipped.data());
 }
 static void cropBlackBars(VkCommandBuffer cmd,const DeviceDispatch& d) {
+ if(!cropEnabled())return;
  CropState c{};
  { std::lock_guard<std::mutex> guard(mu); auto it=cropStates.find(cmd); if(it!=cropStates.end()) {c=it->second; cropStates.erase(it);} }
  if (!c.active || !d.cmdClearAttachments || c.subpass!=0) return;
@@ -2976,11 +3010,13 @@ static void cropBlackBars(VkCommandBuffer cmd,const DeviceDispatch& d) {
  bars[0].rect=intersectRect({{0,0},{c.width,static_cast<uint32_t>(keep.offset.y)}},c.renderArea);
  bars[1].rect=intersectRect({{0,static_cast<int32_t>(keep.offset.y+keep.extent.height)},{c.width,c.height-static_cast<uint32_t>(keep.offset.y)-keep.extent.height}},c.renderArea);
  for(auto& b:bars) b.layerCount=1;
- for(const auto& b:bars) if(b.rect.extent.width && b.rect.extent.height) d.cmdClearAttachments(cmd,1,&color,1,&b);
+ uint32_t count=0;
+ for(const auto& b:bars)if(b.rect.extent.width && b.rect.extent.height)bars[count++]=b;
+ if(count)d.cmdClearAttachments(cmd,1,&color,count,bars);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdBindPipeline(VkCommandBuffer cmd,VkPipelineBindPoint point,VkPipeline pipeline) {
  DeviceDispatch d=lookupCommand(cmd);
- if(point==VK_PIPELINE_BIND_POINT_GRAPHICS) {
+ if(point==VK_PIPELINE_BIND_POINT_GRAPHICS && m817Verbose()) {
   bool report=false;unsigned binds=0;VkRenderPass actual=VK_NULL_HANDLE,expected=VK_NULL_HANDLE;
   {
    std::lock_guard<std::mutex> guard(mu);
@@ -3165,21 +3201,21 @@ struct M75bGaze { bool valid=false; float u=0.f,v=0.f; unsigned long long age=0;
 M75bGaze m75bReadGaze(int eye) {
  M75bGaze result{};
  static HANDLE mapping=nullptr;
- static const beamng_gaze::Data* shared=nullptr;
+ static const beamng_projected_gaze::Data* shared=nullptr;
  if(!shared){
-  if(!mapping)mapping=OpenFileMappingA(FILE_MAP_READ,FALSE,beamng_gaze::mappingName);
-  if(mapping)shared=static_cast<const beamng_gaze::Data*>(MapViewOfFile(mapping,FILE_MAP_READ,0,0,sizeof(beamng_gaze::Data)));
+  if(!mapping)mapping=OpenFileMappingA(FILE_MAP_READ,FALSE,beamng_projected_gaze::mappingName);
+  if(mapping)shared=static_cast<const beamng_projected_gaze::Data*>(MapViewOfFile(mapping,FILE_MAP_READ,0,0,sizeof(beamng_projected_gaze::Data)));
  }
  if(!shared || eye<0 || eye>1)return result;
  for(int i=0;i<3;++i){
   LONG before=shared->sequence;MemoryBarrier();if(before&1)continue;
   const uint32_t magic=shared->magic,pid=shared->processId,mask=shared->eyeValidMask;
-  const uint64_t tick=shared->tickMs;
+  const uint64_t tick=shared->projectionTickMs,poseTick=shared->poseTickMs;
   const float u=shared->eyeU[eye],v=shared->eyeV[eye];
   MemoryBarrier();LONG after=shared->sequence;
-  if(before!=after || (after&1) || magic!=beamng_gaze::magicValue || pid!=GetCurrentProcessId())continue;
+  if(before!=after || (after&1) || magic!=beamng_projected_gaze::magicValue || pid!=GetCurrentProcessId())continue;
   uint64_t now=GetTickCount64();
-  if(now<tick || now-tick>100 || !(mask&(1u<<eye)) || !std::isfinite(u) || !std::isfinite(v) || u<0.f || u>1.f || v<0.f || v>1.f)return result;
+  if(!beamng_gaze_freshness::validProjection(now,poseTick,tick,mask,eye,u,v))return result;
   result.valid=true;result.u=u;result.v=v;result.age=static_cast<unsigned long long>(now-tick);
   result.sourceTickMs=tick;result.sourceSequence=after;return result;
  }
@@ -3225,14 +3261,18 @@ M825EffectiveGaze m825EffectiveGaze(int eye){
 // M8.15: prepare CPU gaze and write only to staging slots NOT pinned by an
 // in-flight transfer fence; the queue interceptor handles the GPU copies.
 void m84PrepareEyePatterns() {
- char flag[8]{};
- if(!beamng_config::read("BEAMNG_VRS_M84_CPU_GAZE",flag,sizeof(flag)) || strcmp(flag,"1"))return;
+ static const bool enabled=settingFlag("BEAMNG_VRS_M84_CPU_GAZE");
+ if(!enabled)return;
  static std::atomic<uint64_t> lastTick{0};
  static std::array<std::atomic<LONG>,2> lastStagedSequence{};
+ static std::array<std::atomic<uint64_t>,2> lastStagedGeneration{};
  const uint64_t now=GetTickCount64();
  uint64_t previous=lastTick.load(std::memory_order_relaxed);
  if(!beamng_gaze_timing::shouldPrepare(now,previous,m821UpdateIntervalMs()))return;
  if(!lastTick.compare_exchange_strong(previous,now,std::memory_order_relaxed))return;
+ uint32_t width=0,height=0;
+ {std::lock_guard<std::mutex> guard(mu);width=m813Width();height=m813Height();}
+ const uint64_t generation=m814Key(width,height);
  for(int eye=0;eye<2;++eye){
   const auto decision=m825EffectiveGaze(eye);
   auto gaze=decision.gaze;
@@ -3242,30 +3282,48 @@ void m84PrepareEyePatterns() {
   const bool centeredFallback=decision.phase==beamng_gaze_hold::Phase::Center;
   if(centeredFallback){
    m821GazeStats.stale.fetch_add(1,std::memory_order_relaxed);
-   if(lastStagedSequence[eye].load(std::memory_order_relaxed)==0)continue;
+   const auto lastGeneration=lastStagedGeneration[eye].load(std::memory_order_relaxed);
+   if(lastStagedSequence[eye].load(std::memory_order_relaxed)==0 &&
+      (!lastGeneration || lastGeneration==generation))continue;
    gaze.u=.5f;gaze.v=.5f;gaze.sourceSequence=0;gaze.sourceTickMs=0;
-  } else if(gaze.sourceSequence==lastStagedSequence[eye].load(std::memory_order_relaxed)){
+  } else if(gaze.sourceSequence==lastStagedSequence[eye].load(std::memory_order_relaxed) &&
+            lastStagedGeneration[eye].load(std::memory_order_relaxed)==generation){
    m821GazeStats.unchanged.fetch_add(1,std::memory_order_relaxed);continue;
   }
   const int mode=m58PatternMode();
   const float center=mode==1?.10f:mode==2?1.f:m59Radius("BEAMNG_VRS_CENTER_RADIUS",.30f);
   float middle=mode==1?.18f:mode==2?1.f:m59Radius("BEAMNG_VRS_MID_RADIUS",.65f);
   middle=std::max(center,middle);
-  auto pattern=beamng_ffr::makeGaze(m813Width(),m813Height(),16,16,gaze.u,gaze.v,center,middle,
+  auto pattern=beamng_ffr::makeGaze(width,height,16,16,gaze.u,gaze.v,center,middle,
      m59Rate("BEAMNG_VRS_MID_RATE",beamng_ffr::rate(2,2)),
      m59Rate("BEAMNG_VRS_OUTER_RATE",beamng_ffr::rate(4,4)),m824Shape());
   if(mode==2)std::fill(pattern.texels.begin(),pattern.texels.end(),beamng_ffr::rate(1,1));
   // Stage freshest valid gaze only into a source buffer that is not pinned
   // by an in-flight GPU upload.
-  if (m8Enabled() && pattern.texels.size()==size_t((m813Width()+15)/16)*((m813Height()+15)/16)) {
+  if (m8Enabled()) {
    static std::atomic<unsigned> stagedReports[2]{};
    bool didStage=false;
+   bool acceptedIdentical=false;
    std::lock_guard<std::mutex> guard(mu);
    // Another render thread can reach preparation while this pattern is built.
-   if(gaze.sourceSequence==lastStagedSequence[eye].load(std::memory_order_relaxed))continue;
-   const uint64_t generation=m814Key(m813Width(),m813Height());
+   if(width!=m813Width() || height!=m813Height())continue; // Discard work for a replaced generation.
+   if(gaze.sourceSequence==lastStagedSequence[eye].load(std::memory_order_relaxed) &&
+      lastStagedGeneration[eye].load(std::memory_order_relaxed)==generation)continue;
    for (auto& entry : m812Staging) {
     auto& slots=m815SlotStates[entry.first][generation];
+    // Compare against the latest accepted payload, including a pending upload.
+    // Both CPU comparison and GPU transfer only READ this coherent buffer.
+    // No gaze threshold/smoothing: skip only a byte-for-byte identical image.
+    const int latest=slots.latestSlot[eye];
+    if(latest>=0 && latest<3){
+     const auto& prior=entry.second.slots[eye][latest];
+     if(prior.mapped && prior.capacity>=pattern.texels.size() &&
+        !std::memcmp(prior.mapped,pattern.texels.data(),pattern.texels.size())){
+      acceptedIdentical=true;
+      m821GazeStats.identicalPattern.fetch_add(1,std::memory_order_relaxed);
+      continue;
+     }
+    }
     // Do not rewrite staging memory while an outstanding transfer reads it.
     int selected=-1;
     for(int trial=0;trial<3;++trial){
@@ -3293,8 +3351,9 @@ void m84PrepareEyePatterns() {
      log(msg);
     }
    }
-   if(didStage){
+   if(didStage || acceptedIdentical){
     lastStagedSequence[eye].store(gaze.sourceSequence,std::memory_order_relaxed);
+    lastStagedGeneration[eye].store(generation,std::memory_order_relaxed);
     if(centeredFallback){
      char msg[140]{};
      sprintf_s(msg,"M8.24 GAZE_FALLBACK eye=%d centerUV=(0.500,0.500) reason=NO_VALID_GAZE",eye);
@@ -3315,10 +3374,10 @@ void m84PrepareEyePatterns() {
 // immediately before the classified render pass ends. Intended only for single-subpass
 // color passes; a later compositor may overwrite it.
 void m81StartOutline(VkCommandBuffer cmd, const VkRenderPassBeginInfo* info) {
- const bool enabled = [] { char b[8]{};return beamng_config::read("BEAMNG_VRS_DEBUG_OUTLINE",b,sizeof(b)) && strcmp(b,"1")==0; }();
+ if(!outlineEnabled())return;
  std::lock_guard<std::mutex> guard(mu);
  m81OutlinePasses.erase(cmd);
- if(!enabled || !info || info->renderArea.extent.width==0) return;
+ if(!info || info->renderArea.extent.width==0) return;
  auto fb=framebuffers.find(info->framebuffer);
  auto pass=passInfos.find(info->renderPass);
  if(fb==framebuffers.end() || pass==passInfos.end() || fb->second.width!=m813Width() || fb->second.height!=m813Height() ||
@@ -3345,6 +3404,7 @@ void m81StartOutline(VkCommandBuffer cmd, const VkRenderPassBeginInfo* info) {
  m81OutlinePasses[cmd]={eye,info->renderArea,fb->second.width,fb->second.height};
 }
 void m81DrawOutline(VkCommandBuffer cmd, const DeviceDispatch& d) {
+ if(!outlineEnabled())return;
  M81OutlinePass state{};
  {
   std::lock_guard<std::mutex> guard(mu);

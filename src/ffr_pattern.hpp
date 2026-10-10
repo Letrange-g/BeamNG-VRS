@@ -4,6 +4,7 @@
 #include <cmath>
 #include <algorithm>
 #include <stdexcept>
+#include <utility>
 
 // CPU-side shading-rate attachment payload for VK_FORMAT_R8_UINT.
 // Vulkan encodes width in bits 0-1 and height in bits 2-3, as log2(pixel size).
@@ -48,8 +49,30 @@ inline bool inside(float u, float v, float gazeU, float gazeV,
 }
 inline float tileUV(uint32_t tileIndex, uint32_t tileSize, uint32_t imageSize) {
  const uint32_t start=tileIndex*tileSize;
- const uint32_t end=std::min(start+tileSize,imageSize);
+ const uint32_t end=start+std::min(tileSize,imageSize-start);
  return (.5f*(float(start)+float(end)))/float(imageSize);
+}
+namespace detail {
+// Each supported shape intersects a row in one contiguous interval. Search
+// its two edges with the SAME float predicate used by the debug outline.
+// This avoids sqrt/rounding approximations that could change boundary texels.
+template<class Contains>
+inline std::pair<uint32_t,uint32_t> rowSpan(uint32_t width, uint32_t nearest,
+                                          Contains contains) {
+ if(!contains(nearest))return {0,0};
+ uint32_t lo=0,hi=nearest;
+ while(lo<hi){
+  const uint32_t mid=lo+(hi-lo)/2;
+  if(contains(mid))hi=mid;else lo=mid+1;
+ }
+ const uint32_t begin=lo;
+ lo=nearest+1;hi=width;
+ while(lo<hi){
+  const uint32_t mid=lo+(hi-lo)/2;
+  if(contains(mid))lo=mid+1;else hi=mid;
+ }
+ return {begin,lo};
+}
 }
 inline Pattern makeGaze(uint32_t pixelWidth, uint32_t pixelHeight,
                         uint32_t tileWidth, uint32_t tileHeight,
@@ -62,14 +85,27 @@ inline Pattern makeGaze(uint32_t pixelWidth, uint32_t pixelHeight,
      !std::isfinite(gazeU) || !std::isfinite(gazeV) ||
      gazeU<0.f || gazeU>1.f || gazeV<0.f || gazeV>1.f)
    throw std::invalid_argument("invalid foveation dimensions/size/gaze");
- Pattern p{(pixelWidth + tileWidth - 1) / tileWidth,
-           (pixelHeight + tileHeight - 1) / tileHeight, tileWidth, tileHeight, {}};
- p.texels.resize(size_t(p.width)*p.height);
- for(uint32_t y=0;y<p.height;++y)for(uint32_t x=0;x<p.width;++x){
-  const float u=tileUV(x,tileWidth,pixelWidth);
+ Pattern p{1+(pixelWidth-1)/tileWidth,
+           1+(pixelHeight-1)/tileHeight, tileWidth, tileHeight, {}};
+ p.texels.assign(size_t(p.width)*p.height,outerRate);
+ if(middleSize==0.f)return p;
+ std::vector<float> columns(p.width);
+ for(uint32_t x=0;x<p.width;++x)columns[x]=tileUV(x,tileWidth,pixelWidth);
+ const auto after=std::lower_bound(columns.begin(),columns.end(),gazeU);
+ uint32_t nearest=after==columns.end()?p.width-1:uint32_t(after-columns.begin());
+ if(nearest && std::fabs(columns[nearest-1]-gazeU)<std::fabs(columns[nearest]-gazeU))--nearest;
+ for(uint32_t y=0;y<p.height;++y){
   const float v=tileUV(y,tileHeight,pixelHeight);
-  p.texels[size_t(y)*p.width+x]=inside(u,v,gazeU,gazeV,pixelWidth,pixelHeight,centerSize,shape)?rate(1,1):
-    inside(u,v,gazeU,gazeV,pixelWidth,pixelHeight,middleSize,shape)?middleRate:outerRate;
+  auto fillRegion=[&](float size,uint8_t value){
+   if(size==0.f)return;
+   const auto [begin,end]=detail::rowSpan(p.width,nearest,[&](uint32_t x){
+    return inside(columns[x],v,gazeU,gazeV,pixelWidth,pixelHeight,size,shape);
+   });
+   auto row=p.texels.begin()+size_t(y)*p.width;
+   std::fill(row+begin,row+end,value);
+  };
+  fillRegion(middleSize,middleRate);
+  fillRegion(centerSize,rate(1,1));
  }
  return p;
 }

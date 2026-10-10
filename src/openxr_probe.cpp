@@ -234,6 +234,26 @@ void m75Publish(const uint64_t images[2][3]) {
 }
 HANDLE gazeMapping = nullptr;
 beamng_gaze::Data* gazeShared = nullptr;
+HANDLE m827GazeMapping=nullptr;
+beamng_projected_gaze::Data* m827GazeShared=nullptr;
+std::mutex m827GazeWriteMutex;
+void publishProjectedGaze(const float u[2],const float v[2],uint32_t mask,
+                         uint64_t poseTick,XrTime time){
+ std::lock_guard<std::mutex> guard(m827GazeWriteMutex);
+ if(!m827GazeShared){
+  m827GazeMapping=CreateFileMappingA(INVALID_HANDLE_VALUE,nullptr,PAGE_READWRITE,0,
+    sizeof(beamng_projected_gaze::Data),beamng_projected_gaze::mappingName);
+  if(m827GazeMapping)m827GazeShared=static_cast<beamng_projected_gaze::Data*>(
+    MapViewOfFile(m827GazeMapping,FILE_MAP_WRITE,0,0,sizeof(beamng_projected_gaze::Data)));
+ }
+ if(!m827GazeShared)return;
+ auto* s=m827GazeShared;InterlockedIncrement(&s->sequence);MemoryBarrier();
+ s->magic=beamng_projected_gaze::magicValue;s->processId=GetCurrentProcessId();
+ s->poseTickMs=poseTick;s->projectionTickMs=GetTickCount64();
+ s->poseTime=time;s->projectionTime=time;s->eyeValidMask=mask;
+ for(int eye=0;eye<2;++eye){s->eyeU[eye]=u[eye];s->eyeV[eye]=v[eye];}
+ MemoryBarrier();InterlockedIncrement(&s->sequence);
+}
 void publishGaze(const XrSpaceLocation& loc, XrTime predictedTime) {
  if (!gazeShared) {
   gazeMapping=CreateFileMappingA(INVALID_HANDLE_VALUE,nullptr,PAGE_READWRITE,0,sizeof(beamng_gaze::Data),beamng_gaze::mappingName);
@@ -566,13 +586,19 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeLocateViews(XrSession session,con
  XrResult r=d.locateViews(session,info,state,capacity,count,views);
  if(XR_SUCCEEDED(r)&&info&&views&&count&&*count>=2&&capacity>=2)
    m818Publish(session,d,views);
- if(XR_FAILED(r)||!info||!views||!count||*count<2||capacity<2||!gazeShared||!gs.ready)return r;
+ // Capacity queries do not invalidate a previous sample. An actual failed
+ // projection publishes invalidity promptly, allowing the existing grace.
+ if(!info||!views||capacity<2||!gs.ready)return r;
+ float u[2]{},v[2]{};
+ auto invalid=[&](){publishProjectedGaze(u,v,0,0,info->displayTime);return r;};
+ if(XR_FAILED(r)||!count||*count<2||!state)return invalid();
  // The eye view poses must be in the view space supplied by the application, using xrLocateSpace.
- if(!(state->viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT))return r;
- if(!gs.gazeSpace||!d.locateSpace)return r;
+ if(!(state->viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT))return invalid();
+ if(!gs.gazeSpace||!d.locateSpace)return invalid();
  XrSpaceLocation gaze{XR_TYPE_SPACE_LOCATION};
- if(XR_FAILED(d.locateSpace(gs.gazeSpace,info->space,info->displayTime,&gaze)) || !(gaze.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))return r;
- float u[2]{},v[2]{};uint32_t mask=0;
+ if(XR_FAILED(d.locateSpace(gs.gazeSpace,info->space,info->displayTime,&gaze)) || !(gaze.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))return invalid();
+ const uint64_t poseTick=GetTickCount64();
+ uint32_t mask=0;
  V3 forward=rotateQ(gaze.pose.orientation,{0.f,0.f,-1.f});
  for(int i=0;i<2;++i){
   const auto& eye=views[i];auto q=eye.pose.orientation;
@@ -586,12 +612,13 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeLocateViews(XrSession session,con
   u[i]=(slopeX-left)/(right-left);v[i]=(up-slopeY)/(up-down);
   if(std::isfinite(u[i])&&std::isfinite(v[i]))mask|=(1u<<i);
  }
- if(mask){
+ publishProjectedGaze(u,v,mask,poseTick,info->displayTime);
+ if(gazeShared){
   auto* s=gazeShared;InterlockedIncrement(&s->sequence);MemoryBarrier();
   for(int i=0;i<2;++i){s->eyeU[i]=u[i];s->eyeV[i]=v[i];}
   s->eyeValidMask=mask;MemoryBarrier();InterlockedIncrement(&s->sequence);
-  static unsigned logs=0;if(m817Verbose() && (++logs%180)==1){char msg[240]{};sprintf_s(msg,sizeof(msg),"M7.3b projected gaze mask=%u L=(%.3f,%.3f) R=(%.3f,%.3f)",mask,u[0],v[0],u[1],v[1]);logLine(msg);}
  }
+ static unsigned logs=0;if(m817Verbose() && (++logs%180)==1){char msg[240]{};sprintf_s(msg,sizeof(msg),"M8.27 projected gaze mask=%u L=(%.3f,%.3f) R=(%.3f,%.3f)",mask,u[0],v[0],u[1],v[1]);logLine(msg);}
  return r;
 }
 

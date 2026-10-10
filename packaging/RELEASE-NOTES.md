@@ -1,6 +1,8 @@
 Experimental Windows x64 beta with portable installation and streamlined INI settings.
 
-This update removes BeamNG-VRS-Check.exe from the package. The existing PowerShell launcher validates settings before starting BeamNG; no additional EXE is included. Defaults are now Shape=ellipse and Scissor Top=0.30/Bottom=0.30, with scissor disabled. Back up your INI before updating; delete the old BeamNG-VRS-Check.exe from an earlier installation. Existing INI files keep their values when restored.
+M8.27 adds faster CPU pattern generation, skips byte-identical gaze uploads, reuses completed upload resources, and removes heap allocations from command dispatch. Scissor clears are batched, and live uploads also cover Vulkan Submit2. Live VRS now validates projected-gaze freshness independently of raw-pose diagnostics. Update both DLLs together. See [performance findings](https://github.com/Letrange-g/BeamNG-VRS/blob/main/docs/PERFORMANCE.md) for CPU benchmark results and an in-game comparison procedure; no FPS improvement or render-distance cap is claimed.
+
+The package contains no BeamNG-VRS-Check.exe. The existing PowerShell launcher validates settings before starting BeamNG; no additional EXE is included. Defaults are now Shape=ellipse and Scissor Top=0.30/Bottom=0.30, with scissor disabled. Back up your INI before updating; delete the old BeamNG-VRS-Check.exe from an earlier installation. Existing INI files keep their values when restored.
 
 The package retains Windows relative paths in both manifests, resolving their DLLs beside the JSON files. Windows regression checks cover DLL loading from a different working directory, including spaces and Unicode in the installation path.
 

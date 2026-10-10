@@ -20,10 +20,10 @@ The expected outputs are `BeamNG_VRS.dll`, `BeamNG_EyeProbe.dll` (when OpenXR he
 With Visual Studio 2022 C++ tools, Git, CMake 3.25+, and Python 3 installed on Windows, run:
 
 ```powershell
-./scripts/Build-Release.ps1 -Version 0.1.0-beta.5
+./scripts/Build-Release.ps1 -Version 0.1.0-beta.6
 ```
 
-This script fetches pinned Vulkan and OpenXR header revisions from Khronos, builds both DLLs, runs the portable C++/Python tests plus Windows configuration and launcher integration tests, then packages `out/releases/BeamNG-VRS-0.1.0-beta.5-windows-x64.zip` and a SHA-256 file. It does not require the full graphical SDKs for this header-only build path. The Release DLLs use the static MSVC runtime. The script refuses to overwrite an existing ZIP or staging directory; use a new version or output directory for another build.
+This script fetches pinned Vulkan and OpenXR header revisions from Khronos, builds both DLLs, runs the portable C++/Python tests plus Windows configuration and launcher integration tests, then packages `out/releases/BeamNG-VRS-0.1.0-beta.6-windows-x64.zip` and a SHA-256 file. It does not require the full graphical SDKs for this header-only build path. The Release DLLs use the static MSVC runtime. The script refuses to overwrite an existing ZIP or staging directory; use a new version or output directory for another build.
 
 The package contains no EXE files. INI validation runs in the existing PowerShell launcher, with a test-only C++ fixture checking that it agrees with the DLL parser on valid and invalid settings. The packaging script rejects EXE files in the staged release.
 

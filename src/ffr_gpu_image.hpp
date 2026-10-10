@@ -23,11 +23,14 @@ struct Api {
  PFN_vkUnmapMemory unmapMemory = nullptr;
  PFN_vkCreateCommandPool createCommandPool = nullptr;
  PFN_vkAllocateCommandBuffers allocateCommandBuffers = nullptr;
+ // Optional for reuse; missing reset functions retain create/destroy behavior.
+ PFN_vkResetCommandPool resetCommandPool = nullptr;
  PFN_vkBeginCommandBuffer beginCommandBuffer = nullptr;
  PFN_vkCmdPipelineBarrier cmdPipelineBarrier = nullptr;
  PFN_vkCmdCopyBufferToImage cmdCopyBufferToImage = nullptr;
  PFN_vkEndCommandBuffer endCommandBuffer = nullptr;
  PFN_vkCreateFence createFence = nullptr;
+ PFN_vkResetFences resetFences = nullptr;
  PFN_vkQueueSubmit queueSubmit = nullptr;
  PFN_vkWaitForFences waitForFences = nullptr;
  PFN_vkCreateImageView createImageView = nullptr;
