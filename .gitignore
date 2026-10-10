@@ -1,0 +1,39 @@
+# Build outputs and IDE state
+build/
+out/
+.vs/
+.vscode/
+.idea/
+CMakeUserPresets.json
+*.user
+*.suo
+*.VC.db
+*.pdb
+*.ilk
+*.obj
+*.lib
+*.exp
+*.dll
+*.exe
+
+# Logs, captures, dumps, or potentially identifying local data
+*.log
+*.dmp
+*.mdmp
+*.ngfx-gputrace
+*.rgd
+*.etl
+*.trace
+*.pcap
+*.har
+*.zip
+*.7z
+.env
+.env.*
+!*.example.env
+*.local.ini
+*.local.ps1
+
+# Python tests
+__pycache__/
+*.pyc

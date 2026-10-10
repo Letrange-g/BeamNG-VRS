@@ -1,0 +1,10 @@
+{
+  "file_format_version": "1.0.0",
+  "api_layer": {
+    "name": "XR_APILAYER_BEAMNG_eye_probe",
+    "library_path": "./BeamNG_EyeProbe.dll",
+    "api_version": "1.0",
+    "implementation_version": "1",
+    "description": "Experimental BeamNG eye tracking OpenXR API layer"
+  }
+}
