@@ -109,8 +109,9 @@ inline StagingSlot createStaging(const Api& api, VkPhysicalDevice physical, VkDe
 // M8.12c: record a transfer into an existing shading-rate image.
 // CALLER CONTRACT (essential): the command buffer must be recording outside a
 // render pass; the staging slot must stay immutable until submission completes;
-// the destination image must have no outstanding GPU readers/writers; and the
-// command buffer must execute before any render pass reading that image.
+// destination accesses must be ordered (these barriers cover earlier/later
+// accesses on the SAME queue; other queues need caller synchronization); and
+// the command buffer must execute before any render pass reading that image.
 // This function records commands only. It does NOT submit or establish ownership.
 inline void recordGazeTransfer(const Api& api, VkCommandBuffer cmd,
                                const StagingSlot& slot, const GpuImage& target) {

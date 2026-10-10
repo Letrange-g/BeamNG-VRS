@@ -345,14 +345,10 @@ struct M815SlotState {
  std::array<int,2> latestSlot{{-1,-1}};
  std::array<uint64_t,2> latestSeq{};
 };
-struct M815Upload {
+struct M815Upload : beamng_ffr::UploadCommands {
  VkDevice device=VK_NULL_HANDLE;
- VkFence fence=VK_NULL_HANDLE;
- VkCommandPool pool=VK_NULL_HANDLE;
  uint64_t resolution=0;
  std::array<int,2> slots{{-1,-1}};
- VkCommandBuffer command=VK_NULL_HANDLE;
- uint32_t family=0;
 };
 std::unordered_map<VkDevice,std::map<uint64_t,M815SlotState>> m815SlotStates;
 std::vector<M815Upload> m815Pending;
@@ -389,7 +385,7 @@ void m815PollLocked(VkDevice device,const DeviceDispatch& dispatch) {
    if(gen!=state->second.end())for(int eye=0;eye<2;++eye)
     if(it->slots[eye]>=0)gen->second.busy[eye][it->slots[eye]]=false;
   }
-  beamng_ffr::UploadCommands completed{it->pool,it->command,it->fence,it->family};
+  beamng_ffr::UploadCommands completed=*it;
   m827UploadCaches[device].recycle(dispatch.ffrApi,device,completed,status);
   it=m815Pending.erase(it);
  }
@@ -512,7 +508,7 @@ bool m817Verbose() { return m817LogLevel()>=2; }
 int m817MessageLevel(const char* msg) {
  if(strstr(msg,"FAILED") || strstr(msg,"ERROR") || strstr(msg,"WARNING") ||
     strstr(msg,"FATAL") || strstr(msg,"VkResult=-") || strstr(msg,"result=-")) return 0;
- if(strstr(msg,"M8.17") || strstr(msg,"M8.18") || strstr(msg,"M8.21 ") || strstr(msg,"M8.23 ") || strstr(msg,"M8.24 ") || strstr(msg,"M8.25 ") || strstr(msg,"M8.27 ") || strstr(msg,"M8.14 AUTO_RESOLUTION") ||
+ if(strstr(msg,"M8.17") || strstr(msg,"M8.18") || strstr(msg,"M8.21 ") || strstr(msg,"M8.23 ") || strstr(msg,"M8.24 ") || strstr(msg,"M8.25 ") || strstr(msg,"M8.27 ") || strstr(msg,"M8.28 ") || strstr(msg,"M8.14 AUTO_RESOLUTION") ||
     strstr(msg,"M8.14 RESOURCE_") || strstr(msg,"M8.16 EYE_FB_STATS") ||
     strstr(msg,"M8.16 UNUSED_VRS") || strstr(msg,"M8.15 STATS") ||
     strstr(msg,"M3 VRS enabled") || strstr(msg,"M4.2 GPU:") ||
@@ -1037,16 +1033,13 @@ void m812liveBeforeSubmit(VkQueue queue){
  VkCommandBuffer cmd=VK_NULL_HANDLE;
  bool submitted=false;
  try{
-  const auto commands=m827UploadCaches[device].acquire(api,device,family);
+  std::array<beamng_ffr::StagingSlot,2> sources{};
+  for(int eye=0;eye<2;++eye)if(uploadSlots[eye]>=0)
+   sources[eye]=si->second.slots[eye][uploadSlots[eye]];
+  const auto key=beamng_ffr::gazeTransferKey(sources,ii->second);
+  auto commands=m827UploadCaches[device].acquire(api,device,family,&key);
   pool=commands.pool;fence=commands.fence;cmd=commands.command;
-  VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-  bi.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-  beamng_ffr::check(api.beginCommandBuffer(cmd,&bi),"M8.15 begin cmd");
-  for(int eye=0;eye<2;++eye)if(uploadSlots[eye]>=0){
-   auto& slot=si->second.slots[eye][uploadSlots[eye]];
-   beamng_ffr::recordGazeTransfer(api,cmd,slot,ii->second[eye]);
-  }
-  beamng_ffr::check(api.endCommandBuffer(cmd),"M8.15 end cmd");
+  beamng_ffr::recordGazeCommands(api,commands,sources,ii->second);
   VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
   submit.commandBufferCount=1;submit.pCommandBuffers=&cmd;
   beamng_ffr::check(api.queueSubmit(queue,1,&submit,fence),"M8.15 submit");
@@ -1054,13 +1047,13 @@ void m812liveBeforeSubmit(VkQueue queue){
   if(async){
    // The fence will release this pool and both pinned staging slots, WITHOUT
    // a host-side wait. The application's submit follows on the same queue.
-   m815Pending.push_back({device,fence,pool,resolution,uploadSlots,cmd,family});
+   m815Pending.push_back({commands,device,resolution,uploadSlots});
    for(int eye=0;eye<2;++eye)if(uploadSlots[eye]>=0)
     slotState.busy[eye][uploadSlots[eye]]=true;
    fence=VK_NULL_HANDLE;pool=VK_NULL_HANDLE;
   }else{
    beamng_ffr::check(api.waitForFences(device,1,&fence,VK_TRUE,UINT64_MAX),"M8.15 wait fence");
-   beamng_ffr::UploadCommands completed{pool,cmd,fence,family};
+   auto completed=commands;
    m827UploadCaches[device].recycle(api,device,completed,VK_SUCCESS);
    fence=VK_NULL_HANDLE;pool=VK_NULL_HANDLE;
   }
@@ -1102,8 +1095,9 @@ void m812liveBeforeSubmit(VkQueue queue){
    log(ageReport);
    const auto& cache=m827UploadCaches[device];
    char cacheReport[220]{};
-   sprintf_s(cacheReport,"M8.27 UPLOAD_CACHE created=%llu reused=%llu idle=%zu",
-    (unsigned long long)cache.created(),(unsigned long long)cache.reused(),cache.idleCount());
+   sprintf_s(cacheReport,"M8.28 UPLOAD_CACHE created=%llu reused=%llu recordingsReused=%llu idle=%zu",
+    (unsigned long long)cache.created(),(unsigned long long)cache.reused(),
+    (unsigned long long)cache.recordingReused(),cache.idleCount());
    log(cacheReport);
    char patternReport[160]{};
    sprintf_s(patternReport,"M8.27 PATTERN_STATS identicalSkipped=%llu",

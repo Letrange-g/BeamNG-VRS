@@ -1,4 +1,4 @@
-# Performance work: M8.27
+# Performance work: M8.27–M8.28
 
 This beta reduces layer overhead while retaining the configured foveation sizes,
 shape, 30 ms gaze grace and 8 ms refresh interval. GPU/FPS improvements must be
@@ -25,6 +25,13 @@ environment.
   pending uploads remain fence-owned. Missing reset entrypoints retain the
   create/destroy path. The single-graphics-queue asynchronous barriers and
   conservative multiple-queue fallback are retained.
+- **Reusable recordings (M8.28):** if a completed command buffer references the
+  same source slots, eye images, extents and queue family, only its fence is reset.
+  It can be submitted again without recording its barriers/copies anew. Source
+  bytes are read at execution time, so new gaze payloads use the same recording.
+  Buffers are recorded without `ONE_TIME_SUBMIT` or `SIMULTANEOUS_USE`; an in-flight
+  buffer never enters the cache. Different slots/resolutions/eye selections need
+  a matching recording or a reset/re-record. All GPU barriers still execute.
 - **Command hooks:** dispatch snapshots contain only trivially copyable data;
   queue-family vectors remain in device state rather than being allocated on
   each command. Quiet logging bypasses diagnostic pipeline-bind bookkeeping.
@@ -41,6 +48,8 @@ environment.
   prior sample. The existing grace and centered fallback handle invalid data.
   These timestamps measure API retrieval/publication, not hardware sample time
   or eye-to-display latency. Update **both DLLs** together.
+  Source-age telemetry now starts at projection publication and is not directly
+  comparable with beta.5's raw-pose timestamp.
 
 Native mock tests exercise the real Vulkan hooks and OpenXR interceptor. They
 check allocation-free common command paths, unchanged pipeline substitution,
@@ -71,6 +80,22 @@ release workflow also runs the benchmark and saves a separate
 `CPU-pattern-benchmark` artifact and attaches its CSV to published releases;
 benchmark/test EXEs are excluded from the ZIP.
 
+Windows Server 2022, Visual Studio 2022 Release, beta.6 build
+[`891d8da`](https://github.com/Letrange-g/BeamNG-VRS/commit/891d8da5f73298633e3aba6d703c63f276be50f8):
+
+| Eye resolution | Shape | Original µs | Spans µs | CPU speedup |
+| --- | --- | ---: | ---: | ---: |
+| 2595×2084 | ellipse | 77.71 | 13.62 | 5.7× |
+| 3892×3126 | ellipse | 158.51 | 17.41 | 9.1× |
+| 5190×4168 | ellipse | 279.19 | 23.62 | 11.8× |
+
+The complete [Windows CSV](https://github.com/Letrange-g/BeamNG-VRS/releases/download/v0.1.0-beta.6/pattern-benchmark-windows.csv)
+also includes circle and square. Mock transfer tests submit 100 changing payloads
+using one recording; three alternating staging pairs retain three recordings.
+These establish fewer CPU recording calls and resource ownership, not driver
+timings or GPU speedup. The changed bytes reach the mock target on each execution.
+
+
 Linux reproduction:
 
 ```sh
@@ -92,6 +117,7 @@ GPU frame time. The shared development discussion also describes quieter runs
 and successful lazy framebuffer creation, but different scenes/settings prevent
 a controlled FPS comparison.
 
+
 Earlier runtime tests returned no usable Pimax visibility-mask geometry, and
 the tested eye passes lacked a suitable stencil path. The experimental stencil
 gate stays disabled. Existing lazy framebuffer creation is retained; framebuffer
@@ -105,14 +131,14 @@ handles are not recycled across application lifetimes.
    Warm up the scene before recording. Repeat runs in alternating order.
 3. Record GPU and CPU frame times and BeamNG's unmanaged FPS, plus compositor
    behavior. A runtime FPS cap/reprojection threshold can mask an improvement.
-4. Compare beta.5 with M8.27 using **both matching DLLs**, then test scissor off
-   versus on in M8.27 separately. At top/bottom 0.30, only the middle 40% of the
+4. Compare beta.5 with M8.28 using **both matching DLLs**, then test scissor off
+   versus on in M8.28 separately. At top/bottom 0.30, only the middle 40% of the
    image remains; verify the crop does not hide visible content in the headset.
 5. Check fixed-center fallback, eye movement, tracking dropout/recovery, both
    debug outlines, and 0.5/0.75/1.0 resolution transitions. Restore outlines off
    before performance measurements.
 6. Inspect periodic `M8.17 STATS`, `M8.21 GAZE_STATS`, `M8.27 UPLOAD_CACHE` and
-   `M8.27 PATTERN_STATS` reports. Reuse and identical-payload counters should
+   `M8.27 PATTERN_STATS` reports (`M8.28 UPLOAD_CACHE` in beta.7). Reuse and identical-payload counters should
    rise where appropriate. A static gaze may produce too few uploads for another
    256-upload report. Use verbose diagnostics only when investigating a problem.
 

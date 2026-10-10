@@ -1,5 +1,7 @@
 Experimental Windows x64 beta with portable installation and streamlined INI settings.
 
+M8.28 also reuses completed transfer recordings when their source slots, images, extents and queue family match; new staged bytes are read when the transfer executes. GPU barriers and fence ownership are retained.
+
 M8.27 adds faster CPU pattern generation, skips byte-identical gaze uploads, reuses completed upload resources, and removes heap allocations from command dispatch. Scissor clears are batched, and live uploads also cover Vulkan Submit2. Live VRS now validates projected-gaze freshness independently of raw-pose diagnostics. Update both DLLs together. See [performance findings](https://github.com/Letrange-g/BeamNG-VRS/blob/main/docs/PERFORMANCE.md) for CPU benchmark results and an in-game comparison procedure; no FPS improvement or render-distance cap is claimed.
 
 The package contains no BeamNG-VRS-Check.exe. The existing PowerShell launcher validates settings before starting BeamNG; no additional EXE is included. Defaults are now Shape=ellipse and Scissor Top=0.30/Bottom=0.30, with scissor disabled. Back up your INI before updating; delete the old BeamNG-VRS-Check.exe from an earlier installation. Existing INI files keep their values when restored.
