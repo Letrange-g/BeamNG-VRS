@@ -26,7 +26,7 @@ LeftEyeLeft  = left eye, outside
 LeftEyeRight = left eye, near the nose
 RightEyeLeft = right eye, near the nose
 RightEyeRight= right eye, outside
-Outer edges default to 0.20 (20%); nose-side edges default to 0.
+Outer edges default to 0.10 (10%); nose-side edges default to 0.
 Each accepts 0 to 0.49. Start small and check each eye.
 For outside-only cropping, try LeftEyeLeft=0.05 and RightEyeRight=0.05;
 keep LeftEyeRight=0 and RightEyeLeft=0 to leave the nose-side edges untouched.

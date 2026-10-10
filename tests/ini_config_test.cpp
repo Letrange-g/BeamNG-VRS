@@ -66,7 +66,7 @@ int main() {
  assert(partialEye.at("BEAMNG_VRS_SCISSOR_RIGHT_EYE_RIGHT")=="0.2");
  for(const auto* name:{"LEFT_EYE_LEFT","RIGHT_EYE_RIGHT"}) {
   const auto key=std::string("BEAMNG_VRS_SCISSOR_")+name;
-  assert(defaults.at(key)=="0.20" && fallback.at(key)=="0.20");
+  assert(defaults.at(key)=="0.10" && fallback.at(key)=="0.10");
  }
  for(const auto* name:{"LEFT_EYE_RIGHT","RIGHT_EYE_LEFT"}) {
   const auto key=std::string("BEAMNG_VRS_SCISSOR_")+name;
@@ -80,7 +80,7 @@ int main() {
  const auto legacyLeft=parse(oneLegacy);
  assert(legacyLeft.at("BEAMNG_VRS_SCISSOR_LEFT_EYE_LEFT")=="0");
  assert(legacyLeft.at("BEAMNG_VRS_SCISSOR_RIGHT_EYE_LEFT")=="0");
- assert(legacyLeft.at("BEAMNG_VRS_SCISSOR_RIGHT_EYE_RIGHT")=="0.20");
+ assert(legacyLeft.at("BEAMNG_VRS_SCISSOR_RIGHT_EYE_RIGHT")=="0.10");
  for(const char* size : {"0", "0.0", "0.1"}) {
   std::istringstream equalSizes(std::string("[Foveation]\nSize1x1=") + size + "\nSize2x2=" + size + "\nShape=ellipse\n");
   const auto accepted = parse(equalSizes);

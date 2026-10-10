@@ -32,10 +32,10 @@ Scissor top/bottom apply to both eyes. Horizontal edges are independent:
 | INI setting | Edge | Default |
 | --- | --- | --- |
 | `Top` / `Bottom` | Top / bottom of both eyes | `0.30` each |
-| `LeftEyeLeft` | Left eye, outside | `0.20` |
+| `LeftEyeLeft` | Left eye, outside | `0.10` |
 | `LeftEyeRight` | Left eye, near the nose | `0` |
 | `RightEyeLeft` | Right eye, near the nose | `0` |
-| `RightEyeRight` | Right eye, outside | `0.20` |
+| `RightEyeRight` | Right eye, outside | `0.10` |
 
 `0.05` crops 5% from that edge. Start small; keep the nose-side values at `0`
 if you can see those borders. Scissor is **disabled by default**.

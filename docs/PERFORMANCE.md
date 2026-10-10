@@ -49,7 +49,7 @@ environment.
   Cropping reduces rasterization/pixel coverage; it does not cull objects or
   avoid vertex processing. Explicit legacy `Left`/`Right` values retain their meaning.
 - **Per-eye horizontal scissor (beta.9 / M8.30):** beta.11 defaults the outer
-  edges to 0.20 and nose-side edges to zero, with scissor still off. Four width-relative controls
+  edges to 0.10 and nose-side edges to zero, with scissor still off. Four width-relative controls
   separate nose-side and outside edges. Eye selection follows framebuffer image
   classification learned from OpenXR transfers, independently of debug outlines
   and VRS substitution. Matching static pipelines with asymmetric settings get

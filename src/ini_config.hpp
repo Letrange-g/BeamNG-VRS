@@ -76,8 +76,8 @@ inline Values defaults() {
  out["BEAMNG_VRS_SCISSOR_RIGHT"] = "0";
  for(const auto* edge : {"LEFT_EYE_LEFT", "LEFT_EYE_RIGHT", "RIGHT_EYE_LEFT", "RIGHT_EYE_RIGHT"})
   out[std::string("BEAMNG_VRS_SCISSOR_") + edge] = "0";
- out["BEAMNG_VRS_SCISSOR_LEFT_EYE_LEFT"] = "0.20";
- out["BEAMNG_VRS_SCISSOR_RIGHT_EYE_RIGHT"] = "0.20";
+ out["BEAMNG_VRS_SCISSOR_LEFT_EYE_LEFT"] = "0.10";
+ out["BEAMNG_VRS_SCISSOR_RIGHT_EYE_RIGHT"] = "0.10";
  out["BEAMNG_VRS_M818_STENCIL"] = "0";
  out["BEAMNG_VRS_LOG_LEVEL"] = "1";
  return out;

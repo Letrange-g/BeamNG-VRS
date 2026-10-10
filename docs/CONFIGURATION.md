@@ -12,10 +12,10 @@ The release ZIP puts `BeamNG-VRS.ini` beside `Launch-BeamNG-VRS.cmd` at the extr
 | Scissor | `Enabled` | `false` | Experimental four-edge crop. Test visible edges and frame times before enabling. |
 | Scissor | `Top` | `0.30` | Fraction of eye-image height cropped from the top when scissor is enabled (0 to 0.49). |
 | Scissor | `Bottom` | `0.30` | Fraction cropped from the bottom (0 to 0.49). |
-| Scissor | `LeftEyeLeft` | `0.20` | Left eye's outer/left edge, fraction of that eye's image width (0 to 0.49). Beta.9+. |
+| Scissor | `LeftEyeLeft` | `0.10` | Left eye's outer/left edge, fraction of that eye's image width (0 to 0.49). Beta.9+. |
 | Scissor | `LeftEyeRight` | `0` | Left eye's nose-side/right edge (0 to 0.49). Beta.9+. |
 | Scissor | `RightEyeLeft` | `0` | Right eye's nose-side/left edge (0 to 0.49). Beta.9+. |
-| Scissor | `RightEyeRight` | `0.20` | Right eye's outer/right edge (0 to 0.49). Beta.9+. |
+| Scissor | `RightEyeRight` | `0.10` | Right eye's outer/right edge (0 to 0.49). Beta.9+. |
 | Performance | `TurboMode` | `false` | Experimental one-frame OpenXR wait overlap. Requires beta.10+. Restart to change. |
 | Logging | `Level` | `info` | `off`, `errors`, `info`, or `debug`. Default is brief status/errors, not verbose diagnostics. |
 | Tracking | `GracePeriodMs` | `30` | Hold the last valid gaze for this many milliseconds during temporary tracking loss (0 to 1000). |
@@ -29,7 +29,7 @@ With the default `Shape=circle`, `Size1x1=0.25` makes the sharp circle's diamete
 
 ## Scissor crop
 
-Since beta.11, the two outer edges default to `0.20` (20%) and the two nose-side
+Since beta.11, the two outer edges default to `0.10` (10%) and the two nose-side
 edges default to `0`. Scissor remains disabled by default. Left/right refer to
 the image as seen by that eye; they are not mirrored. Top/bottom remain shared.
 

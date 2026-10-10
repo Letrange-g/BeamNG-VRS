@@ -3,7 +3,7 @@ Experimental Windows x64 beta with optional turbo, VRS on/off and logging contro
 New in beta.11:
 
 - Default shape is now `circle`.
-- Outer horizontal scissor edges default to `0.20`; nose-side edges stay `0`.
+- Outer horizontal scissor edges default to `0.10`; nose-side edges stay `0`.
   Scissor remains disabled by default. Explicit saved settings are retained.
 
 Included from beta.10:
