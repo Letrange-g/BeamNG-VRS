@@ -16,12 +16,14 @@ The layers read **`BeamNG-VRS.ini`** beside the DLLs. A portable ZIP launcher an
 ## Portable installation
 
 1. Download the Windows x64 ZIP from [Releases](https://github.com/Letrange-g/BeamNG-VRS/releases) when a beta is available. Use the binary ZIP, not GitHub's source-code ZIP.
-2. Close BeamNG and extract the entire ZIP into its installation root, beside `Bin64`.
+2. Close BeamNG and extract the entire ZIP into its installation root, beside `Bin64`. Extraction directly inside `Bin64` also works; keep `Launch-BeamNG-VRS.cmd` and the `BeamNG-VRS` folder together.
 3. Edit `BeamNG-VRS/BeamNG-VRS.ini` in Notepad if desired.
 4. Start Steam if your installation requires it, then double-click `Launch-BeamNG-VRS.cmd`.
 5. Enable VR in the game as usual. Restart after changing settings.
 
 The launcher validates settings, starts the game in Vulkan mode, and activates both layers for that process. The ZIP is for Windows x64 and remains an experimental beta; see the requirements below before using it.
+
+The launcher uses Windows PowerShell 5.1, included by default in Windows 10 and 11. PowerShell 7 is not required. `BeamNG-VRS-Check.exe` validates your INI automatically before launch; keep it with the other package files.
 
 The ZIP keeps its DLLs and settings inside `BeamNG-VRS/`; it does not replace original game files or register layers globally. Launch BeamNG normally to stop using the layers. To uninstall, close the game and remove that folder and the launch shortcut. Back up the INI before extracting an update.
 

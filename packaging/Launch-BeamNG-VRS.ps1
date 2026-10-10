@@ -6,7 +6,13 @@ param(
 $ErrorActionPreference = 'Stop'
 try {
     $layerDirectory = $PSScriptRoot
-    $gameRoot = Split-Path -Parent $layerDirectory
+    $installDirectory = Split-Path -Parent $layerDirectory
+    # Accept extraction at the game root or directly inside its Bin64 folder.
+    $binaryDirectory = if ((Split-Path -Leaf $installDirectory) -ieq 'Bin64') {
+        $installDirectory
+    } else {
+        Join-Path $installDirectory 'Bin64'
+    }
     foreach ($file in @('BeamNG_VRS.dll', 'BeamNG_EyeProbe.dll', 'BeamNG-VRS-Check.exe',
             'VK_LAYER_BEAMNG_vrs.json', 'XR_APILAYER_BEAMNG_eye_probe.json', 'BeamNG-VRS.ini')) {
         if (-not (Test-Path -LiteralPath (Join-Path $layerDirectory $file) -PathType Leaf)) {
@@ -16,13 +22,13 @@ try {
     & (Join-Path $layerDirectory 'BeamNG-VRS-Check.exe') (Join-Path $layerDirectory 'BeamNG-VRS.ini')
     if ($LASTEXITCODE -ne 0) { throw 'Invalid settings. Fix BeamNG-VRS.ini using the error above, then try again.' }
     if (-not $GameExecutable) {
-        foreach ($candidate in @('Bin64\BeamNG.drive.x64.exe', 'Bin64\BeamNG.drive.exe')) {
-            $path = Join-Path $gameRoot $candidate
+        foreach ($candidate in @('BeamNG.drive.x64.exe', 'BeamNG.drive.exe')) {
+            $path = Join-Path $binaryDirectory $candidate
             if (Test-Path -LiteralPath $path -PathType Leaf) { $GameExecutable = $path; break }
         }
     }
     if (-not $GameExecutable -or -not (Test-Path -LiteralPath $GameExecutable -PathType Leaf)) {
-        throw 'Game executable not found. Extract the ZIP beside the BeamNG Bin64 folder, or run this script with -GameExecutable followed by the full executable path.'
+        throw 'Game executable not found. Extract the ZIP into the BeamNG installation root or its Bin64 folder, or run this script with -GameExecutable followed by the full executable path.'
     }
     if ([IO.Path]::GetExtension($GameExecutable) -ne '.exe') { throw 'Select the BeamNG Windows executable (.exe).' }
     $GameExecutable = (Resolve-Path -LiteralPath $GameExecutable).Path

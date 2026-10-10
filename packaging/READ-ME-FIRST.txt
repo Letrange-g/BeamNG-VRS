@@ -3,6 +3,7 @@ BeamNG-VRS - experimental Windows x64 beta
 INSTALL
 1. Close BeamNG.
 2. Extract this entire ZIP into the BeamNG installation root (beside Bin64).
+   Extraction directly inside Bin64 also works.
    Keep the BeamNG-VRS folder and Launch-BeamNG-VRS.cmd together.
 3. Edit BeamNG-VRS/BeamNG-VRS.ini in Notepad if desired.
 4. Start Launch-BeamNG-VRS.cmd. It launches BeamNG in Vulkan mode.
@@ -32,6 +33,9 @@ REQUIREMENTS AND LIMITATIONS
 Windows x64, BeamNG in Vulkan VR mode, an OpenXR runtime, and a GPU/driver
 supporting attachment fragment shading rate. No universal headset support or
 FPS gain is promised. Test builds can cause crashes or rendering artifacts.
+The launcher uses Windows PowerShell 5.1, included by default in Windows 10
+and 11; PowerShell 7 is not needed. BeamNG-VRS-Check.exe validates your INI
+automatically before launch. Keep it in the BeamNG-VRS folder.
 No administrator rights, registry registration or original game-file edits.
 The game may require its normal Steam session. Start Steam first if needed.
 
