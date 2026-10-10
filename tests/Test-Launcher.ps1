@@ -88,6 +88,9 @@ try {
         Move-Item -LiteralPath $game -Destination (Join-Path $bin 'BeamNG.drive.x64.exe')
     }
     Test-LaunchLayout -Layers $layers -Diagnostics
+    # Zero-sized quality regions must pass validation and reach Process.Start.
+    Set-Content -LiteralPath (Join-Path $layers 'BeamNG-VRS.ini') -Value "[Foveation]`nSize1x1=0`nSize2x2=0`nShape=ellipse`n[Debug]`nDrawOutline=false`n[Scissor]`nEnabled=false" -Encoding UTF8
+    Test-LaunchLayout -Layers $layers
     $launcher = Join-Path $layers 'Launch-BeamNG-VRS.ps1'
     Remove-Item -LiteralPath (Join-Path $bin 'BeamNG.drive.x64.exe')
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -CheckOnly

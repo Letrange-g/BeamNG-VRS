@@ -26,6 +26,13 @@ int main() {
  assert(fallback.at("BEAMNG_VRS_SHAPE") == "ellipse");
  assert(fallback.at("BEAMNG_VRS_SCISSOR_TOP") == "0.30");
  assert(fallback.at("BEAMNG_VRS_SCISSOR_BOTTOM") == "0.30");
+ for(const char* size : {"0", "0.0", "0.1"}) {
+  std::istringstream equalSizes(std::string("[Foveation]\nSize1x1=") + size + "\nSize2x2=" + size + "\nShape=ellipse\n");
+  const auto accepted = parse(equalSizes);
+  assert(accepted.at("BEAMNG_VRS_CENTER_RADIUS") == size);
+  assert(accepted.at("BEAMNG_VRS_MID_RADIUS") == size);
+  assert(accepted.at("BEAMNG_VRS_ENABLE_FEATURES") == "1");
+ }
  std::istringstream text("\xEF\xBB\xBF; comment\r\n [DeBuG]\r\nDrawOutline = TRUE\r\n[Scissor]\r\nEnabled = false\r\nTop=0.1\r\nBottom=0.3\r\n[Foveation]\r\nShape=SQUARE\r\n");
  const auto values = parse(text);
  assert(values.at("BEAMNG_VRS_DEBUG_OUTLINE") == "1");

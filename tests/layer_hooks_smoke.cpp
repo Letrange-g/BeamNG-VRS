@@ -97,6 +97,18 @@ int main(int argc,char** argv){
  sample(.1f,.9f,0);prepare();assert(m812bPreparedCount[0]==5 && m825StagedCenters[0].u==.5f);
  // Returning to a cached resolution during dropout still restores center.
  m814ActiveWidth=64;state.latestSlot={{-1,-1}};prepare();assert(m812bPreparedCount[0]==6 && m812bPreparedCount[1]==6);
+ // Zero sizes are a valid diagnostic: every eligible tile becomes 4x4.
+ // Exercise the actual layer's numeric reader and fixed/live pattern paths.
+ SetEnvironmentVariableA("BEAMNG_VRS_CENTER_RADIUS","0");
+ SetEnvironmentVariableA("BEAMNG_VRS_MID_RADIUS","0");
+ const auto coarse=m58MakePattern(64,64);
+ assert(coarse.texels.size()==16);
+ for(const auto value:coarse.texels)assert(value==beamng_ffr::rate(4,4));
+ sample(.4f,.7f);prepare();assert(m812bPreparedCount[0]==7 && m812bPreparedCount[1]==7);
+ for(int eye=0;eye<2;++eye){
+  const auto latest=state.latestSlot[eye];assert(latest>=0);
+  for(size_t i=0;i<coarse.texels.size();++i)assert(memory[eye][latest][i]==beamng_ffr::rate(4,4));
+ }
  UnmapViewOfFile(shared);CloseHandle(mapping);
  std::cout<<"Real Vulkan hooks: allocation-free dispatch/scissors, pipeline substitution, batched bars, identical-payload skip, pinned staging and resize fallback passed\n";
 }
