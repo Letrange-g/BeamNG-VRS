@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$GameExecutable,
-    [switch]$CheckOnly
+    [switch]$CheckOnly,
+    [switch]$Diagnostics
 )
 $ErrorActionPreference = 'Stop'
 try {
@@ -43,7 +44,10 @@ try {
         if ($name -like 'BEAMNG_VRS_*' -or $name -like 'BEAMNG_EYE_*') { $start.EnvironmentVariables.Remove($name) }
     }
     $start.EnvironmentVariables['BEAMNG_VRS_CONFIG'] = Join-Path $layerDirectory 'BeamNG-VRS.ini'
-    foreach ($name in @('VK_LAYER_PATH', 'XR_API_LAYER_PATH')) {
+    # VK_LAYER_PATH overrides registry discovery. Add our folder instead when
+    # no explicit override exists; preserve an existing developer override.
+    $vulkanPathName = if ($start.EnvironmentVariables['VK_LAYER_PATH']) { 'VK_LAYER_PATH' } else { 'VK_ADD_LAYER_PATH' }
+    foreach ($name in @($vulkanPathName, 'XR_API_LAYER_PATH')) {
         $existing = $start.EnvironmentVariables[$name]
         $start.EnvironmentVariables[$name] = if ($existing) { $layerDirectory + ';' + $existing } else { $layerDirectory }
     }
@@ -55,6 +59,26 @@ try {
         $start.EnvironmentVariables[$binding[0]] = $layers -join ';'
     }
     if ($CheckOnly) { Write-Output 'Release files and game executable found. No game started.'; return }
+    if ($Diagnostics) {
+        $start.EnvironmentVariables['VK_LOADER_DEBUG'] = 'error,warn,layer'
+        $start.EnvironmentVariables['BEAMNG_VRS_LOG_LEVEL'] = '2'
+        $start.EnvironmentVariables['BEAMNG_VRS_M4_DIAGNOSTICS'] = '1'
+        $start.RedirectStandardError = $true
+        $logPath = Join-Path ([IO.Path]::GetTempPath()) ('BeamNG_VRS_loader_' + [Guid]::NewGuid() + '.log')
+        Write-Output "Vulkan loader diagnostics: $logPath"
+        Write-Output 'Close BeamNG (and any error dialog), then share this log if launch fails.'
+        $writer = New-Object IO.StreamWriter($logPath, $false, [Text.Encoding]::UTF8)
+        try {
+            $process = [System.Diagnostics.Process]::Start($start)
+            while ($null -ne ($line = $process.StandardError.ReadLine())) {
+                $writer.WriteLine($line)
+                $writer.Flush()
+            }
+            $process.WaitForExit()
+            Write-Output "BeamNG exited with code $($process.ExitCode). Diagnostics saved to $logPath"
+        } finally { $writer.Dispose() }
+        return
+    }
     [void][System.Diagnostics.Process]::Start($start)
     Write-Output 'BeamNG launched in Vulkan mode. Change BeamNG-VRS.ini and restart to apply settings.'
 } catch {

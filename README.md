@@ -25,7 +25,9 @@ The launcher validates settings, starts the game in Vulkan mode, and activates b
 
 The launcher uses Windows PowerShell 5.1, included by default in Windows 10 and 11. PowerShell 7 is not required. `BeamNG-VRS-Check.exe` validates your INI automatically before launch; keep it with the other package files.
 
-The ZIP keeps its DLLs and settings inside `BeamNG-VRS/`; it does not replace original game files or register layers globally. Launch BeamNG normally to stop using the layers. To uninstall, close the game and remove that folder and the launch shortcut. Back up the INI before extracting an update.
+If normal Vulkan works but this launcher reports no rendering device, run `Diagnose-BeamNG-VRS.cmd`. Close the game and any error dialog, then inspect the Vulkan loader log at the path printed in the window. The launcher adds its Vulkan layer folder while preserving normal layer discovery. Run it with your normal user account; elevated applications ignore Vulkan layer search paths.
+
+The ZIP keeps its DLLs and settings inside `BeamNG-VRS/`; it does not replace original game files or register layers globally. Launch BeamNG normally to stop using the layers. To uninstall, close the game and remove that folder and both launch shortcuts. Back up the INI before extracting an update.
 
 ## Build
 

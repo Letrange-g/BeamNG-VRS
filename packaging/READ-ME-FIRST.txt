@@ -41,10 +41,16 @@ The game may require its normal Steam session. Start Steam first if needed.
 
 UNINSTALL / UPDATE
 Launch BeamNG normally to stop using these layers. To uninstall, close the
-game, then delete Launch-BeamNG-VRS.cmd and the BeamNG-VRS folder.
+game, then delete Launch-BeamNG-VRS.cmd, Diagnose-BeamNG-VRS.cmd and the
+BeamNG-VRS folder.
 Back up your INI before extracting an update: extraction can overwrite it.
 
 TROUBLESHOOTING
+If normal Vulkan works but VRS launch reports no rendering device, run
+Diagnose-BeamNG-VRS.cmd. Close the game and any error dialog, then inspect
+the loader log at the path printed in the window. Run with your normal user
+account: Vulkan ignores custom layer search paths in elevated applications.
+The launcher preserves normal Vulkan layer discovery and existing overrides.
 Extract into the game installation folder, not its user-data folder.
 For an unusual layout, run BeamNG-VRS/Launch-BeamNG-VRS.ps1 with
 -GameExecutable "C:\path\to\Bin64\BeamNG.drive.x64.exe".

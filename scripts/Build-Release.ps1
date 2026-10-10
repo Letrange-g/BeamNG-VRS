@@ -1,11 +1,11 @@
 [CmdletBinding()]
 param(
-    [string]$Version = '0.1.0-beta.2',
+    [string]$Version = '0.1.0-beta.3',
     [string]$BuildDirectory,
     [string]$OutputDirectory
 )
 $ErrorActionPreference = 'Stop'
-if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.]+)?$') { throw 'Use a version such as 0.1.0-beta.2.' }
+if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.]+)?$') { throw 'Use a version such as 0.1.0-beta.3.' }
 $root = Split-Path -Parent $PSScriptRoot
 if (-not $BuildDirectory) { $BuildDirectory = Join-Path $root 'build/windows-release' }
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $root 'out/releases' }
@@ -35,7 +35,7 @@ foreach ($file in @('BeamNG_VRS.dll', 'BeamNG_EyeProbe.dll', 'BeamNG-VRS-Check.e
 foreach ($file in @('BeamNG-VRS.ini', 'Launch-BeamNG-VRS.ps1')) {
     Copy-Item -LiteralPath (Join-Path $root "packaging/$file") -Destination $layers
 }
-foreach ($file in @('Launch-BeamNG-VRS.cmd', 'READ-ME-FIRST.txt')) {
+foreach ($file in @('Launch-BeamNG-VRS.cmd', 'Diagnose-BeamNG-VRS.cmd', 'READ-ME-FIRST.txt')) {
     Copy-Item -LiteralPath (Join-Path $root "packaging/$file") -Destination $stage
 }
 Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination $layers

@@ -2,6 +2,8 @@ Experimental Windows x64 beta with portable installation and streamlined INI set
 
 This update fixes game discovery when the ZIP is extracted directly inside `Bin64`. Both installation locations are now supported. The launcher uses Windows PowerShell 5.1, included by default in Windows 10 and 11; PowerShell 7 is not required.
 
+The launcher now preserves normal Vulkan layer discovery. For a rendering-device startup error, run `Diagnose-BeamNG-VRS.cmd` and close the game/error dialog to collect the loader log at the printed path. Run under your normal user account. This adds troubleshooting information; it does not establish the cause of every rendering-device error.
+
 1. Download the **BeamNG-VRS Windows x64 `.zip`** under Assets below. The GitHub source-code archives do not contain DLLs.
 2. Close BeamNG and extract the entire ZIP into its installation root, beside `Bin64`, or directly inside `Bin64`. Keep `Launch-BeamNG-VRS.cmd` and the `BeamNG-VRS` folder together.
 3. Edit `BeamNG-VRS/BeamNG-VRS.ini` if desired, then run `Launch-BeamNG-VRS.cmd`.
