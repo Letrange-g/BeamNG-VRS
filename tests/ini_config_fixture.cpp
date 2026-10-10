@@ -21,6 +21,6 @@ int wmain(int argc, wchar_t** argv) {
 #else
 int main(int argc, char** argv) {
 #endif
- if(argc != 2) { std::cerr << "Usage: BeamNG-VRS-Check <INI path>\n"; return 2; }
+ if(argc != 2) { std::cerr << "Usage: ini_config_fixture <INI path>\n"; return 2; }
  return check(std::filesystem::path(argv[1]));
 }

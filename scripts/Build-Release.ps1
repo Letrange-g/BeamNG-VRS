@@ -1,11 +1,11 @@
 [CmdletBinding()]
 param(
-    [string]$Version = '0.1.0-beta.4',
+    [string]$Version = '0.1.0-beta.5',
     [string]$BuildDirectory,
     [string]$OutputDirectory
 )
 $ErrorActionPreference = 'Stop'
-if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.]+)?$') { throw 'Use a version such as 0.1.0-beta.4.' }
+if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.]+)?$') { throw 'Use a version such as 0.1.0-beta.5.' }
 $root = Split-Path -Parent $PSScriptRoot
 if (-not $BuildDirectory) { $BuildDirectory = Join-Path $root 'build/windows-release' }
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $root 'out/releases' }
@@ -28,7 +28,7 @@ $zip = Join-Path $OutputDirectory ($packageName + '.zip')
 if (Test-Path -LiteralPath $zip) { throw "Release ZIP already exists: $zip. Choose a new version or output directory." }
 $layers = Join-Path $stage 'BeamNG-VRS'
 [void](New-Item -ItemType Directory -Path $layers -Force)
-foreach ($file in @('BeamNG_VRS.dll', 'BeamNG_EyeProbe.dll', 'BeamNG-VRS-Check.exe',
+foreach ($file in @('BeamNG_VRS.dll', 'BeamNG_EyeProbe.dll',
         'VK_LAYER_BEAMNG_vrs.json', 'XR_APILAYER_BEAMNG_eye_probe.json')) {
     Copy-Item -LiteralPath (Join-Path $release $file) -Destination $layers
 }
@@ -40,7 +40,11 @@ foreach ($file in @('Launch-BeamNG-VRS.cmd', 'Diagnose-BeamNG-VRS.cmd', 'READ-ME
 }
 Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination $layers
 Copy-Item -LiteralPath (Join-Path $root 'docs/images/vrs-settings.png') -Destination (Join-Path $layers 'VRS-SETTINGS.png')
-Run-Native -Command (Join-Path $layers 'BeamNG-VRS-Check.exe') -CommandArguments @((Join-Path $layers 'BeamNG-VRS.ini'))
+Run-Native -Command powershell.exe -CommandArguments @('-NoProfile', '-ExecutionPolicy', 'Bypass',
+    '-File', (Join-Path $layers 'Launch-BeamNG-VRS.ps1'), '-ValidateOnly')
+if (@(Get-ChildItem -LiteralPath $stage -Recurse -File -Filter '*.exe').Count) {
+    throw 'The portable package must not contain EXE files.'
+}
 $commit = & git -C $root rev-parse HEAD
 if ($LASTEXITCODE -ne 0) { throw 'Could not record source commit.' }
 $dirty = @(& git -C $root status --porcelain)

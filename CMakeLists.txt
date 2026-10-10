@@ -42,15 +42,9 @@ else()
   message(WARNING "OpenXR headers not found: BeamNG_EyeProbe target will not build. Set OPENXR_INCLUDE_DIR.")
 endif()
 
-add_executable(BeamNG-VRS-Check src/config_check.cpp)
-target_compile_features(BeamNG-VRS-Check PRIVATE cxx_std_20)
-target_compile_definitions(BeamNG-VRS-Check PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
-if(MINGW)
-  target_link_options(BeamNG-VRS-Check PRIVATE -municode)
-endif()
 if(MSVC)
   # Make the ZIP self-contained: users do not need a separate VC runtime install.
-  set_property(TARGET BeamNG_VRS BeamNG-VRS-Check PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+  set_property(TARGET BeamNG_VRS PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   if(TARGET BeamNG_EyeProbe)
     set_property(TARGET BeamNG_EyeProbe PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   endif()
@@ -58,6 +52,16 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+  # Test-only oracle compares launcher validation with the layers' C++ parser.
+  add_executable(ini_config_fixture tests/ini_config_fixture.cpp)
+  target_compile_features(ini_config_fixture PRIVATE cxx_std_20)
+  target_include_directories(ini_config_fixture PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+  if(MINGW)
+    target_link_options(ini_config_fixture PRIVATE -municode)
+  endif()
+  add_test(NAME launcher_ini_validation
+    COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/Test-INIValidation.ps1"
+    -ParserFixture "$<TARGET_FILE:ini_config_fixture>")
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   file(GLOB contract_tests CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_*.py")
   foreach(test IN LISTS contract_tests)

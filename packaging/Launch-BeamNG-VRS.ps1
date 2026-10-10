@@ -2,11 +2,74 @@
 param(
     [string]$GameExecutable,
     [switch]$CheckOnly,
-    [switch]$Diagnostics
+    [switch]$Diagnostics,
+    [switch]$ValidateOnly
 )
 $ErrorActionPreference = 'Stop'
+function Assert-IniNumber {
+    param([string]$Value, [double]$Low, [double]$High, [bool]$Integer)
+    [double]$number = 0
+    if (-not [double]::TryParse($Value, [Globalization.NumberStyles]::Float,
+            [Globalization.CultureInfo]::InvariantCulture, [ref]$number) -or
+        [double]::IsNaN($number) -or [double]::IsInfinity($number) -or
+        $number -lt $Low -or $number -gt $High -or ($Integer -and $Value -cnotmatch '^[0-9]+$')) {
+        throw 'value is outside the allowed range'
+    }
+    return $number
+}
+function Test-BeamNGIni {
+    param([string]$Path)
+    $encoding = New-Object Text.UTF8Encoding($false, $true)
+    $text = $encoding.GetString([IO.File]::ReadAllBytes($Path))
+    if ($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) { $text = $text.Substring(1) }
+    $whitespace = [char[]]" `t`r`n"
+    $section = ''; $lineNumber = 0; $seen = @{}
+    $sizes = @{'foveation.size1x1' = 0.25; 'foveation.size2x2' = 0.60}
+    $ranges = @{
+        'foveation.size1x1' = @(0, 1, $false)
+        'foveation.size2x2' = @(0, 1, $false)
+        'scissor.top' = @(0, 0.49, $false)
+        'scissor.bottom' = @(0, 0.49, $false)
+        'tracking.graceperiodms' = @(0, 1000, $true)
+        'tracking.gazerefreshms' = @(2, 50, $true)
+    }
+    foreach ($line in ($text -split "`n")) {
+        ++$lineNumber
+        $line = $line.Trim($whitespace)
+        if (-not $line -or $line.StartsWith(';') -or $line.StartsWith('#')) { continue }
+        try {
+            if ($line.StartsWith('[')) {
+                if (-not $line.EndsWith(']')) { throw 'invalid section header' }
+                $section = $line.Substring(1, $line.Length - 2).Trim($whitespace).ToLowerInvariant()
+                if (@('foveation', 'debug', 'scissor', 'tracking') -cnotcontains $section) { throw 'unknown section' }
+                continue
+            }
+            $equals = $line.IndexOf('=')
+            if ($equals -lt 0) { throw 'expected key=value' }
+            $key = $line.Substring(0, $equals).Trim($whitespace).ToLowerInvariant()
+            $value = $line.Substring($equals + 1).Trim($whitespace)
+            $id = $section + '.' + $key
+            if ($seen.ContainsKey($id)) { throw 'duplicate setting' }
+            $seen[$id] = $true
+            if ($ranges.ContainsKey($id)) {
+                $range = $ranges[$id]
+                $number = Assert-IniNumber -Value $value -Low $range[0] -High $range[1] -Integer $range[2]
+                if ($sizes.ContainsKey($id)) { $sizes[$id] = $number }
+            } elseif ($id -eq 'foveation.shape') {
+                if (@('circle', 'square', 'ellipse') -cnotcontains $value.ToLowerInvariant()) { throw 'unsupported setting value' }
+            } elseif ($id -eq 'debug.drawoutline' -or $id -eq 'scissor.enabled') {
+                if (@('0', '1', 'false', 'true') -cnotcontains $value.ToLowerInvariant()) { throw 'expected 0, 1, false or true' }
+            } else { throw 'unknown section or setting' }
+        } catch { throw "INI line ${lineNumber}: $($_.Exception.Message)" }
+    }
+    if ($seen.Count -eq 0) { throw 'INI contains no settings' }
+    if ($sizes['foveation.size1x1'] -gt $sizes['foveation.size2x2']) { throw 'Size1x1 must not exceed Size2x2' }
+    Write-Output 'BeamNG-VRS.ini is valid.'
+}
 try {
     $layerDirectory = $PSScriptRoot
+    Test-BeamNGIni -Path (Join-Path $layerDirectory 'BeamNG-VRS.ini')
+    if ($ValidateOnly) { return }
     $installDirectory = Split-Path -Parent $layerDirectory
     # Accept extraction at the game root or directly inside its Bin64 folder.
     $binaryDirectory = if ((Split-Path -Leaf $installDirectory) -ieq 'Bin64') {
@@ -14,14 +77,12 @@ try {
     } else {
         Join-Path $installDirectory 'Bin64'
     }
-    foreach ($file in @('BeamNG_VRS.dll', 'BeamNG_EyeProbe.dll', 'BeamNG-VRS-Check.exe',
+    foreach ($file in @('BeamNG_VRS.dll', 'BeamNG_EyeProbe.dll',
             'VK_LAYER_BEAMNG_vrs.json', 'XR_APILAYER_BEAMNG_eye_probe.json', 'BeamNG-VRS.ini')) {
         if (-not (Test-Path -LiteralPath (Join-Path $layerDirectory $file) -PathType Leaf)) {
             throw "Missing $file. Extract the entire release ZIP into the BeamNG root folder."
         }
     }
-    & (Join-Path $layerDirectory 'BeamNG-VRS-Check.exe') (Join-Path $layerDirectory 'BeamNG-VRS.ini')
-    if ($LASTEXITCODE -ne 0) { throw 'Invalid settings. Fix BeamNG-VRS.ini using the error above, then try again.' }
     if (-not $GameExecutable) {
         foreach ($candidate in @('BeamNG.drive.x64.exe', 'BeamNG.drive.exe')) {
             $path = Join-Path $binaryDirectory $candidate

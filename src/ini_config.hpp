@@ -55,7 +55,7 @@ inline void activation(Values& out, bool enabled) {
 inline Values defaults() {
  Values out;
  activation(out, true);
- out["BEAMNG_VRS_SHAPE"] = "circle";
+ out["BEAMNG_VRS_SHAPE"] = "ellipse";
  out["BEAMNG_VRS_FOVEATION_MODE"] = "eye";
  out["BEAMNG_VRS_CENTER_RADIUS"] = "0.25";
  out["BEAMNG_VRS_MID_RADIUS"] = "0.60";
@@ -67,8 +67,8 @@ inline Values defaults() {
  out["BEAMNG_VRS_DEBUG_OUTLINE"] = "0";
  out["BEAMNG_VRS_OUTLINE_RESIZE_PAUSE_MS"] = "350";
  out["BEAMNG_VRS_SCISSOR_ENABLE"] = "0";
- out["BEAMNG_VRS_SCISSOR_TOP"] = "0.20";
- out["BEAMNG_VRS_SCISSOR_BOTTOM"] = "0.20";
+ out["BEAMNG_VRS_SCISSOR_TOP"] = "0.30";
+ out["BEAMNG_VRS_SCISSOR_BOTTOM"] = "0.30";
  out["BEAMNG_VRS_M818_STENCIL"] = "0";
  out["BEAMNG_VRS_LOG_LEVEL"] = "1";
  return out;

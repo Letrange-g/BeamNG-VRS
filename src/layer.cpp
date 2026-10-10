@@ -97,7 +97,7 @@ struct CropState { bool active=false; uint32_t width=0,height=0; VkRect2D render
 std::unordered_map<VkCommandBuffer,CropState> cropStates;
 bool cropEnabled() { char v[8]{}; return beamng_config::read("BEAMNG_VRS_SCISSOR_ENABLE",v,sizeof(v)) && strcmp(v,"1")==0; }
 // Read at process startup (restart BeamNG to apply new crop settings).
-// Values are fractions of the eye framebuffer height, not percentages (0.20 = 20%).
+// Values are fractions of the eye framebuffer height, not percentages (0.30 = 30%).
 double cropFraction(const char* key, double fallback) {
   char buffer[64] = {};
   DWORD len = beamng_config::read(key, buffer, static_cast<DWORD>(sizeof(buffer)));
@@ -108,8 +108,8 @@ double cropFraction(const char* key, double fallback) {
   return std::clamp(value, 0.0, 0.49);
 }
 VkRect2D cropRect(uint32_t w,uint32_t h) {
-  static const double topFraction = cropFraction("BEAMNG_VRS_SCISSOR_TOP", 0.20);
-  static const double bottomFraction = cropFraction("BEAMNG_VRS_SCISSOR_BOTTOM", 0.20);
+  static const double topFraction = cropFraction("BEAMNG_VRS_SCISSOR_TOP", 0.30);
+  static const double bottomFraction = cropFraction("BEAMNG_VRS_SCISSOR_BOTTOM", 0.30);
   const uint32_t top = static_cast<uint32_t>(h * topFraction);
   const uint32_t bottom = static_cast<uint32_t>(h * bottomFraction);
   return {{0,static_cast<int32_t>(top)},{w,h-top-bottom}};
@@ -447,14 +447,15 @@ float m59Radius(const char* name, float fallback) {
  if (end == v || *end != '\0' || !std::isfinite(value) || value < 0.0f || value > 1.0f) return fallback;
  return value;
 }
-// M8.24: user-friendly per-eye region shape. Default is a true pixel circle.
+// M8.24: user-friendly per-eye region shape. Default is viewport-relative ellipse.
 beamng_ffr::Shape m824Shape() {
  char value[24]{};
  if(!beamng_config::read("BEAMNG_VRS_SHAPE",value,sizeof(value)))
-  return beamng_ffr::Shape::Circle;
+  return beamng_ffr::Shape::Ellipse;
+ if(!_stricmp(value,"circle"))return beamng_ffr::Shape::Circle;
  if(!_stricmp(value,"square"))return beamng_ffr::Shape::Square;
  if(!_stricmp(value,"ellipse"))return beamng_ffr::Shape::Ellipse;
- return beamng_ffr::Shape::Circle;
+ return beamng_ffr::Shape::Ellipse;
 }
 uint8_t m59Rate(const char* name, uint8_t fallback) {
  char v[16] = {};

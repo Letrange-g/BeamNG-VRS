@@ -60,7 +60,7 @@ try {
     $bin = Join-Path $temp 'Bin64'
     [void](New-Item -ItemType Directory -Path $layers, $bin)
     Copy-Item -LiteralPath $GameFixture -Destination (Join-Path $bin 'BeamNG.drive.x64.exe')
-    foreach ($file in @('BeamNG_VRS.dll', 'BeamNG_EyeProbe.dll', 'BeamNG-VRS-Check.exe',
+    foreach ($file in @('BeamNG_VRS.dll', 'BeamNG_EyeProbe.dll',
             'VK_LAYER_BEAMNG_vrs.json', 'XR_APILAYER_BEAMNG_eye_probe.json')) {
         Copy-Item -LiteralPath (Join-Path $BuildDirectory $file) -Destination $layers
     }

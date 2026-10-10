@@ -18,6 +18,14 @@ int main() {
  assert(defaults.at("BEAMNG_EYE_FORCE_EXTENSION") == "1");
  assert(defaults.at("BEAMNG_VRS_GAZE_GRACE_MS") == "30");
  assert(defaults.at("BEAMNG_VRS_GAZE_UPDATE_MS") == "8");
+ assert(defaults.at("BEAMNG_VRS_SHAPE") == "ellipse");
+ assert(defaults.at("BEAMNG_VRS_SCISSOR_TOP") == "0.30");
+ assert(defaults.at("BEAMNG_VRS_SCISSOR_BOTTOM") == "0.30");
+ std::istringstream omitted("[Debug]\nDrawOutline=false\n");
+ const auto fallback = parse(omitted);
+ assert(fallback.at("BEAMNG_VRS_SHAPE") == "ellipse");
+ assert(fallback.at("BEAMNG_VRS_SCISSOR_TOP") == "0.30");
+ assert(fallback.at("BEAMNG_VRS_SCISSOR_BOTTOM") == "0.30");
  std::istringstream text("\xEF\xBB\xBF; comment\r\n [DeBuG]\r\nDrawOutline = TRUE\r\n[Scissor]\r\nEnabled = false\r\nTop=0.1\r\nBottom=0.3\r\n[Foveation]\r\nShape=SQUARE\r\n");
  const auto values = parse(text);
  assert(values.at("BEAMNG_VRS_DEBUG_OUTLINE") == "1");

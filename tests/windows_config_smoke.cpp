@@ -18,20 +18,20 @@ int main(int argc, char** argv) {
  assert(SetEnvironmentVariableA("BEAMNG_VRS_ENABLE_FEATURES", nullptr));
  char buffer[32]{};
  if(mode == "valid") {
-  assert(beamng_config::read("BEAMNG_VRS_SHAPE", buffer, sizeof(buffer)) == 6);
-  assert(std::strcmp(buffer, "circle") == 0);
+  assert(beamng_config::read("BEAMNG_VRS_SHAPE", buffer, sizeof(buffer)) == 7);
+  assert(std::strcmp(buffer, "ellipse") == 0);
   char small[2]{'x','x'};
-  assert(beamng_config::read("BEAMNG_VRS_SHAPE", small, sizeof(small)) == 7);
+  assert(beamng_config::read("BEAMNG_VRS_SHAPE", small, sizeof(small)) == 8);
   assert(small[0] == '\0');
-  assert(beamng_config::read("BEAMNG_VRS_SHAPE", nullptr, 0) == 7);
+  assert(beamng_config::read("BEAMNG_VRS_SHAPE", nullptr, 0) == 8);
  } else if(mode == "missing") assert(beamng_config::read("BEAMNG_VRS_SHAPE", buffer, sizeof(buffer)) == 0);
  else {
   assert(beamng_config::read("BEAMNG_VRS_ENABLE_FEATURES", buffer, sizeof(buffer)) == 1);
   assert(std::strcmp(buffer, "0") == 0);
  }
- assert(SetEnvironmentVariableA("BEAMNG_VRS_SHAPE", "ellipse"));
- assert(beamng_config::read("BEAMNG_VRS_SHAPE", buffer, sizeof(buffer)) == 7);
- assert(std::strcmp(buffer, "ellipse") == 0);
+ assert(SetEnvironmentVariableA("BEAMNG_VRS_SHAPE", "square"));
+ assert(beamng_config::read("BEAMNG_VRS_SHAPE", buffer, sizeof(buffer)) == 6);
+ assert(std::strcmp(buffer, "square") == 0);
  assert(SetEnvironmentVariableA("BEAMNG_CONFIG_TEST_UNRELATED", "unchanged"));
  assert(beamng_config::read("BEAMNG_CONFIG_TEST_UNRELATED", buffer, sizeof(buffer)) == 9);
  assert(std::strcmp(buffer, "unchanged") == 0);

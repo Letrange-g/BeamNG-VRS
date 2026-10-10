@@ -5,7 +5,7 @@ An **unofficial, experimental** pair of Windows API layers for **BeamNG.drive** 
 - **`BeamNG_VRS.dll`** – Vulkan layer applying per-eye fragment shading-rate patterns.
 - **`BeamNG_EyeProbe.dll`** – OpenXR API layer collecting gaze/eye-swapchain information when supported.
 
-The project supports fixed center foveation without eye tracking, and eye-following foveation when an OpenXR eye-tracking source is available. Center and middle regions can be **circle**, **square**, or **ellipse**; sizes are **diameters (or square side lengths) relative to eye-image height** rather than radii. The debug view can show a red 1×1 boundary and an orange 2×2-to-4×4 boundary.
+The project supports fixed center foveation without eye tracking, and eye-following foveation when an OpenXR eye-tracking source is available. Center and middle regions can be **circle**, **square**, or **ellipse** (the default). Ellipse uses width/height-relative diameters; circle uses height-relative diameter and square uses height-relative side length. The debug view can show a red 1×1 boundary and an orange 2×2-to-4×4 boundary.
 
 ## Status
 
@@ -23,13 +23,15 @@ The layers read **`BeamNG-VRS.ini`** beside the DLLs. A portable ZIP launcher an
 
 The launcher validates settings, starts the game in Vulkan mode, and activates both layers for that process. The ZIP is for Windows x64 and remains an experimental beta; see the requirements below before using it.
 
-The launcher uses Windows PowerShell 5.1, included by default in Windows 10 and 11. PowerShell 7 is not required. `BeamNG-VRS-Check.exe` validates your INI automatically before launch; keep it with the other package files.
+The launcher uses Windows PowerShell 5.1, included by default in Windows 10 and 11. PowerShell 7 is not required. The PowerShell launcher validates your INI automatically before launch. The package contains no EXE files.
 
 If normal Vulkan works but this launcher reports no rendering device, run `Diagnose-BeamNG-VRS.cmd`. Close the game and any error dialog, then inspect the Vulkan loader log at the path printed in the window. The launcher adds its Vulkan layer folder while preserving normal layer discovery. Run it with your normal user account; elevated applications ignore Vulkan layer search paths.
 
 If a previous beta logs `Failed to open dynamic library "./BeamNG_VRS.dll" with error 87`, update to beta.4 or newer. It corrects the Windows relative paths in both loader manifests.
 
 The ZIP keeps its DLLs and settings inside `BeamNG-VRS/`; it does not replace original game files or register layers globally. Launch BeamNG normally to stop using the layers. To uninstall, close the game and remove that folder and both launch shortcuts. Back up the INI before extracting an update.
+
+When updating from beta.4 or earlier, delete the old `BeamNG-VRS/BeamNG-VRS-Check.exe`; the launcher no longer uses it. Restoring an old INI preserves its settings. To use the new defaults, set `Shape=ellipse`, `Top=0.30`, and `Bottom=0.30` or use the new INI.
 
 ## Build
 
@@ -45,22 +47,22 @@ See [docs/CONFIGURATION.md](docs/CONFIGURATION.md). The user-facing controls are
 [Foveation]
 Size1x1=0.25
 Size2x2=0.60
-Shape=circle
+Shape=ellipse
 
 [Debug]
 DrawOutline=false
 
 [Scissor]
 Enabled=false
-Top=0.20
-Bottom=0.20
+Top=0.30
+Bottom=0.30
 
 [Tracking]
 GracePeriodMs=30
 GazeRefreshMs=8
 ```
 
-Restart BeamNG after editing. Sizes are diameters or square side lengths relative to eye-image height: **0.5 means half the eye-image height** for circle/square. The public launcher uses the INI settings; existing environment overrides remain supported when loading the layers through developer scripts.
+Restart BeamNG after editing. For ellipse, sizes are diameters relative to eye-image width horizontally and height vertically. Circle uses height for its diameter; square uses height for its side length. The public launcher uses the INI settings; existing environment overrides remain supported when loading the layers through developer scripts.
 
 ## Notes and limitations
 

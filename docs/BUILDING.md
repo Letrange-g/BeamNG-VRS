@@ -20,10 +20,12 @@ The expected outputs are `BeamNG_VRS.dll`, `BeamNG_EyeProbe.dll` (when OpenXR he
 With Visual Studio 2022 C++ tools, Git, CMake 3.25+, and Python 3 installed on Windows, run:
 
 ```powershell
-./scripts/Build-Release.ps1 -Version 0.1.0-beta.4
+./scripts/Build-Release.ps1 -Version 0.1.0-beta.5
 ```
 
-This script fetches pinned Vulkan and OpenXR header revisions from Khronos, builds both DLLs and the INI validator, runs the portable C++/Python tests plus Windows configuration and launcher integration tests, then packages `out/releases/BeamNG-VRS-0.1.0-beta.4-windows-x64.zip` and a SHA-256 file. It does not require the full graphical SDKs for this header-only build path. The Release DLLs use the static MSVC runtime. The script refuses to overwrite an existing ZIP or staging directory; use a new version or output directory for another build.
+This script fetches pinned Vulkan and OpenXR header revisions from Khronos, builds both DLLs, runs the portable C++/Python tests plus Windows configuration and launcher integration tests, then packages `out/releases/BeamNG-VRS-0.1.0-beta.5-windows-x64.zip` and a SHA-256 file. It does not require the full graphical SDKs for this header-only build path. The Release DLLs use the static MSVC runtime. The script refuses to overwrite an existing ZIP or staging directory; use a new version or output directory for another build.
+
+The package contains no EXE files. INI validation runs in the existing PowerShell launcher, with a test-only C++ fixture checking that it agrees with the DLL parser on valid and invalid settings. The packaging script rejects EXE files in the staged release.
 
 The GitHub Actions workflow **Build Windows beta ZIP** performs these steps on Windows 2022 and uploads the ZIP as a workflow artifact. It runs on main-branch pushes, pull requests, or manual dispatch. Ordinary builds do not publish a release. For an intentional beta publication, dispatch it manually with the package version and **Publish the tested ZIP** enabled; a separate job verifies the archive checksum and publishes a prerelease using the workflow's GitHub token only after all build/tests pass. Repository visibility stays unchanged.
 
@@ -33,12 +35,12 @@ The ZIP contains:
 
 ```text
 Launch-BeamNG-VRS.cmd
+Diagnose-BeamNG-VRS.cmd
 READ-ME-FIRST.txt
 SHA256SUMS.txt
 BeamNG-VRS/
   BeamNG_VRS.dll
   BeamNG_EyeProbe.dll
-  BeamNG-VRS-Check.exe
   VK_LAYER_BEAMNG_vrs.json
   XR_APILAYER_BEAMNG_eye_probe.json
   BeamNG-VRS.ini
