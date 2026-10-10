@@ -16,6 +16,9 @@ try {
         @{ Text = "[Foveation]`nSize1x1=0.1`nSize2x2=0.1`nShape=ellipse"; Valid = $true },
         @{ Text = "[Foveation]`nShape=circle`n[Debug]`nDrawOutline=1"; Valid = $true },
         @{ Text = "[Foveation]`nShape=square`n[Scissor]`nEnabled=TRUE`nTop=0.49`nBottom=0"; Valid = $true },
+        @{ Text = "[Scissor]`nLeft=0`nRight=0"; Valid = $true },
+        @{ Text = "[Scissor]`nLeft=0.49`nRight=0.49"; Valid = $true },
+        @{ Text = "[Scissor]`nTop=0.30`nBottom=0.30`nLeft=0.05`nRight=0.10"; Valid = $true },
         @{ Text = "[Tracking]`nGracePeriodMs=0`nGazeRefreshMs=50"; Valid = $true },
         @{ Text = "[Tracking]`nGracePeriodMs=1000`nGazeRefreshMs=2"; Valid = $true },
         @{ Text = ([string][char]0xFEFF) + "; comment`r`n [DeBuG]`r`nDrawOutline = TRUE`r`n[Scissor]`r`nBottom=+0.30`r`n"; Valid = $true }
@@ -27,6 +30,8 @@ try {
         "[Foveation]`nSize1x1=0.7`nSize2x2=0.5", "[Foveation]`nSize1x1=0.7",
         "[Foveation]`nSize2x2=0.1", "[Foveation]`nSize1x1=0,25", "[Scissor]`nTop=0.5",
         "[Scissor]`nBottom=-0.1", "[Scissor]`nEnabled=yes", "[Tracking]`nGracePeriodMs=1001",
+        "[Scissor]`nLeft=-0.1", "[Scissor]`nLeft=0.5", "[Scissor]`nRight=0.5",
+        "[Scissor]`nRight=NaN", "[Scissor]`nLeft=0`nleft=0.1",
         "[Tracking]`nGazeRefreshMs=1", "[Tracking]`nGazeRefreshMs=8.5",
         "[Tracking]`nGazeRefreshMs=8.0", "[Tracking]`nGazeRefreshMs=+8",
         "[Tracking]`nGazeRefreshMs=8e0", "[Foveation]`nShape=triangle",

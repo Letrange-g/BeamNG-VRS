@@ -1,6 +1,10 @@
 Experimental Windows x64 beta with portable installation and streamlined INI settings.
 
+Beta.8 adds `Left` and `Right` under `[Scissor]`, as fractions of eye-image width from 0 to 0.49. Both default to `0`; old INIs without these keys keep zero horizontal crop. To try them, enable scissor and start with `Left=0.05` / `Right=0.05`, then check both eyes for visible black borders. Top/bottom retain their height-relative defaults of 0.30. Up to four non-overlapping black borders are cleared in one call. This new crop still needs testing in BeamNG with the target headset.
+
 M8.28 also reuses completed transfer recordings when their source slots, images, extents and queue family match; new staged bytes are read when the transfer executes. GPU barriers and fence ownership are retained.
+
+Matching static scissors now carry through to the compatible VRS pipeline copies; previous copies could retain the original scissor. Dynamic scissors keep the existing command-hook path. The Windows checks exercise both paths, asymmetric crops, side-only crops, extreme margins, border clears and zero-size foveation.
 
 M8.27 adds faster CPU pattern generation, skips byte-identical gaze uploads, reuses completed upload resources, and removes heap allocations from command dispatch. Scissor clears are batched, and live uploads also cover Vulkan Submit2. Live VRS now validates projected-gaze freshness independently of raw-pose diagnostics. Update both DLLs together. See [performance findings](https://github.com/Letrange-g/BeamNG-VRS/blob/main/docs/PERFORMANCE.md) for CPU benchmark results and an in-game comparison procedure; no FPS improvement or render-distance cap is claimed.
 
@@ -19,7 +23,7 @@ The launcher preserves normal Vulkan layer discovery. For a rendering-device sta
 
 The package includes both DLLs, script-based INI validation, installation/uninstall instructions, an MIT license, a visual settings guide, and checksums. No administrator rights or global layer registration are required. Start Steam first if your game installation needs it.
 
-Defaults: `Size1x1=0.25`, `Size2x2=0.60`, `Shape=ellipse`, `DrawOutline=false`, scissor disabled (top/bottom `0.30`), `GracePeriodMs=30`, and `GazeRefreshMs=8`.
+Defaults: `Size1x1=0.25`, `Size2x2=0.60`, `Shape=ellipse`, `DrawOutline=false`, scissor disabled (top/bottom `0.30`, left/right `0`), `GracePeriodMs=30`, and `GazeRefreshMs=8`.
 
 Built on Windows with Visual Studio 2022. The portable tests, Windows configuration tests, DLL loading/export checks, and launcher integration test passed before packaging. The exact source commit is recorded in `BeamNG-VRS/BUILD-INFO.txt`.
 

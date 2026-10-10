@@ -8,6 +8,7 @@
 #include "m821_gaze_timing.hpp"
 #include "m825_gaze_hold.hpp"
 #include "gaze_freshness.hpp"
+#include "scissor_crop.hpp"
 #include <windows.h>
 #include <cmath>
 #include <cstdlib>
@@ -105,7 +106,7 @@ bool settingFlag(const char* name){char v[8]{};return beamng_config::read(name,v
 bool cropEnabled(){static const bool on=settingFlag("BEAMNG_VRS_SCISSOR_ENABLE");return on;}
 bool outlineEnabled(){static const bool on=settingFlag("BEAMNG_VRS_DEBUG_OUTLINE");return on;}
 // Read at process startup (restart BeamNG to apply new crop settings).
-// Values are fractions of the eye framebuffer height, not percentages (0.30 = 30%).
+// Fractions of eye height for top/bottom, eye width for left/right.
 double cropFraction(const char* key, double fallback) {
   char buffer[64] = {};
   DWORD len = beamng_config::read(key, buffer, static_cast<DWORD>(sizeof(buffer)));
@@ -115,12 +116,19 @@ double cropFraction(const char* key, double fallback) {
   if (end == buffer || *end != '\0' || !std::isfinite(value)) return fallback;
   return std::clamp(value, 0.0, 0.49);
 }
+beamng_scissor::Crop cropGeometry(uint32_t w,uint32_t h) {
+  static const beamng_scissor::Margins margins{
+    cropFraction("BEAMNG_VRS_SCISSOR_TOP", 0.30),
+    cropFraction("BEAMNG_VRS_SCISSOR_BOTTOM", 0.30),
+    cropFraction("BEAMNG_VRS_SCISSOR_LEFT", 0.0),
+    cropFraction("BEAMNG_VRS_SCISSOR_RIGHT", 0.0)};
+  return beamng_scissor::make(w,h,margins);
+}
+VkRect2D cropVkRect(beamng_scissor::Rect r) {
+  return {{static_cast<int32_t>(r.x),static_cast<int32_t>(r.y)},{r.width,r.height}};
+}
 VkRect2D cropRect(uint32_t w,uint32_t h) {
-  static const double topFraction = cropFraction("BEAMNG_VRS_SCISSOR_TOP", 0.30);
-  static const double bottomFraction = cropFraction("BEAMNG_VRS_SCISSOR_BOTTOM", 0.30);
-  const uint32_t top = static_cast<uint32_t>(h * topFraction);
-  const uint32_t bottom = static_cast<uint32_t>(h * bottomFraction);
-  return {{0,static_cast<int32_t>(top)},{w,h-top-bottom}};
+  return cropVkRect(cropGeometry(w,h).keep);
 }
 VkRect2D intersectRect(VkRect2D a,VkRect2D b) {
   int64_t x=std::max<int64_t>(a.offset.x,b.offset.x), y=std::max<int64_t>(a.offset.y,b.offset.y);
@@ -1845,6 +1853,9 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
   // The modes are mutually exclusive. Prefer the safe pass-through if both are set.
   if (!count || !infos) return d.createPipelines(device, cache, count, infos, alloc, out);
   const bool modifyVrs = d.vrsEnabled && (uniform != attachment);
+  // Filled only on the crop/modification path. Compatible VRS copies must
+  // inherit the same static-scissor crop as their original pipeline.
+  std::vector<VkPipelineViewportStateCreateInfo> viewportStates;
   // M8.9: run for BOTH pipeline creation branches. Previously only the
   // passthrough branch created variants, while attachment-combiner mode used
   // the modified branch exclusively.
@@ -1866,6 +1877,8 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
           continue;
         }
         VkGraphicsPipelineCreateInfo variant=infos[i];
+        if(i<viewportStates.size() && viewportStates[i].pScissors)
+          variant.pViewportState=&viewportStates[i];
         variant.renderPass=shadow;
         VkPipelineFragmentShadingRateStateCreateInfoKHR rate{};
         rate.sType=VK_STRUCTURE_TYPE_PIPELINE_FRAGMENT_SHADING_RATE_STATE_CREATE_INFO_KHR;
@@ -1964,7 +1977,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
 
   std::vector<VkGraphicsPipelineCreateInfo> modified(infos, infos + count);
   std::vector<VkPipelineFragmentShadingRateStateCreateInfoKHR> states(count);
-  std::vector<VkPipelineViewportStateCreateInfo> viewportStates(count);
+  viewportStates.resize(count);
   std::vector<std::vector<VkRect2D>> staticScissors(count);
   uint32_t cropChanged = 0;
   uint32_t changed = 0;
@@ -2965,8 +2978,9 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdBeginRenderPass2(
 }
 
 
-// M6.0 EXPERIMENTAL: dynamic scissor + final black bars, legacy VR render passes only.
-// Static-scissor pipelines and dynamic-rendering passes are not cropped in this prototype.
+// M6.0/M8.29: dynamic scissor + final black borders, legacy VR render passes.
+// Matching static scissors are handled at pipeline creation; dynamic rendering
+// is not cropped by this path.
 extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdSetScissor(VkCommandBuffer cmd,uint32_t first,uint32_t count,const VkRect2D* rects) {
  auto d=lookupCommand(cmd);
  if(!cropEnabled()){if(d.cmdSetScissor)d.cmdSetScissor(cmd,first,count,rects);return;}
@@ -2999,13 +3013,13 @@ static void cropBlackBars(VkCommandBuffer cmd,const DeviceDispatch& d) {
  VkClearAttachment color{}; color.aspectMask=VK_IMAGE_ASPECT_COLOR_BIT; color.colorAttachment=0;
  color.clearValue.color.float32[0]=0; color.clearValue.color.float32[1]=0;
  color.clearValue.color.float32[2]=0; color.clearValue.color.float32[3]=1;
- const auto keep=cropRect(c.width,c.height);
- VkClearRect bars[2]={};
- bars[0].rect=intersectRect({{0,0},{c.width,static_cast<uint32_t>(keep.offset.y)}},c.renderArea);
- bars[1].rect=intersectRect({{0,static_cast<int32_t>(keep.offset.y+keep.extent.height)},{c.width,c.height-static_cast<uint32_t>(keep.offset.y)-keep.extent.height}},c.renderArea);
- for(auto& b:bars) b.layerCount=1;
+ const auto crop=cropGeometry(c.width,c.height);
+ VkClearRect bars[4]={};
  uint32_t count=0;
- for(const auto& b:bars)if(b.rect.extent.width && b.rect.extent.height)bars[count++]=b;
+ for(const auto& outside:crop.outside){
+  const auto rect=intersectRect(cropVkRect(outside),c.renderArea);
+  if(rect.extent.width && rect.extent.height)bars[count++]={rect,0,1};
+ }
  if(count)d.cmdClearAttachments(cmd,1,&color,count,bars);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdBindPipeline(VkCommandBuffer cmd,VkPipelineBindPoint point,VkPipeline pipeline) {

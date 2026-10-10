@@ -1,4 +1,4 @@
-# Performance work: M8.27–M8.28
+# Performance work: M8.27–M8.29
 
 This beta reduces layer overhead while retaining the configured foveation sizes,
 shape, 30 ms gaze grace and 8 ms refresh interval. GPU/FPS improvements must be
@@ -37,8 +37,17 @@ environment.
   each command. Quiet logging bypasses diagnostic pipeline-bind bookkeeping.
   Feature flags are cached on first use, consistently with the documented
   restart requirement. Disabled scissor and outlines skip their state lookups.
-  Up to 16 dynamic scissors use stack storage, and the two black bars are cleared
+  Up to 16 dynamic scissors use stack storage, and black borders are cleared
   in one call.
+- **Four-edge scissor (beta.8 / M8.29):** `Left` and `Right` crop fractions of
+  eye-image width and default to zero. Top/bottom retain their height-relative
+  defaults. The same rectangle clips matching static and dynamic scissors,
+  including static scissors in compatible VRS pipeline copies. Earlier copies
+  could retain the application's uncropped static scissor.
+  Up to four non-overlapping border rectangles are cleared together, restricted
+  to the original render area. This avoids clearing retained corner pixels.
+  Cropping reduces rasterization/pixel coverage; it does not cull objects or
+  avoid vertex processing. Older INIs retain zero horizontal crop.
 - **Submission APIs:** live uploads now precede `vkQueueSubmit2` and
   `vkQueueSubmit2KHR` as well as the original `vkQueueSubmit` path.
 - **Gaze freshness:** live VRS reads a separate projection mapping. Raw-pose
@@ -124,6 +133,15 @@ gate stays disabled. Existing lazy framebuffer creation is retained; framebuffer
 handles are not recycled across application lifetimes.
 
 ## Compare in BeamNG
+
+Initial beta.7 Italy-map tests supplied by the user reported roughly 70 FPS with
+default VRS on/off, 78–80 FPS with near-uniform 4×4 shading, and 90 FPS with
+top/bottom scissor. The original VRS videos included debug outlines; later
+screenshots used an open menu, and the zero-size diagnostic run enabled verbose
+logging. These are useful observations, not a controlled benchmark. CPU and GPU
+timing order varied across screenshots, so they do not establish a fixed CPU
+bottleneck. The visible coarse image confirms an effect on rendering; identifying
+the remaining GPU costs needs the layer log and a GPU timeline capture.
 
 1. Back up beta.5 and its INI. Keep the same map, vehicle, camera, weather,
    graphics settings, eye resolution and runtime/reprojection settings.

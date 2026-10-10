@@ -40,12 +40,17 @@ for y in (0, 420):
     ax.add_patch(Rectangle((0, y), 900, 180, facecolor="#593641", edgecolor="#b67880", hatch="///", lw=0))
     ax.text(450, y + 90, "CROPPED", ha="center", va="center", color="#f1cad0", fontsize=14)
 ax.hlines([180, 420], 0, 900, colors="#91d9e3", linestyles="--", lw=2)
-ax.text(450, 310, "Enabled = true", ha="center", color="white", fontsize=16, weight="bold")
-ax.text(450, 265, "Top = 0.30  ·  Bottom = 0.30", ha="center", color="white", fontsize=12)
+for x in (0, 810):
+    ax.add_patch(Rectangle((x, 180), 90, 240, facecolor="#593641", edgecolor="#b67880", hatch="///", lw=0))
+    ax.text(x + 45, 300, "10%", ha="center", va="center", color="#f1cad0", fontsize=11, rotation=90)
+ax.vlines([90, 810], 180, 420, colors="#91d9e3", linestyles="--", lw=2)
+ax.text(450, 335, "Enabled = true", ha="center", color="white", fontsize=16, weight="bold")
+ax.text(450, 290, "Top = 0.30  ·  Bottom = 0.30", ha="center", color="white", fontsize=12)
+ax.text(450, 248, "Example: Left = 0.10  ·  Right = 0.10", ha="center", color="white", fontsize=11)
 for y0, y1, label in ((420, 600, "30%"), (0, 180, "30%")):
     ax.annotate("", (850, y0), (850, y1), arrowprops={"arrowstyle": "<->", "color": "white", "lw": 1.7})
     ax.text(800, (y0 + y1) / 2, label, color="white", ha="right", va="center")
-ax.text(25, 200, "Disabled by default", color="#c7dee8", fontsize=11)
+ax.text(450, 207, "Defaults: disabled · Left = Right = 0", ha="center", color="#c7dee8", fontsize=10)
 
 fig.text(.055, .255, "Ellipse diameters scale with eye-image width horizontally and height vertically.", color="white", fontsize=12)
 fig.text(.055, .22, "Size2x2 must be at least Size1x1. Larger values preserve more detail.", color="#aabbd0", fontsize=11)

@@ -21,7 +21,7 @@ resolution and headset settings; see the [comparison procedure](docs/PERFORMANCE
 
 ## Status
 
-**Experimental beta.** M8.28 reuses completed transfer command recordings on top of M8.27's faster CPU patterns, allocation-free dispatch, identical-upload skipping, completed-resource reuse and independent gaze projection freshness. It retains the earlier dual outlines, gaze grace, region shapes and lazy framebuffers. Earlier rendering tests primarily covered a Pimax Dream Air and NVIDIA RTX 5090. Automated checks cover configuration, DLL loading, launcher behavior and mock rendering lifetimes. These changes still need testing in BeamNG with the target GPU/headset; see [performance findings and the comparison procedure](docs/PERFORMANCE.md).
+**Experimental beta.** Beta.8 adds left/right scissor cropping, defaulting to zero, alongside the existing top/bottom crop. M8.28 reuses completed transfer command recordings on top of M8.27's faster CPU patterns, allocation-free dispatch, identical-upload skipping, completed-resource reuse and independent gaze projection freshness. It retains the earlier dual outlines, gaze grace, region shapes and lazy framebuffers. Earlier rendering tests primarily covered a Pimax Dream Air and NVIDIA RTX 5090. Automated checks cover configuration, DLL loading, launcher behavior and mock rendering lifetimes. These changes still need testing in BeamNG with the target GPU/headset; see [performance findings and the comparison procedure](docs/PERFORMANCE.md).
 
 The layers read **`BeamNG-VRS.ini`** beside the DLLs. A portable ZIP launcher and a Windows build/package workflow are included. **No compiled DLLs are committed** in this repository; binary beta packages are distributed through GitHub Releases.
 
@@ -68,6 +68,8 @@ DrawOutline=false
 Enabled=false
 Top=0.30
 Bottom=0.30
+Left=0
+Right=0
 
 [Tracking]
 GracePeriodMs=30
@@ -75,6 +77,11 @@ GazeRefreshMs=8
 ```
 
 Restart BeamNG after editing. For ellipse, sizes are diameters relative to eye-image width horizontally and height vertically. Circle uses height for its diameter; square uses height for its side length. The public launcher uses the INI settings; existing environment overrides remain supported when loading the layers through developer scripts.
+
+Scissor `Top`/`Bottom` use eye-image height; `Left`/`Right` use width. Each accepts
+0 to 0.49. To try horizontal cropping in beta.8, enable scissor and start with
+`Left=0.05` and `Right=0.05`, then check both eyes for visible black borders.
+Older INIs that omit these two keys retain zero horizontal crop.
 
 ## Notes and limitations
 

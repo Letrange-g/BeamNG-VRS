@@ -30,6 +30,8 @@ function Test-BeamNGIni {
         'foveation.size2x2' = @(0, 1, $false)
         'scissor.top' = @(0, 0.49, $false)
         'scissor.bottom' = @(0, 0.49, $false)
+        'scissor.left' = @(0, 0.49, $false)
+        'scissor.right' = @(0, 0.49, $false)
         'tracking.graceperiodms' = @(0, 1000, $true)
         'tracking.gazerefreshms' = @(2, 50, $true)
     }

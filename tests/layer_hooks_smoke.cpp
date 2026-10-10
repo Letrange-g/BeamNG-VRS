@@ -14,24 +14,51 @@ void operator delete[](void* p,size_t)noexcept{std::free(p);}
 namespace {
 VkPipeline bound=VK_NULL_HANDLE;
 std::array<VkRect2D,16> scissors{};
+std::array<VkRect2D,4> cleared{};
+VkRect2D pipelineScissor{};
 uint32_t scissorCount=0,clearCalls=0,clearRects=0;
+uint32_t pipelineCreates=0;
 VKAPI_ATTR void VKAPI_CALL bind(VkCommandBuffer,VkPipelineBindPoint,VkPipeline p){bound=p;}
 VKAPI_ATTR void VKAPI_CALL setScissor(VkCommandBuffer,uint32_t,uint32_t count,const VkRect2D* rects){
  scissorCount=count;assert(count<=scissors.size());for(uint32_t i=0;i<count;++i)scissors[i]=rects[i];
 }
 VKAPI_ATTR void VKAPI_CALL clear(VkCommandBuffer,uint32_t attachmentCount,const VkClearAttachment*,uint32_t count,const VkClearRect* rects){
- assert(attachmentCount==1);++clearCalls;clearRects=count;
- for(uint32_t i=0;i<count;++i)assert(rects[i].layerCount==1 && rects[i].rect.extent.height==30);
+ assert(attachmentCount==1 && count<=cleared.size());++clearCalls;clearRects=count;
+ for(uint32_t i=0;i<count;++i){assert(rects[i].baseArrayLayer==0 && rects[i].layerCount==1);cleared[i]=rects[i].rect;}
+}
+VKAPI_ATTR VkResult VKAPI_CALL createPipelines(VkDevice,VkPipelineCache,uint32_t count,const VkGraphicsPipelineCreateInfo* infos,const VkAllocationCallbacks*,VkPipeline* out){
+ assert(count==1 && infos[0].pViewportState && infos[0].pViewportState->pScissors);
+ pipelineScissor=infos[0].pViewportState->pScissors[0];
+ out[0]=reinterpret_cast<VkPipeline>(uintptr_t(10+(++pipelineCreates)));return VK_SUCCESS;
+}
+VKAPI_ATTR void VKAPI_CALL destroyPipeline(VkDevice,VkPipeline,const VkAllocationCallbacks*){}
+bool contains(VkRect2D r,int32_t x,int32_t y){
+ return x>=r.offset.x && y>=r.offset.y && uint32_t(x-r.offset.x)<r.extent.width && uint32_t(y-r.offset.y)<r.extent.height;
+}
+void checkClears(VkRect2D area,VkRect2D keep){
+ for(int32_t y=0;y<100;++y)for(int32_t x=0;x<100;++x){
+  unsigned writes=0;for(uint32_t i=0;i<clearRects;++i)writes+=contains(cleared[i],x,y);
+  assert(writes==unsigned(contains(area,x,y) && !contains(keep,x,y)));
+ }
 }
 }
 int main(int argc,char** argv){
- const bool crop=argc==2 && std::strcmp(argv[1],"scissor")==0;
+ assert(argc==2);
+ const std::string mode=argv[1];
+ const bool crop=mode!="quiet";
+ const bool sides=mode=="scissor_sides" || mode=="scissor_sides_only";
+ const bool sidesOnly=mode=="scissor_sides_only", edges=mode=="scissor_edges";
+ const VkRect2D expectedCrop=edges?VkRect2D{{49,49},{2,2}}:
+  sides?VkRect2D{{10,sidesOnly?0:30},{70,sidesOnly?100u:40u}}:VkRect2D{{0,30},{100,40}};
  SetEnvironmentVariableA("BEAMNG_VRS_LOG_LEVEL","0");
  SetEnvironmentVariableA("BEAMNG_VRS_SCISSOR_ENABLE",crop?"1":"0");
- SetEnvironmentVariableA("BEAMNG_VRS_SCISSOR_TOP","0.30");
- SetEnvironmentVariableA("BEAMNG_VRS_SCISSOR_BOTTOM","0.30");
+ SetEnvironmentVariableA("BEAMNG_VRS_SCISSOR_TOP",edges?"0.49":sidesOnly?"0":"0.30");
+ SetEnvironmentVariableA("BEAMNG_VRS_SCISSOR_BOTTOM",edges?"0.49":sidesOnly?"0":"0.30");
+ SetEnvironmentVariableA("BEAMNG_VRS_SCISSOR_LEFT",edges?"0.49":sides?"0.10":"0");
+ SetEnvironmentVariableA("BEAMNG_VRS_SCISSOR_RIGHT",edges?"0.49":sides?"0.20":"0");
  SetEnvironmentVariableA("BEAMNG_VRS_DEBUG_OUTLINE","0");
  SetEnvironmentVariableA("BEAMNG_VRS_M8_EXPERIMENTAL","1");
+ SetEnvironmentVariableA("BEAMNG_VRS_M89_STATIC_TEST","1");
  SetEnvironmentVariableA("BEAMNG_VRS_M84_CPU_GAZE","1");
  SetEnvironmentVariableA("BEAMNG_VRS_GAZE_GRACE_MS","0");
  SetEnvironmentVariableA("BEAMNG_VRS_CENTER_RADIUS","0.25");
@@ -45,14 +72,16 @@ int main(int argc,char** argv){
  const auto original=reinterpret_cast<VkPipeline>(uintptr_t(3));
  const auto replacement=reinterpret_cast<VkPipeline>(uintptr_t(4));
  const auto pass=reinterpret_cast<VkRenderPass>(uintptr_t(5));
- DeviceDispatch d{};d.cmdBindPipeline=bind;d.cmdSetScissor=setScissor;d.cmdClearAttachments=clear;
+ DeviceDispatch d{};d.cmdBindPipeline=bind;d.cmdSetScissor=setScissor;d.cmdClearAttachments=clear;d.createPipelines=createPipelines;
  devices[device]=d;commandDevices[cmd]=device;
  m89ActiveShadows[cmd]=pass;m89Variants[original]={device,replacement,pass};
  m87ActivePasses[cmd]=pass;
  vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,original);assert(bound==replacement);
  VkRect2D rect{{0,0},{100,100}};
  cropStates[cmd]={true,100,100,rect,0};
- vkCmdSetScissor(cmd,0,1,&rect);assert(scissors[0].extent.height==(crop?40u:100u));
+ const auto expected=crop?expectedCrop:rect;
+ auto same=[](VkRect2D a,VkRect2D b){return a.offset.x==b.offset.x && a.offset.y==b.offset.y && a.extent.width==b.extent.width && a.extent.height==b.extent.height;};
+ vkCmdSetScissor(cmd,0,1,&rect);assert(same(scissors[0],expected));
  const uint64_t before=allocations.load();
  for(unsigned i=0;i<1000;++i){
   vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,original);
@@ -61,8 +90,42 @@ int main(int argc,char** argv){
  assert(allocations.load()==before);assert(m87PassBindCounts.empty());assert(bound==replacement);
  VkRect2D stereo[2]{rect,rect};
  const uint64_t multiBefore=allocations.load();vkCmdSetScissor(cmd,0,2,stereo);
- assert(allocations.load()==multiBefore && scissorCount==2);
- cropBlackBars(cmd,d);assert(clearCalls==(crop?1u:0u));if(crop)assert(clearRects==2);
+ assert(allocations.load()==multiBefore && scissorCount==2 && same(scissors[0],expected) && same(scissors[1],expected));
+ cropBlackBars(cmd,d);assert(clearCalls==(crop?1u:0u));
+ if(crop){
+  assert(clearRects==((sides && !sidesOnly) || edges?4u:2u));checkClears(rect,expectedCrop);
+  // Restrict each clear to the original render area, including corners.
+  VkRect2D partial{{0,20},{40,50}};cropStates[cmd]={true,100,100,partial,0};clearCalls=clearRects=0;
+  cropBlackBars(cmd,d);assert(clearCalls<=1);checkClears(partial,expectedCrop);
+  cropStates[cmd]={true,100,100,expectedCrop,0};clearCalls=clearRects=0;
+  cropBlackBars(cmd,d);assert(clearCalls==0 && clearRects==0);
+ }
+ // Matching static scissors use the same crop, while dynamic and other-size
+ // pipeline scissors remain application-owned until the eye command hook.
+ m814ActiveWidth=100;m814ActiveHeight=100;
+ VkViewport viewport{0,0,100,100,0,1};
+ VkPipelineViewportStateCreateInfo vp{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+ vp.viewportCount=vp.scissorCount=1;vp.pViewports=&viewport;vp.pScissors=&rect;
+ VkGraphicsPipelineCreateInfo info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};info.pViewportState=&vp;
+ VkPipeline made=VK_NULL_HANDLE;
+ assert(vkCreateGraphicsPipelines(device,VK_NULL_HANDLE,1,&info,nullptr,&made)==VK_SUCCESS);
+ assert(same(pipelineScissor,expected));
+ const VkDynamicState dynamic=VK_DYNAMIC_STATE_SCISSOR;
+ VkPipelineDynamicStateCreateInfo dynamicInfo{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};dynamicInfo.dynamicStateCount=1;dynamicInfo.pDynamicStates=&dynamic;
+ info.pDynamicState=&dynamicInfo;
+ assert(vkCreateGraphicsPipelines(device,VK_NULL_HANDLE,1,&info,nullptr,&made)==VK_SUCCESS && same(pipelineScissor,rect));
+ info.pDynamicState=nullptr;VkRect2D other{{0,0},{80,100}};vp.pScissors=&other;
+ assert(vkCreateGraphicsPipelines(device,VK_NULL_HANDLE,1,&info,nullptr,&made)==VK_SUCCESS && same(pipelineScissor,other));
+ // The replacement bound during a shadow pass must inherit the static crop.
+ devices[device].vrsEnabled=true;devices[device].destroyPipeline=destroyPipeline;
+ shadowPasses[pass]={device,reinterpret_cast<VkRenderPass>(uintptr_t(7))};
+ info.renderPass=pass;vp.pScissors=&rect;
+ auto createsBefore=pipelineCreates;
+ assert(vkCreateGraphicsPipelines(device,VK_NULL_HANDLE,1,&info,nullptr,&made)==VK_SUCCESS);
+ assert(pipelineCreates==createsBefore+2 && m89Variants.count(made) && same(pipelineScissor,expected));
+ info.pDynamicState=&dynamicInfo;createsBefore=pipelineCreates;
+ assert(vkCreateGraphicsPipelines(device,VK_NULL_HANDLE,1,&info,nullptr,&made)==VK_SUCCESS);
+ assert(pipelineCreates==createsBefore+2 && same(pipelineScissor,rect));
  m89ActiveShadows.erase(cmd);vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,original);assert(bound==original);
  // Stage through the real producer. A newer sample with identical payload
  // must not create a new upload, even while the latest source slot is pinned.

@@ -8,9 +8,11 @@ The release ZIP puts `BeamNG-VRS.ini` next to both DLLs in the `BeamNG-VRS` fold
 | Foveation | `Size2x2` | `0.60` | Outer size of the medium-quality region (0 to 1); must be at least `Size1x1`. Outside it, shading uses 4x4. |
 | Foveation | `Shape` | `ellipse` | `circle`, `square`, or `ellipse`. Square uses side length; ellipse uses eye-width-relative horizontal diameter and eye-height-relative vertical diameter. |
 | Debug | `DrawOutline` | `false` | Draw the red 1x1 boundary and orange 2x2-to-4x4 boundary. |
-| Scissor | `Enabled` | `false` | Experimental top/bottom crop. Test visible edges and frame times before enabling. |
+| Scissor | `Enabled` | `false` | Experimental four-edge crop. Test visible edges and frame times before enabling. |
 | Scissor | `Top` | `0.30` | Fraction of eye-image height cropped from the top when scissor is enabled (0 to 0.49). |
 | Scissor | `Bottom` | `0.30` | Fraction cropped from the bottom (0 to 0.49). |
+| Scissor | `Left` | `0` | Fraction of eye-image width cropped from the left (0 to 0.49). Requires beta.8 or newer. |
+| Scissor | `Right` | `0` | Fraction of eye-image width cropped from the right (0 to 0.49). Requires beta.8 or newer. |
 | Tracking | `GracePeriodMs` | `30` | Hold the last valid gaze for this many milliseconds during temporary tracking loss (0 to 1000). |
 | Tracking | `GazeRefreshMs` | `8` | Minimum CPU gaze polling interval (2 to 50 ms). This does not measure eye-to-display latency. |
 
@@ -19,6 +21,16 @@ Use a dot for decimals. Boolean values accept `true`/`false` or `1`/`0`; section
 The launcher activates the existing per-eye VRS pipeline and eye sampling automatically. It keeps lazy framebuffer creation and asynchronous updates enabled, stencil disabled, quiet logging, and a 350 ms debug-outline pause after resolution changes. Legacy feature gates are internal details; users do not need to configure them. Eye-following foveation falls back to fixed center when valid gaze is unavailable after the grace period.
 
 With `Size1x1=0.25`, `Size2x2=0.60`, and `Shape=ellipse`, the full-quality ellipse spans 25% of each eye image's width and height. The 2x2 region extends to 60%; 4x4 applies outside it. Sizes are not radii and do not resize the eye render targets. GPU savings depend on shaders and GPU bottlenecks; no measured FPS increase is claimed.
+
+## Scissor crop
+
+When scissor is enabled, start horizontal cropping at `Left=0.05` and
+`Right=0.05` and inspect both eyes for visible black borders. Cropping reduces
+pixel coverage in matching eye passes; it does not cull scene objects or change
+the camera projection. With top/bottom 0.30 and left/right 0.05, approximately
+36% of the eye-image area remains, versus 40% with the horizontal defaults.
+This area reduction is not a predicted FPS gain. Restart after each adjustment.
+Old INIs that omit `Left` and `Right` retain zero horizontal crop.
 
 ## Existing developer launch scripts
 

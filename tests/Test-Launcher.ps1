@@ -92,6 +92,8 @@ try {
     Set-Content -LiteralPath (Join-Path $layers 'BeamNG-VRS.ini') -Value "[Foveation]`nSize1x1=0`nSize2x2=0`nShape=ellipse`n[Debug]`nDrawOutline=false`n[Scissor]`nEnabled=false" -Encoding UTF8
     Test-LaunchLayout -Layers $layers
     $launcher = Join-Path $layers 'Launch-BeamNG-VRS.ps1'
+    Set-Content -LiteralPath (Join-Path $layers 'BeamNG-VRS.ini') -Value "[Scissor]`nEnabled=true`nTop=0.30`nBottom=0.30`nLeft=0.05`nRight=0.10" -Encoding UTF8
+    Test-LaunchLayout -Layers $layers
     Remove-Item -LiteralPath (Join-Path $bin 'BeamNG.drive.x64.exe')
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -CheckOnly
     if ($LASTEXITCODE -eq 0 -or (Test-Path -LiteralPath $result)) { throw 'Missing executable was not rejected.' }

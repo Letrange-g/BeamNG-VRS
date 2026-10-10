@@ -69,6 +69,8 @@ inline Values defaults() {
  out["BEAMNG_VRS_SCISSOR_ENABLE"] = "0";
  out["BEAMNG_VRS_SCISSOR_TOP"] = "0.30";
  out["BEAMNG_VRS_SCISSOR_BOTTOM"] = "0.30";
+ out["BEAMNG_VRS_SCISSOR_LEFT"] = "0";
+ out["BEAMNG_VRS_SCISSOR_RIGHT"] = "0";
  out["BEAMNG_VRS_M818_STENCIL"] = "0";
  out["BEAMNG_VRS_LOG_LEVEL"] = "1";
  return out;
@@ -84,9 +86,12 @@ inline void setting(Values& out, const std::string& section, const std::string& 
   out[id == "tracking.gazerefreshms" ? "BEAMNG_VRS_GAZE_UPDATE_MS" : "BEAMNG_VRS_GAZE_GRACE_MS"] = value;
  } else if(id == "debug.drawoutline" || id == "scissor.enabled")
   out[id == "debug.drawoutline" ? "BEAMNG_VRS_DEBUG_OUTLINE" : "BEAMNG_VRS_SCISSOR_ENABLE"] = boolean(value);
- else if(id == "scissor.top" || id == "scissor.bottom") {
+ else if(id == "scissor.top" || id == "scissor.bottom" || id == "scissor.left" || id == "scissor.right") {
   number(value, 0, 0.49);
-  out[id == "scissor.top" ? "BEAMNG_VRS_SCISSOR_TOP" : "BEAMNG_VRS_SCISSOR_BOTTOM"] = value;
+  const auto name = id == "scissor.top" ? "BEAMNG_VRS_SCISSOR_TOP" :
+                    id == "scissor.bottom" ? "BEAMNG_VRS_SCISSOR_BOTTOM" :
+                    id == "scissor.left" ? "BEAMNG_VRS_SCISSOR_LEFT" : "BEAMNG_VRS_SCISSOR_RIGHT";
+  out[name] = value;
  } else throw std::runtime_error("unknown section or setting");
 }
 

@@ -21,11 +21,19 @@ int main() {
  assert(defaults.at("BEAMNG_VRS_SHAPE") == "ellipse");
  assert(defaults.at("BEAMNG_VRS_SCISSOR_TOP") == "0.30");
  assert(defaults.at("BEAMNG_VRS_SCISSOR_BOTTOM") == "0.30");
+ assert(defaults.at("BEAMNG_VRS_SCISSOR_LEFT") == "0");
+ assert(defaults.at("BEAMNG_VRS_SCISSOR_RIGHT") == "0");
  std::istringstream omitted("[Debug]\nDrawOutline=false\n");
  const auto fallback = parse(omitted);
  assert(fallback.at("BEAMNG_VRS_SHAPE") == "ellipse");
  assert(fallback.at("BEAMNG_VRS_SCISSOR_TOP") == "0.30");
  assert(fallback.at("BEAMNG_VRS_SCISSOR_BOTTOM") == "0.30");
+ assert(fallback.at("BEAMNG_VRS_SCISSOR_LEFT") == "0");
+ assert(fallback.at("BEAMNG_VRS_SCISSOR_RIGHT") == "0");
+ std::istringstream sides("[Scissor]\nLeft=0.05\nRight=0.49\n");
+ const auto horizontal=parse(sides);
+ assert(horizontal.at("BEAMNG_VRS_SCISSOR_LEFT") == "0.05");
+ assert(horizontal.at("BEAMNG_VRS_SCISSOR_RIGHT") == "0.49");
  for(const char* size : {"0", "0.0", "0.1"}) {
   std::istringstream equalSizes(std::string("[Foveation]\nSize1x1=") + size + "\nSize2x2=" + size + "\nShape=ellipse\n");
   const auto accepted = parse(equalSizes);
@@ -45,6 +53,8 @@ int main() {
      "[Foveation]\nSize1x1=nan", "[Foveation]\nSize1x1=1.2", "[Foveation]\nSize1x1=-1",
      "[Foveation]\nSize1x1=0.7\nSize2x2=0.5", "[Foveation]\nSize1x1=0,25",
      "[Scissor]\nTop=0.5", "[Scissor]\nBottom=-0.1", "[Scissor]\nEnabled=yes",
+     "[Scissor]\nLeft=-0.1", "[Scissor]\nLeft=0.5", "[Scissor]\nRight=0.5",
+     "[Scissor]\nRight=NaN", "[Scissor]\nLeft=0\nleft=0.1",
      "[Tracking]\nGracePeriodMs=1001", "[Tracking]\nGazeRefreshMs=1",
      "[Tracking]\nGazeRefreshMs=8.5", "[Tracking]\nGazeRefreshMs=8.0",
      "[Foveation]\nShape=triangle", "[Debug]\nDrawOutline=1 ; inline comment", "[Debug", "DrawOutline=1", "# empty\n"}) {
