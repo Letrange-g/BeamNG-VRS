@@ -68,7 +68,8 @@ Cloud Linux, GCC 14.2, `-std=c++20 -O2`, default sizes 0.25/0.60:
 
 These are host/compiler-specific microbenchmarks, **not FPS gains**. The Windows
 release workflow also runs the benchmark and saves a separate
-`CPU-pattern-benchmark` artifact; benchmark/test EXEs are excluded from the ZIP.
+`CPU-pattern-benchmark` artifact and attaches its CSV to published releases;
+benchmark/test EXEs are excluded from the ZIP.
 
 Linux reproduction:
 

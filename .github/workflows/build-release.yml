@@ -61,6 +61,10 @@ jobs:
         with:
           name: BeamNG-VRS-windows-x64
           path: release-assets
+      - uses: actions/download-artifact@v4
+        with:
+          name: CPU-pattern-benchmark
+          path: release-assets
       - name: Verify archive checksum
         working-directory: release-assets
         run: sha256sum --check *.sha256
@@ -70,7 +74,7 @@ jobs:
           PACKAGE_VERSION: ${{ inputs.version }}
         run: >-
           gh release create "v${PACKAGE_VERSION}"
-          release-assets/*.zip release-assets/*.sha256
+          release-assets/*.zip release-assets/*.sha256 release-assets/*.csv
           --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA"
           --prerelease --title "BeamNG-VRS ${PACKAGE_VERSION} — portable Windows x64"
           --notes-file packaging/RELEASE-NOTES.md
