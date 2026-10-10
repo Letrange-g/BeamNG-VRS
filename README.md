@@ -9,6 +9,16 @@ The project supports fixed center foveation without eye tracking, and eye-follow
 
 [Watch the user's foveated VRS demonstration](https://gofile.io/d/0497e367-c9e8-4831-8618-0a52bc37e277) (video hosted on GoFile).
 
+Recorded Italy-map comparisons supplied by the user:
+
+- [VRS off](https://youtu.be/dfVtQ83cNbM)
+- [VRS on](https://youtu.be/psoPj8rjUV8)
+- [VRS on with scissor](https://youtu.be/jXkz3hwZiLg)
+
+The VRS recordings include debug outlines. For performance comparisons, repeat
+with `DrawOutline=false`, the same stationary camera and identical graphics,
+resolution and headset settings; see the [comparison procedure](docs/PERFORMANCE.md#compare-in-beamng).
+
 ## Status
 
 **Experimental beta.** M8.28 reuses completed transfer command recordings on top of M8.27's faster CPU patterns, allocation-free dispatch, identical-upload skipping, completed-resource reuse and independent gaze projection freshness. It retains the earlier dual outlines, gaze grace, region shapes and lazy framebuffers. Earlier rendering tests primarily covered a Pimax Dream Air and NVIDIA RTX 5090. Automated checks cover configuration, DLL loading, launcher behavior and mock rendering lifetimes. These changes still need testing in BeamNG with the target GPU/headset; see [performance findings and the comparison procedure](docs/PERFORMANCE.md).
