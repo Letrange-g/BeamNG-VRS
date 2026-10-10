@@ -4,6 +4,7 @@ The release ZIP puts `BeamNG-VRS.ini` beside `Launch-BeamNG-VRS.cmd` at the extr
 
 | Section | Setting | Default | Meaning |
 | --- | --- | --- | --- |
+| Foveation | `Enabled` | `true` | Apply VRS. Set `false` for scissor-only or turbo-only use; those settings remain independent. Beta.10+. |
 | Foveation | `Size1x1` | `0.25` | Inner full-quality region size (0 to 1); ellipse uses width/height-relative diameters, circle uses height, square uses height-relative side length. |
 | Foveation | `Size2x2` | `0.60` | Outer size of the medium-quality region (0 to 1); must be at least `Size1x1`. Outside it, shading uses 4x4. |
 | Foveation | `Shape` | `ellipse` | `circle`, `square`, or `ellipse`. Square uses side length; ellipse uses eye-width-relative horizontal diameter and eye-height-relative vertical diameter. |
@@ -15,12 +16,14 @@ The release ZIP puts `BeamNG-VRS.ini` beside `Launch-BeamNG-VRS.cmd` at the extr
 | Scissor | `LeftEyeRight` | `0` | Left eye's nose-side/right edge (0 to 0.49). Beta.9+. |
 | Scissor | `RightEyeLeft` | `0` | Right eye's nose-side/left edge (0 to 0.49). Beta.9+. |
 | Scissor | `RightEyeRight` | `0` | Right eye's outer/right edge (0 to 0.49). Beta.9+. |
+| Performance | `TurboMode` | `false` | Experimental one-frame OpenXR wait overlap. Requires beta.10+. Restart to change. |
+| Logging | `Level` | `info` | `off`, `errors`, `info`, or `debug`. Default is brief status/errors, not verbose diagnostics. |
 | Tracking | `GracePeriodMs` | `30` | Hold the last valid gaze for this many milliseconds during temporary tracking loss (0 to 1000). |
 | Tracking | `GazeRefreshMs` | `8` | Minimum CPU gaze polling interval (2 to 50 ms). This does not measure eye-to-display latency. |
 
 Use a dot for decimals. Boolean values accept `true`/`false` or `1`/`0`; section/key names and shape values are case-insensitive. Put `;` or `#` comments on their own lines. Duplicate keys, unknown settings, empty files and invalid values are rejected. Omitted settings use the defaults above. Each layer loads the file once when first needed; editing a running game's file does not change its cached settings.
 
-The launcher activates the existing per-eye VRS pipeline and eye sampling automatically. It keeps lazy framebuffer creation and asynchronous updates enabled, stencil disabled, quiet logging, and a 350 ms debug-outline pause after resolution changes. Legacy feature gates are internal details; users do not need to configure them. Eye-following foveation falls back to fixed center when valid gaze is unavailable after the grace period.
+The launcher loads both layers; `[Foveation] Enabled=true` activates the per-eye VRS pipeline and eye sampling. It keeps lazy framebuffer creation and asynchronous updates enabled, stencil disabled, the selected logging level, and a 350 ms debug-outline pause after resolution changes. Legacy feature gates are internal details; users do not need to configure them. Eye-following foveation falls back to fixed center when valid gaze is unavailable after the grace period.
 
 With `Size1x1=0.25`, `Size2x2=0.60`, and `Shape=ellipse`, the full-quality ellipse spans 25% of each eye image's width and height. The 2x2 region extends to 60%; 4x4 applies outside it. Sizes are not radii and do not resize the eye render targets. GPU savings depend on shaders and GPU bottlenecks; no measured FPS increase is claimed.
 
@@ -60,6 +63,54 @@ For example, `Left=0.10` with `RightEyeLeft=0` crops the left eye's outside by
 10% and leaves the right eye's nose-side edge untouched. These legacy keys
 are intentionally omitted from the new template. Update both DLLs and the
 launcher together; older versions do not understand the new per-eye names.
+
+## Scissor without VRS
+
+```ini
+[Foveation]
+Enabled=false
+
+[Scissor]
+Enabled=true
+```
+
+These `Enabled` keys belong to different sections and do not conflict. Disabling
+VRS disables its pattern generation, gaze sampling and upload gates. The OpenXR
+layer still identifies eye images so crop settings can apply to the correct eye.
+Missing `[Foveation] Enabled` keeps VRS enabled, preserving older INIs.
+
+## Optional turbo
+
+```ini
+[Performance]
+TurboMode=true
+```
+
+Requires the complete beta.10 package. Turbo starts the next runtime frame wait
+in the background and can let CPU/render work overlap that wait. It does not
+reduce CPU simulation work or GPU shading cost. It is off by default and can be
+used with or without VRS/scissor. Restart after changing it. Compare the same
+scene with turbo off/on; check head movement, stutter and frame times, not just FPS.
+It may interfere with motion reprojection. Set it back to `false` if pacing or
+headset appearance worsens. No Turbo setting is added to the older beta packages.
+
+## Logging
+
+```ini
+[Logging]
+Level=off
+```
+
+- `off`: no Vulkan/OpenXR layer log output or layer log-file access.
+- `errors`: errors and warnings only.
+- `info`: brief status and errors (default, formerly internal level 1).
+- `debug`: detailed diagnosis (formerly level 2); avoid it for performance comparisons.
+
+Restart after changing the level. Existing files are not deleted. The logging
+control applies to this project's two DLLs, not BeamNG, SteamVR or other layers.
+`Diagnose-BeamNG-VRS.cmd` overrides the INI with debug logging to collect evidence.
+Normal launch uses the INI. Disabling logs may reduce some overhead but no FPS
+increase is established. Invalid INI errors still appear in the launcher.
 
 ## Existing developer launch scripts
 

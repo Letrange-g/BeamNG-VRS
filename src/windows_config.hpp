@@ -44,6 +44,7 @@ inline const Values& fileValues() {
    // An invalid file never partly enables the experimental rendering path.
    Values disabled;
    activation(disabled, false);
+   disabled["BEAMNG_VRS_TURBO_MODE"]="0";
    return disabled;
   }
  }();

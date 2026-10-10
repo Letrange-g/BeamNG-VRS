@@ -1,4 +1,4 @@
-# Performance work: M8.27–M8.30
+# Performance work: M8.27–M8.31
 
 This beta reduces layer overhead while retaining the configured foveation sizes,
 shape, 30 ms gaze grace and 8 ms refresh interval. GPU/FPS improvements must be
@@ -217,10 +217,30 @@ lifecycle, thread safety, frame call order, prediction, swapchain lifetime and
 runtime failure handling. Upstream explicitly warns about motion reprojection,
 ASW and motion smoothing, and documents a possible one-second transition freeze.
 
-**Not implemented in beta.9.** First measure normal `xrWaitFrame`, begin/end and
+**Implemented as an opt-in experiment in beta.10 / M8.31.** The independent
+scheduler uses a persistent session worker, one outstanding runtime wait and
+short extrapolation only while the previous state was renderable. Ready states
+retain runtime `shouldRender`. Hitches, extension chains and an already-pipelined
+app use real/synchronous timing. The real wait and begin complete before end is
+forwarded. Swapchain drain and session/instance shutdown join or resolve the wait
+before downstream objects are destroyed. OpenXR has no cancellation for a blocked
+runtime wait; a broken runtime can still stall teardown. Tests use a blocking
+mock callback to verify overlap, order, error propagation, one-frame bounds and
+lifetime; these are not runtime/headset validation.
+
+`[Foveation] Enabled=false` permits scissor/turbo without VRS pattern preparation,
+uploads or gaze sampling. Eye-image discovery remains active. `[Logging] Level=off`
+skips logger message classification/file access; normal defaults retain brief
+status/error logging, and diagnostics override the level. No new mirror-render
+pass, scene draw or image copy is introduced by the crop controls. A reported
+monitor-only image strip remains unconfirmed: a screenshot does not distinguish
+mirror composition/stale pixels from extra GPU work. Headset output was reported
+unaffected, so the crop scope is retained for this timing experiment.
+
+For an in-game comparison, measure normal `xrWaitFrame`, begin/end and
 swapchain wait durations, alongside GPU time, with the runtime and reprojection
 mode identified. Benefits depend on avoidable wait bubbles; it cannot reduce GPU
 rendering cost or the game's non-VR CPU variability. The supplied loader logs do
-not contain those timings. Any future turbo test should be opt-in and separate
+not contain those timings. Turbo tests should be opt-in and separate
 from crop comparisons, with frame pacing and head-motion appearance checked in
 the headset as well as FPS.

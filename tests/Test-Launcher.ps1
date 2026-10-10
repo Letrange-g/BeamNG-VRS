@@ -97,6 +97,8 @@ try {
     $launcher = Join-Path $layers 'Launch-BeamNG-VRS.ps1'
     Set-Content -LiteralPath $ini -Value "[Scissor]`nEnabled=true`nTop=0.30`nBottom=0.30`nLeftEyeLeft=0.05`nLeftEyeRight=0`nRightEyeLeft=0`nRightEyeRight=0.10" -Encoding UTF8
     Test-LaunchLayout -Layers $layers
+    Set-Content -LiteralPath $ini -Value "[Foveation]`nEnabled=false`n[Scissor]`nEnabled=true`n[Performance]`nTurboMode=true`n[Logging]`nLevel=off" -Encoding UTF8
+    Test-LaunchLayout -Layers $layers
     # The public launcher must not silently edit/use an obsolete nested INI.
     Move-Item -LiteralPath $ini -Destination $layers
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -CheckOnly

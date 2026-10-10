@@ -1,37 +1,37 @@
-Experimental Windows x64 beta with independent horizontal cropping for each eye.
+Experimental Windows x64 beta with optional turbo, VRS on/off and logging controls.
 
-Beta.9 adds four `[Scissor]` settings, all defaulting to `0`:
+New in beta.10:
 
-- `LeftEyeLeft`: left eye, outside.
-- `LeftEyeRight`: left eye, near the nose.
-- `RightEyeLeft`: right eye, near the nose.
-- `RightEyeRight`: right eye, outside.
+- `[Performance] TurboMode=true` overlaps CPU work with the next OpenXR runtime
+  wait. Default `false`. Compare smoothness and frame times as well as FPS;
+  motion reprojection may be incompatible. Restart to change it.
+- `[Foveation] Enabled=false` disables VRS while keeping scissor and turbo
+  available. Default `true`. The two sections' Enabled keys are independent.
+- `[Logging] Level=off` disables this project's layer logs. Other choices are
+  `errors`, `info` (default) and `debug`. The diagnostic launcher overrides this
+  setting with detailed logging.
+- A [source guide](https://github.com/Letrange-g/BeamNG-VRS/blob/main/docs/SOURCE-GUIDE.md)
+  and comments explain the main rendering, crop, gaze, upload and turbo paths.
 
-For outside-only cropping, try `LeftEyeLeft=0.05` and `RightEyeRight=0.05`,
-leaving both nose-side settings at `0`. Set `Enabled=true`, restart and check
-both eyes in your headset. Each edge accepts 0 to 0.49; top/bottom stay shared
-at 0.30 by default. Scissor remains disabled by default.
+The four independent horizontal crop controls from beta.9 remain available,
+all defaulting to zero. Top/bottom remain 0.30 and scissor remains off by default.
+The existing shapes, quality-region sizes and tracking defaults are retained.
 
-Old shared `Left`/`Right` keys still work. Explicit per-eye settings override
-them independently. Update the launcher and both DLLs together. The new crop
-uses classified eye images for dynamic scissors, matching static pipeline
-copies and border clears. Unknown eye targets keep the area either eye needs.
+1. Download the **Windows x64 ZIP** under Assets, not a source-code archive.
+2. Back up your INI, close BeamNG and extract the whole ZIP beside or inside `Bin64`.
+3. Restore/edit `BeamNG-VRS.ini` beside the CMD. Update both DLLs and the launcher together.
+4. Run `Launch-BeamNG-VRS.cmd` and enable VR normally. Restart after changes.
 
-1. Download the **Windows x64 ZIP** under Assets, not the source-code ZIP.
-2. Close BeamNG and extract the entire ZIP beside `Bin64`, or inside `Bin64`.
-3. Edit `BeamNG-VRS.ini` beside the launch CMD, then run `Launch-BeamNG-VRS.cmd`.
-4. Enable VR normally. Restart after every settings change.
+Windows PowerShell 5.1 is included in Windows 10/11. No EXEs, administrator
+rights or global layer registration are needed. Delete an old checker EXE if
+left over from earlier packages.
 
-Back up your INI before updating. Restore it beside the launch CMD; older nested
-copies are ignored. The ZIP contains no EXEs and needs no administrator rights.
-Windows PowerShell 5.1 is included in Windows 10/11. Delete an old
-`BeamNG-VRS-Check.exe` if present from a previous installation.
-
-The GitHub front page and packaged diagram now focus on installation and settings.
-[Settings guide](https://github.com/Letrange-g/BeamNG-VRS/blob/main/docs/CONFIGURATION.md) ·
-[Help and requirements](https://github.com/Letrange-g/BeamNG-VRS/blob/main/docs/TECHNICAL.md) ·
+[Settings](https://github.com/Letrange-g/BeamNG-VRS/blob/main/docs/CONFIGURATION.md) ·
+[Help](https://github.com/Letrange-g/BeamNG-VRS/blob/main/docs/TECHNICAL.md) ·
 [Performance details](https://github.com/Letrange-g/BeamNG-VRS/blob/main/docs/PERFORMANCE.md)
 
-Built and tested on Windows with Visual Studio 2022. The exact source commit is
-in `BeamNG-VRS/BUILD-INFO.txt`. This beta still needs in-game headset testing;
-automated checks do not establish appearance or FPS gains.
+Built and tested on Windows with Visual Studio 2022. Tests cover normal timing,
+one-frame overlap, real frame ordering, failure fallback, extension chains,
+existing app pipelining, swapchain/session teardown, configuration and launcher
+behavior. The source commit is in BUILD-INFO.txt. Turbo still needs in-game
+headset testing; no FPS or latency improvement is claimed from automated tests.

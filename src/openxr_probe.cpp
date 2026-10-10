@@ -1,6 +1,10 @@
 #include "windows_config.hpp"
-// M7.2b: opt-in OpenXR gaze action and pose sampling.
-// Vulkan VRS/scissor remain unchanged; samples are diagnostic only.
+#include "openxr_turbo.hpp"
+#include <memory>
+// OpenXR side of BeamNG-VRS: identify eye swapchains, publish resolution and
+// projected gaze, and optionally overlap frame waiting with BeamNG's CPU work.
+// GPU shading/cropping live in layer.cpp. See docs/SOURCE-GUIDE.md for navigation.
+// Never call a blocking runtime function while holding stateMutex.
 #include <windows.h>
 #include "beamng_gaze_shared.hpp"
 #include "m819_visibility_geometry.hpp"
@@ -23,6 +27,8 @@
 #include <cmath>
 namespace {
 std::mutex stateMutex;
+// One downstream function table per OpenXR instance. Each interceptor resolves
+// ownership first, copies the needed entries, releases stateMutex, then forwards.
 struct Dispatch {
  PFN_xrGetInstanceProcAddr next{};
  PFN_xrGetSystemProperties getSystemProperties{};
@@ -31,6 +37,11 @@ struct Dispatch {
  PFN_xrAttachSessionActionSets attachSets{};
  PFN_xrSyncActions syncActions{};
  PFN_xrWaitFrame waitFrame{};
+ PFN_xrBeginFrame beginFrame{};
+ PFN_xrBeginSession beginSession{};
+ PFN_xrEndSession endSession{};
+ PFN_xrDestroySession destroySession{};
+ PFN_xrDestroySwapchain destroySwapchain{};
  PFN_xrCreateReferenceSpace createReferenceSpace{};
  PFN_xrStringToPath stringToPath{};
  PFN_xrCreateActionSet createActionSet{};
@@ -50,6 +61,8 @@ struct Dispatch {
  bool gazeExtension{};
 };
 std::unordered_map<XrInstance, Dispatch> instances;
+// Session ownership exists even with VRS/eye sampling off: scissor still needs
+// eye-image identification, and turbo is independent of gaze support.
 struct GazeSession {
  XrInstance instance{XR_NULL_HANDLE};
  XrActionSet set{XR_NULL_HANDLE};
@@ -61,10 +74,12 @@ struct GazeSession {
  XrPosef lastGaze{};
  XrTime lastGazeTime{};
  bool ready{};
+ std::shared_ptr<beamng_turbo::Scheduler> turbo;
 };
 std::unordered_map<XrSession, GazeSession> sessions;
 // M7.5a: OpenXR swapchain -> VkImage, then projection view -> eye.
 std::unordered_map<XrSwapchain, std::vector<uint64_t>> m75SwapchainImage;
+std::unordered_map<XrSwapchain,XrSession> swapchainSessions;
 // Resolution is published as soon as the second matching swapchain exists;
 // waiting for xrEndFrame would be too late for initial Vulkan framebuffer creation.
 struct M814Dimensions { uint32_t width=0,height=0; };
@@ -280,6 +295,7 @@ int m817LogLevel() {
  static const int level=[](){
   char v[8]{};
   const DWORD n=beamng_config::read("BEAMNG_VRS_LOG_LEVEL",v,sizeof(v));
+  if(n && n<sizeof(v) && strcmp(v,"-1")==0)return -1;
   return n && n<sizeof(v) && v[0]=='0' && !v[1] ? 0 :
          n && n<sizeof(v) && v[0]=='2' && !v[1] ? 2 : 1;
  }();
@@ -291,10 +307,11 @@ int m817MessageLevel(const char* msg){
     strstr(msg,"FATAL") || strstr(msg,"result=-"))return 0;
  if(strstr(msg,"M8.14 XR_EYE_RESOLUTION") || strstr(msg,"M8.17") || strstr(msg,"M8.18") ||
     strstr(msg,"Runtime advertises") || strstr(msg,"System supports") ||
-    strstr(msg,"Next xrCreateApiLayerInstance") || strstr(msg,"Opt-in:"))return 1;
+    strstr(msg,"M8.31 TURBO") || strstr(msg,"Next xrCreateApiLayerInstance") || strstr(msg,"Opt-in:"))return 1;
  return 2;
 }
 void logLine(const char* msg) {
+ if(m817LogLevel()<0)return;
  const int severity=m817MessageLevel(msg);
  if(severity>m817LogLevel())return;
  static std::mutex fileMutex;
@@ -324,13 +341,77 @@ void logLine(const char* msg) {
 void logResult(const char* what,XrResult r){char s[256]{};sprintf_s(s,sizeof(s),"%s result=%d",what,(int)r);logLine(s);}
 bool enabled(const char* name){char s[16]{};return beamng_config::read(name,s,sizeof(s)) && strcmp(s,"1")==0;}
 }
+namespace {
+struct FrameContext {Dispatch dispatch{};std::shared_ptr<beamng_turbo::Scheduler> turbo;};
+FrameContext frameContext(XrSession session){
+ std::lock_guard<std::mutex> lock(stateMutex);FrameContext out;
+ auto s=sessions.find(session);if(s==sessions.end())return out;
+ auto i=instances.find(s->second.instance);if(i!=instances.end())out.dispatch=i->second;
+ out.turbo=s->second.turbo;return out;
+}
+void turboReport(const std::shared_ptr<beamng_turbo::Scheduler>& turbo){
+ if(!turbo)return;const auto s=turbo->stats();char msg[384]{};
+ sprintf_s(msg,"M8.31 TURBO normalWaits=%llu predictedWaits=%llu readyWaits=%llu blockedWaits=%llu failures=%llu runtimeWaitMs=%.3f appWaitMs=%.3f endWaitMs=%.3f (cumulative CPU waits, not GPU time)",
+  (unsigned long long)s.normal,(unsigned long long)s.predicted,(unsigned long long)s.ready,
+  (unsigned long long)s.blocked,(unsigned long long)s.failures,s.runtimeWaitNs/1e6,s.appWaitNs/1e6,s.endWaitNs/1e6);
+ logLine(msg);
+}
+void eraseSessionState(XrSession session){ // Caller holds stateMutex.
+ sessions.erase(session);m818Sessions.erase(session);m814PairStates.erase(session);
+ for(auto it=swapchainSessions.begin();it!=swapchainSessions.end();){
+  if(it->second==session){m75SwapchainImage.erase(it->first);it=swapchainSessions.erase(it);}else ++it;
+ }
+}
+}
+extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeBeginSession(XrSession session,const XrSessionBeginInfo* info){
+ auto c=frameContext(session);if(!c.dispatch.beginSession)return XR_ERROR_FUNCTION_UNSUPPORTED;
+ const auto result=c.dispatch.beginSession(session,info);
+ if(result==XR_SUCCESS && c.turbo && info && info->primaryViewConfigurationType==XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO){
+  c.turbo->start();logLine("M8.31 TURBO enabled: single-frame async wait; experimental, motion reprojection may be incompatible");
+ }
+ return result;
+}
+extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeEndSession(XrSession session){
+ auto c=frameContext(session);if(!c.dispatch.endSession)return XR_ERROR_FUNCTION_UNSUPPORTED;
+ if(c.turbo){c.turbo->stop();turboReport(c.turbo);}
+ return c.dispatch.endSession(session);
+}
+extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeDestroySession(XrSession session){
+ auto c=frameContext(session);if(!c.dispatch.destroySession)return XR_ERROR_FUNCTION_UNSUPPORTED;
+ if(c.turbo){c.turbo->stop();turboReport(c.turbo);}
+ const auto result=c.dispatch.destroySession(session);
+ if(XR_SUCCEEDED(result)){std::lock_guard<std::mutex> lock(stateMutex);eraseSessionState(session);}
+ return result;
+}
+extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeBeginFrame(XrSession session,const XrFrameBeginInfo* info){
+ auto c=frameContext(session);if(!c.dispatch.beginFrame)return XR_ERROR_FUNCTION_UNSUPPORTED;
+ return c.turbo?c.turbo->begin(info):c.dispatch.beginFrame(session,info);
+}
+extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeDestroySwapchain(XrSwapchain swapchain){
+ FrameContext c{};
+ {std::lock_guard<std::mutex> lock(stateMutex);auto owner=swapchainSessions.find(swapchain);
+  if(owner!=swapchainSessions.end()){
+   auto s=sessions.find(owner->second);if(s!=sessions.end()){
+    c.turbo=s->second.turbo;auto i=instances.find(s->second.instance);if(i!=instances.end())c.dispatch=i->second;
+   }
+  }
+  if(!c.dispatch.destroySwapchain && !instances.empty())c.dispatch=instances.begin()->second;
+ }
+ if(!c.dispatch.destroySwapchain)return XR_ERROR_FUNCTION_UNSUPPORTED;
+ if(c.turbo)c.turbo->drain();
+ const auto result=c.dispatch.destroySwapchain(swapchain);
+ if(XR_SUCCEEDED(result)){std::lock_guard<std::mutex> lock(stateMutex);swapchainSessions.erase(swapchain);m75SwapchainImage.erase(swapchain);}
+ return result;
+}
 // M7.4e: read-only OpenXR stereo projection diagnostics.
 extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateSwapchain(XrSession session,const XrSwapchainCreateInfo* ci,XrSwapchain* out){
  Dispatch d{};
  {std::lock_guard<std::mutex> g(stateMutex); auto s=sessions.find(session);if(s!=sessions.end()){auto i=instances.find(s->second.instance);if(i!=instances.end())d=i->second;}}
  if(!d.createSwapchain)return XR_ERROR_FUNCTION_UNSUPPORTED;
  XrResult r=d.createSwapchain(session,ci,out);
- if(XR_SUCCEEDED(r)&&ci&&out){char msg[384]{};
+ if(XR_SUCCEEDED(r)&&ci&&out){
+  {std::lock_guard<std::mutex> lock(stateMutex);swapchainSessions[*out]=session;}
+  char msg[384]{};
   sprintf_s(msg,sizeof(msg),"M7.4e swapchain=%p dims=%ux%u array=%u faces=%u samples=%u usage=0x%llX format=%lld",
     (void*)*out,ci->width,ci->height,ci->arraySize,ci->faceCount,ci->sampleCount,
     (unsigned long long)ci->usageFlags,(long long)ci->format);logLine(msg);
@@ -419,9 +500,12 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeEndFrame(XrSession session,const 
    static unsigned n=0;if(m817Verbose() && (++n%180)==1){char b[256]{};sprintf_s(b,"M7.5a OpenXR eyeImages L=%p R=%p",(void*)(uintptr_t)images[0][0],(void*)(uintptr_t)images[1][0]);logLine(b);}
   }
  }
- return d.endFrame(session,info);
+ const auto c=frameContext(session);
+ return c.turbo?c.turbo->end(info):d.endFrame(session,info);
 }
 extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeGetInstanceProcAddr(XrInstance instance,const char* name,PFN_xrVoidFunction* function);
+// Loader entrypoint: chain to the next API layer, enable supported optional
+// extensions, and resolve only downstream pointers (never our own interceptors).
 extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateApiLayerInstance(const XrInstanceCreateInfo* info,const XrApiLayerCreateInfo* layerInfo,XrInstance* instance);
 
 // M7.2b diagnostic gaze action. Failures never block BeamNG's original calls.
@@ -436,12 +520,20 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateSession(XrInstance inst,con
   m818Sessions[*session].invalidated=true;
  }
  logResult("M7.2b xrCreateSession",r);
- if(XR_SUCCEEDED(r) && session && ((d.gazeExtension && enabled("BEAMNG_EYE_SAMPLE")) || m818Enabled())){
+ if(XR_SUCCEEDED(r) && session){
   GazeSession gs{};gs.instance=inst;
+  bool vulkan=false;
+  if(ci)for(auto* next=reinterpret_cast<const XrBaseInStructure*>(ci->next);next;next=next->next)
+   if(next->type==XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR)vulkan=true;
+  if(enabled("BEAMNG_VRS_TURBO_MODE")){
+   if(vulkan && d.waitFrame && d.beginFrame && d.endFrame && d.beginSession && d.endSession && d.destroySession && d.destroySwapchain){
+    try {gs.turbo=std::make_shared<beamng_turbo::Scheduler>(*session,d.waitFrame,d.beginFrame,d.endFrame,true);}
+    catch(...) {logLine("M8.31 TURBO WARNING: scheduler allocation failed; retaining normal timing");}
+   }else logLine("M8.31 TURBO unavailable: requires Vulkan session and complete frame/lifecycle callbacks");
+  }
   if(d.gazeExtension && enabled("BEAMNG_EYE_SAMPLE") && d.createReferenceSpace){
    XrReferenceSpaceCreateInfo si{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
-   si.referenceSpaceType=XR_REFERENCE_SPACE_TYPE_LOCAL;
-   si.poseInReferenceSpace.orientation.w=1.f;
+   si.referenceSpaceType=XR_REFERENCE_SPACE_TYPE_LOCAL;si.poseInReferenceSpace.orientation.w=1.f;
    logResult("M7.2b local space",d.createReferenceSpace(*session,&si,&gs.localSpace));
   }
   {std::lock_guard<std::mutex> g(stateMutex);sessions[*session]=gs;}
@@ -547,12 +639,15 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeSyncActions(XrSession session,con
  }
  return r;
 }
+// App-facing timing (real or extrapolated) is also the time used for gaze/view
+// location. Raw worker results never independently refresh projected-gaze IPC.
 extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeWaitFrame(XrSession session,const XrFrameWaitInfo* info,XrFrameState* state){
  Dispatch d{};
  {std::lock_guard<std::mutex> g(stateMutex);auto it=sessions.find(session);if(it!=sessions.end())d=instances[it->second.instance];
  else if(!instances.empty())d=instances.begin()->second;}
  if(!d.waitFrame)return XR_ERROR_FUNCTION_UNSUPPORTED;
- XrResult r=d.waitFrame(session,info,state);
+ const auto c=frameContext(session);
+ XrResult r=c.turbo?c.turbo->wait(info,state):d.waitFrame(session,info,state);
  if(XR_SUCCEEDED(r)&&state){
   std::lock_guard<std::mutex> g(stateMutex);auto it=sessions.find(session);
   if(it!=sessions.end())it->second.displayTime=state->predictedDisplayTime;
@@ -636,14 +731,19 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeGetSystemProperties(XrInstance in
  return r;
 }
 extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeDestroyInstance(XrInstance instance){
- Dispatch d{};
- {std::lock_guard<std::mutex> g(stateMutex);auto it=instances.find(instance);if(it==instances.end())return XR_ERROR_HANDLE_INVALID;d=it->second;instances.erase(it);
- for(auto si=sessions.begin();si!=sessions.end();){
-  if(si->second.instance==instance){m818Sessions.erase(si->first);si=sessions.erase(si);}
-  else ++si;
+ Dispatch d{};std::vector<std::shared_ptr<beamng_turbo::Scheduler>> workers;
+ {std::lock_guard<std::mutex> g(stateMutex);auto it=instances.find(instance);if(it==instances.end())return XR_ERROR_HANDLE_INVALID;d=it->second;
+  for(const auto& pair:sessions)if(pair.second.instance==instance && pair.second.turbo)workers.push_back(pair.second.turbo);
  }
+ for(auto& worker:workers){worker->stop();turboReport(worker);}
+ const auto result=d.destroy?d.destroy(instance):XR_ERROR_FUNCTION_UNSUPPORTED;
+ if(XR_SUCCEEDED(result)){
+  std::lock_guard<std::mutex> g(stateMutex);instances.erase(instance);
+  std::vector<XrSession> owned;
+  for(const auto& pair:sessions)if(pair.second.instance==instance)owned.push_back(pair.first);
+  for(auto session:owned)eraseSessionState(session);
  }
- return d.destroy ? d.destroy(instance) : XR_ERROR_FUNCTION_UNSUPPORTED;
+ return result;
 }
 extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeGetInstanceProcAddr(XrInstance instance,const char* name,PFN_xrVoidFunction* function){
  if(!name||!function)return XR_ERROR_VALIDATION_FAILURE;
@@ -656,6 +756,11 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeGetInstanceProcAddr(XrInstance in
  if(!strcmp(name,"xrAttachSessionActionSets")){*function=reinterpret_cast<PFN_xrVoidFunction>(probeAttachSessionActionSets);return XR_SUCCESS;}
  if(!strcmp(name,"xrSyncActions")){*function=reinterpret_cast<PFN_xrVoidFunction>(probeSyncActions);return XR_SUCCESS;}
  if(!strcmp(name,"xrLocateViews")){*function=reinterpret_cast<PFN_xrVoidFunction>(probeLocateViews);return XR_SUCCESS;}
+ if(!strcmp(name,"xrBeginFrame")){if(!d.beginFrame)return d.next(instance,name,function);*function=reinterpret_cast<PFN_xrVoidFunction>(probeBeginFrame);return XR_SUCCESS;}
+ if(!strcmp(name,"xrBeginSession")){if(!d.beginSession)return d.next(instance,name,function);*function=reinterpret_cast<PFN_xrVoidFunction>(probeBeginSession);return XR_SUCCESS;}
+ if(!strcmp(name,"xrEndSession")){if(!d.endSession)return d.next(instance,name,function);*function=reinterpret_cast<PFN_xrVoidFunction>(probeEndSession);return XR_SUCCESS;}
+ if(!strcmp(name,"xrDestroySession")){if(!d.destroySession)return d.next(instance,name,function);*function=reinterpret_cast<PFN_xrVoidFunction>(probeDestroySession);return XR_SUCCESS;}
+ if(!strcmp(name,"xrDestroySwapchain")){if(!d.destroySwapchain)return d.next(instance,name,function);*function=reinterpret_cast<PFN_xrVoidFunction>(probeDestroySwapchain);return XR_SUCCESS;}
  if(!strcmp(name,"xrEndFrame")){*function=reinterpret_cast<PFN_xrVoidFunction>(probeEndFrame);return XR_SUCCESS;}
  if(!strcmp(name,"xrCreateSwapchain")){*function=reinterpret_cast<PFN_xrVoidFunction>(probeCreateSwapchain);return XR_SUCCESS;}
  if(!strcmp(name,"xrEnumerateSwapchainImages")){*function=reinterpret_cast<PFN_xrVoidFunction>(probeEnumerateSwapchainImages);return XR_SUCCESS;}
@@ -748,6 +853,11 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateApiLayerInstance(const XrIn
  RESOLVE_XR(locateViews,"xrLocateViews",PFN_xrLocateViews)
  if(d.visibilityMaskEnabled){ RESOLVE_XR(getVisibilityMask,"xrGetVisibilityMaskKHR",PFN_xrGetVisibilityMaskKHR) }
  RESOLVE_XR(endFrame,"xrEndFrame",PFN_xrEndFrame)
+ RESOLVE_XR(beginFrame,"xrBeginFrame",PFN_xrBeginFrame)
+ RESOLVE_XR(beginSession,"xrBeginSession",PFN_xrBeginSession)
+ RESOLVE_XR(endSession,"xrEndSession",PFN_xrEndSession)
+ RESOLVE_XR(destroySession,"xrDestroySession",PFN_xrDestroySession)
+ RESOLVE_XR(destroySwapchain,"xrDestroySwapchain",PFN_xrDestroySwapchain)
  RESOLVE_XR(createSwapchain,"xrCreateSwapchain",PFN_xrCreateSwapchain)
  RESOLVE_XR(enumerateSwapchainImages,"xrEnumerateSwapchainImages",PFN_xrEnumerateSwapchainImages)
  RESOLVE_XR(destroySpace,"xrDestroySpace",PFN_xrDestroySpace)

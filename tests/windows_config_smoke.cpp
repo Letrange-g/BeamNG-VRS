@@ -36,6 +36,8 @@ int main(int argc, char** argv) {
  else {
   assert(beamng_config::read("BEAMNG_VRS_ENABLE_FEATURES", buffer, sizeof(buffer)) == 1);
   assert(std::strcmp(buffer, "0") == 0);
+  assert(beamng_config::read("BEAMNG_VRS_TURBO_MODE", buffer, sizeof(buffer)) == 1);
+  assert(std::strcmp(buffer, "0") == 0);
  }
  assert(SetEnvironmentVariableA("BEAMNG_VRS_SHAPE", "square"));
  assert(beamng_config::read("BEAMNG_VRS_SHAPE", buffer, sizeof(buffer)) == 6);

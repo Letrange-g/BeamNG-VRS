@@ -23,6 +23,18 @@ int main() {
  assert(defaults.at("BEAMNG_VRS_SCISSOR_BOTTOM") == "0.30");
  assert(defaults.at("BEAMNG_VRS_SCISSOR_LEFT") == "0");
  assert(defaults.at("BEAMNG_VRS_SCISSOR_RIGHT") == "0");
+ assert(defaults.at("BEAMNG_VRS_TURBO_MODE")=="0");
+ std::istringstream independent("[Foveation]\nEnabled=false\n[Scissor]\nEnabled=true\n[Performance]\nTurboMode=true\n");
+ const auto options=parse(independent);
+ for(const auto* gate:{"BEAMNG_VRS_ENABLE_FEATURES","BEAMNG_VRS_ATTACHMENT_PIPELINES","BEAMNG_VRS_M84_CPU_GAZE","BEAMNG_VRS_M815_ASYNC","BEAMNG_EYE_SAMPLE","BEAMNG_EYE_FORCE_EXTENSION"})
+  assert(options.at(gate)=="0");
+ assert(options.at("BEAMNG_VRS_SCISSOR_ENABLE")=="1" && options.at("BEAMNG_VRS_TURBO_MODE")=="1");
+ std::istringstream enabledAgain("[Foveation]\nEnabled=TRUE\n[Performance]\nTurboMode=0\n");
+ const auto on=parse(enabledAgain);assert(on.at("BEAMNG_VRS_ENABLE_FEATURES")=="1" && on.at("BEAMNG_VRS_TURBO_MODE")=="0");
+ for(const auto& pair:{std::pair{"off","-1"},std::pair{"errors","0"},std::pair{"info","1"},std::pair{"debug","2"}}){
+  std::istringstream input(std::string("[Logging]\nLevel=")+pair.first+"\n");
+  assert(parse(input).at("BEAMNG_VRS_LOG_LEVEL")==pair.second);
+ }
  std::istringstream omitted("[Debug]\nDrawOutline=false\n");
  const auto fallback = parse(omitted);
  assert(fallback.at("BEAMNG_VRS_SHAPE") == "ellipse");
@@ -69,7 +81,8 @@ int main() {
  assert(values.at("BEAMNG_VRS_SCISSOR_BOTTOM") == "0.3");
  assert(values.at("BEAMNG_VRS_SHAPE") == "square");
  assert(values.at("BEAMNG_VRS_GAZE_GRACE_MS") == "30");
- for(const char* bad : {"[Foveation]\nTypo=1", "[other]\nEnabled=1", "[Debug]\nDrawOutline=1\ndrawoutline=0",
+ for(const char* bad : {"[Logging]\nLevel=verbose", "[Logging]\nLevel=off\nlevel=info", "[Performance]\nTurboMode=yes", "[Performance]\nTurboMode=true\nturbomode=false",
+     "[Foveation]\nEnabled=2", "[Foveation]\nEnabled=true\nenabled=false", "[Foveation]\nTypo=1", "[other]\nEnabled=1", "[Debug]\nDrawOutline=1\ndrawoutline=0",
      "[Foveation]\nSize1x1=nan", "[Foveation]\nSize1x1=1.2", "[Foveation]\nSize1x1=-1",
      "[Foveation]\nSize1x1=0.7\nSize2x2=0.5", "[Foveation]\nSize1x1=0,25",
      "[Scissor]\nTop=0.5", "[Scissor]\nBottom=-0.1", "[Scissor]\nEnabled=yes",

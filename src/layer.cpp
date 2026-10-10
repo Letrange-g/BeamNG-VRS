@@ -1,3 +1,8 @@
+// Vulkan side of BeamNG-VRS. Public INI parsing lives in ini_config.hpp;
+// OpenXR eye/gaze discovery lives in openxr_probe.cpp. See docs/SOURCE-GUIDE.md.
+// Most M8.xx names are historical experiment identifiers, not user settings.
+// This layer forwards to the real driver using copied dispatch tables. Resource
+// maps use mu; async uploads must retain buffers/images until their fence signals.
 #include "windows_config.hpp"
 // BeamNG VRS M5.7 - opt-in experimental shadow render-pass binding.
 #include "ffr_pattern.hpp"
@@ -98,8 +103,12 @@ struct DeviceDispatch {
 // Dispatch snapshots are copied on every intercepted command. Keep owning
 // containers out of this structure so copying it never allocates on the heap.
 static_assert(std::is_trivially_copyable_v<DeviceDispatch>);
+// Hot dispatch copies must not own vectors/maps: copying them per draw would
+// allocate repeatedly. Queue-family ownership stays in this device-side map.
 std::unordered_map<VkDevice,std::vector<uint32_t>> m827GraphicsFamilies;
 std::unordered_map<VkCommandBuffer, VkDevice> commandDevices;
+// Per-command-buffer crop context. eye=0 is left, 1 right, -1 unknown. Values
+// remain tied to the render pass that began recording, not to later frame order.
 struct CropState { bool active=false; uint32_t width=0,height=0; VkRect2D renderArea{}; uint32_t subpass=0; int eye=-1; };
 std::unordered_map<VkCommandBuffer,CropState> cropStates;
 bool settingFlag(const char* name){char v[8]{};return beamng_config::read(name,v,sizeof(v)) && strcmp(v,"1")==0;}
@@ -529,6 +538,7 @@ int m817LogLevel() {
  static const int level=[]() {
   char v[8]{};
   const DWORD n=beamng_config::read("BEAMNG_VRS_LOG_LEVEL",v,sizeof(v));
+  if(n && n<sizeof(v) && strcmp(v,"-1")==0)return -1;
   return n && n<sizeof(v) && v[0]=='0' && !v[1] ? 0 :
          n && n<sizeof(v) && v[0]=='2' && !v[1] ? 2 : 1;
  }();
@@ -547,6 +557,7 @@ int m817MessageLevel(const char* msg) {
  return 2;
 }
 void log(const char* message) {
+ if(m817LogLevel()<0)return;
  const int severity=m817MessageLevel(message);
  if(severity>m817LogLevel()) return;
  static std::mutex fileMutex;
@@ -1751,6 +1762,17 @@ bool m814Target(uint32_t& w,uint32_t& h){
  if(ow && oh){w=ow;h=oh;return true;}
  return m814ReadXRTarget(w,h);
 }
+// Cropping still needs the OpenXR eye size when shading-rate images are off.
+// Resolve it during object creation, never by guessing from a desktop target
+// and never by allocating VRS resources or waiting for the GPU.
+void m831RefreshCropTarget(){
+ if(m8Enabled() || !cropEnabled())return;
+ uint32_t w=0,h=0;
+ if(!m814Target(w,h))return;
+ std::lock_guard<std::mutex> guard(mu);
+ m814ActiveWidth.store(w,std::memory_order_release);
+ m814ActiveHeight.store(h,std::memory_order_release);
+}
 // Safe experimental setup: serialize with live uploads and wait for GPU idle.
 // No old framebuffers or old VkImageViews are destroyed on a resolution switch.
 bool m814EnsureResources(VkDevice device,uint32_t w,uint32_t h){
@@ -1915,6 +1937,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
     d = it->second;
   }
   if (!d.createPipelines) return VK_ERROR_INITIALIZATION_FAILED;
+  m831RefreshCropTarget();
   const bool uniform = uniformVrsEnabled();
   const bool attachment = attachmentCombinerOptIn();
   // The modes are mutually exclusive. Prefer the safe pass-through if both are set.
@@ -2334,6 +2357,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateFramebuffer(
  VkDevice device, const VkFramebufferCreateInfo* ci, const VkAllocationCallbacks* alloc, VkFramebuffer* out) {
  auto d = lookupDevice(device);
  if (!d.createFramebuffer) return VK_ERROR_INITIALIZATION_FAILED;
+ m831RefreshCropTarget();
  if(ci && m8Enabled()){
   uint32_t xrW=0,xrH=0;
   if(m814Target(xrW,xrH) && ci->width==xrW && ci->height==xrH && ci->layers==1 &&
@@ -2757,6 +2781,8 @@ static bool m823EnsureEyeFramebuffer(VkDevice device,VkFramebuffer original,int 
 // M5.7: only substitute when the original pass and framebuffer have matching
 // shadow counterparts on the same device. This is experimental: pipeline
 // render-pass compatibility and secondary command buffers require validation.
+// "Shadow" here is our compatible VRS render-pass/framebuffer copy, not a
+// lighting shadow map. Preserve the app objects and substitute only a known eye.
 static bool m57SelectShadow(VkCommandBuffer cmd, const VkRenderPassBeginInfo* info,
                              VkRenderPassBeginInfo& modified) {
  // M8.11: announce test mode once, and bypass the shadow substitution
@@ -3366,6 +3392,9 @@ M825EffectiveGaze m825EffectiveGaze(int eye){
 
 // M8.15: prepare CPU gaze and write only to staging slots NOT pinned by an
 // in-flight transfer fence; the queue interceptor handles the GPU copies.
+// CPU producer: choose effective gaze, generate the tile map, and publish only
+// to a free staging slot. Queue-submit hooks are the GPU consumer; they pin each
+// consumed slot until its fence signals. Never overwrite a busy mapped buffer.
 void m84PrepareEyePatterns() {
  static const bool enabled=settingFlag("BEAMNG_VRS_M84_CPU_GAZE");
  if(!enabled)return;

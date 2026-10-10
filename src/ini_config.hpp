@@ -44,6 +44,8 @@ inline std::string choice(std::string value, std::initializer_list<std::string_v
  return value;
 }
 
+// These are rendering/tracking gates, not DLL loading switches. Scissor and
+// turbo stay independent; the OpenXR layer still identifies eye images.
 inline void activation(Values& out, bool enabled) {
  const std::string value = enabled ? "1" : "0";
   // These gates together select the existing per-eye, compatible-pipeline path.
@@ -55,6 +57,7 @@ inline void activation(Values& out, bool enabled) {
 inline Values defaults() {
  Values out;
  activation(out, true);
+ out["BEAMNG_VRS_TURBO_MODE"] = "0";
  out["BEAMNG_VRS_SHAPE"] = "ellipse";
  out["BEAMNG_VRS_FOVEATION_MODE"] = "eye";
  out["BEAMNG_VRS_CENTER_RADIUS"] = "0.25";
@@ -79,7 +82,13 @@ inline Values defaults() {
 }
 inline void setting(Values& out, const std::string& section, const std::string& key, std::string value) {
  const std::string id = section + "." + key;
- if(id == "foveation.shape") out["BEAMNG_VRS_SHAPE"] = choice(value, {"circle", "square", "ellipse"});
+ if(id == "foveation.enabled") activation(out,boolean(value)=="1");
+ else if(id == "logging.level") {
+  const auto level=choice(value,{"off","errors","info","debug"});
+  out["BEAMNG_VRS_LOG_LEVEL"]=level=="off"?"-1":level=="errors"?"0":level=="debug"?"2":"1";
+ }
+ else if(id == "performance.turbomode") out["BEAMNG_VRS_TURBO_MODE"]=boolean(value);
+ else if(id == "foveation.shape") out["BEAMNG_VRS_SHAPE"] = choice(value, {"circle", "square", "ellipse"});
  else if(id == "foveation.size1x1" || id == "foveation.size2x2") {
   number(value, 0, 1);
   out[id == "foveation.size1x1" ? "BEAMNG_VRS_CENTER_RADIUS" : "BEAMNG_VRS_MID_RADIUS"] = value;
@@ -112,7 +121,7 @@ inline Values parse(std::istream& input) {
    if(line[0] == '[') {
     if(line.back() != ']') throw std::runtime_error("invalid section header");
     section = lower(trim(line.substr(1, line.size() - 2)));
-    if(section != "foveation" && section != "debug" && section != "scissor" && section != "tracking")
+    if(section != "foveation" && section != "debug" && section != "scissor" && section != "tracking" && section != "performance" && section != "logging")
      throw std::runtime_error("unknown section");
     continue;
    }

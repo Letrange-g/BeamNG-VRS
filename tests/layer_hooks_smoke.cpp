@@ -38,6 +38,9 @@ VKAPI_ATTR VkResult VKAPI_CALL createPipelines(VkDevice,VkPipelineCache,uint32_t
  return failCreateAt==pipelineCreates?VK_ERROR_OUT_OF_DEVICE_MEMORY:VK_SUCCESS;
 }
 VKAPI_ATTR void VKAPI_CALL destroyPipeline(VkDevice,VkPipeline pipeline,const VkAllocationCallbacks*){destroyedPipelines.push_back(pipeline);}
+VKAPI_ATTR VkResult VKAPI_CALL createFramebuffer(VkDevice,const VkFramebufferCreateInfo*,const VkAllocationCallbacks*,VkFramebuffer* out){
+ *out=reinterpret_cast<VkFramebuffer>(uintptr_t(301));return VK_SUCCESS;
+}
 bool contains(VkRect2D r,int32_t x,int32_t y){
  return x>=r.offset.x && y>=r.offset.y && uint32_t(x-r.offset.x)<r.extent.width && uint32_t(y-r.offset.y)<r.extent.height;
 }
@@ -52,13 +55,14 @@ int main(int argc,char** argv){
  assert(argc==2);
  const std::string mode=argv[1];
  const bool crop=mode!="quiet";
+ const bool cropOnly=mode=="scissor_only";
  const bool perEye=mode=="scissor_per_eye" || mode=="scissor_per_eye_nose";
  const bool nose=mode=="scissor_per_eye_nose";
  const bool sides=mode=="scissor_sides" || mode=="scissor_sides_only";
  const bool sidesOnly=mode=="scissor_sides_only", edges=mode=="scissor_edges";
  const VkRect2D expectedCrop=edges?VkRect2D{{49,49},{2,2}}:
   sides?VkRect2D{{10,sidesOnly?0:30},{70,sidesOnly?100u:40u}}:VkRect2D{{0,30},{100,40}};
- SetEnvironmentVariableA("BEAMNG_VRS_LOG_LEVEL","0");
+ SetEnvironmentVariableA("BEAMNG_VRS_LOG_LEVEL",cropOnly?"-1":"0");
  SetEnvironmentVariableA("BEAMNG_VRS_SCISSOR_ENABLE",crop?"1":"0");
  SetEnvironmentVariableA("BEAMNG_VRS_SCISSOR_TOP",edges?"0.49":sidesOnly?"0":"0.30");
  SetEnvironmentVariableA("BEAMNG_VRS_SCISSOR_BOTTOM",edges?"0.49":sidesOnly?"0":"0.30");
@@ -71,9 +75,9 @@ int main(int argc,char** argv){
   SetEnvironmentVariableA("BEAMNG_VRS_SCISSOR_RIGHT_EYE_RIGHT",nose?"0":"0.20");
  }
  SetEnvironmentVariableA("BEAMNG_VRS_DEBUG_OUTLINE","0");
- SetEnvironmentVariableA("BEAMNG_VRS_M8_EXPERIMENTAL","1");
- SetEnvironmentVariableA("BEAMNG_VRS_M89_STATIC_TEST","1");
- SetEnvironmentVariableA("BEAMNG_VRS_M84_CPU_GAZE","1");
+ SetEnvironmentVariableA("BEAMNG_VRS_M8_EXPERIMENTAL",cropOnly?"0":"1");
+ SetEnvironmentVariableA("BEAMNG_VRS_M89_STATIC_TEST",cropOnly?"0":"1");
+ SetEnvironmentVariableA("BEAMNG_VRS_M84_CPU_GAZE",cropOnly?"0":"1");
  SetEnvironmentVariableA("BEAMNG_VRS_GAZE_GRACE_MS","0");
  SetEnvironmentVariableA("BEAMNG_VRS_CENTER_RADIUS","0.25");
  SetEnvironmentVariableA("BEAMNG_VRS_MID_RADIUS","0.60");
@@ -88,9 +92,10 @@ int main(int argc,char** argv){
  const auto pass=reinterpret_cast<VkRenderPass>(uintptr_t(5));
  DeviceDispatch d{};d.cmdBindPipeline=bind;d.cmdSetScissor=setScissor;d.cmdClearAttachments=clear;d.createPipelines=createPipelines;d.destroyPipeline=destroyPipeline;d.cmdBeginRenderPass=beginPass;d.cmdBeginRenderPass2=beginPass2;
  devices[device]=d;commandDevices[cmd]=device;
- m89ActiveShadows[cmd]=pass;m89Variants[original]={device,replacement,pass};
+ if(!cropOnly){m89ActiveShadows[cmd]=pass;m89Variants[original]={device,replacement,pass};}
+ const auto expectedBound=cropOnly?original:replacement;
  m87ActivePasses[cmd]=pass;
- vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,original);assert(bound==replacement);
+ vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,original);assert(bound==expectedBound);
  VkRect2D rect{{0,0},{100,100}};
  cropStates[cmd]={true,100,100,rect,0};
  const auto expected=crop?expectedCrop:rect;
@@ -101,7 +106,7 @@ int main(int argc,char** argv){
   vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,original);
   vkCmdSetScissor(cmd,0,1,&rect);
  }
- assert(allocations.load()==before);assert(m87PassBindCounts.empty());assert(bound==replacement);
+ assert(allocations.load()==before);assert(m87PassBindCounts.empty());assert(bound==expectedBound);
  VkRect2D stereo[2]{rect,rect};
  const uint64_t multiBefore=allocations.load();vkCmdSetScissor(cmd,0,2,stereo);
  assert(allocations.load()==multiBefore && scissorCount==2 && same(scissors[0],expected) && same(scissors[1],expected));
@@ -131,6 +136,7 @@ int main(int argc,char** argv){
  assert(vkCreateGraphicsPipelines(device,VK_NULL_HANDLE,1,&info,nullptr,&made)==VK_SUCCESS && same(pipelineScissor,rect));
  info.pDynamicState=nullptr;VkRect2D other{{0,0},{80,100}};vp.pScissors=&other;
  assert(vkCreateGraphicsPipelines(device,VK_NULL_HANDLE,1,&info,nullptr,&made)==VK_SUCCESS && same(pipelineScissor,other));
+ if(!cropOnly){
  // The replacement bound during a shadow pass must inherit the static crop.
  devices[device].vrsEnabled=true;devices[device].destroyPipeline=destroyPipeline;
  shadowPasses[pass]={device,reinterpret_cast<VkRenderPass>(uintptr_t(7))};
@@ -141,6 +147,7 @@ int main(int argc,char** argv){
  info.pDynamicState=&dynamicInfo;createsBefore=pipelineCreates;
  assert(vkCreateGraphicsPipelines(device,VK_NULL_HANDLE,1,&info,nullptr,&made)==VK_SUCCESS);
  assert(pipelineCreates==createsBefore+2 && same(pipelineScissor,rect));
+ }
  }
  m89ActiveShadows.erase(cmd);vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,original);assert(bound==original);
  if(perEye){
@@ -225,6 +232,43 @@ int main(int argc,char** argv){
   assert(pipelineCreates==createsBefore+1 && !m830CropVariants.count(made) && same(createdScissors.at(made),rect));
   vkDestroyPipeline(device,made,nullptr);
   cropStates.erase(cmd);
+ }
+ if(cropOnly){
+  // A 75% eye target must work with VRS disabled. Exercise object creation
+  // rather than manually seeding the active size or attachment metadata.
+  SetEnvironmentVariableA("BEAMNG_VRS_TARGET_WIDTH","3892");
+  SetEnvironmentVariableA("BEAMNG_VRS_TARGET_HEIGHT","3126");
+  const VkRect2D eyeRect{{0,0},{3892,3126}};
+  VkViewport viewport{0,0,3892,3126,0,1};
+  VkPipelineViewportStateCreateInfo vp{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+  vp.viewportCount=vp.scissorCount=1;vp.pViewports=&viewport;vp.pScissors=&eyeRect;
+  VkGraphicsPipelineCreateInfo info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};info.pViewportState=&vp;
+  VkPipeline made=VK_NULL_HANDLE;
+  assert(vkCreateGraphicsPipelines(device,VK_NULL_HANDLE,1,&info,nullptr,&made)==VK_SUCCESS);
+  assert(m813Width()==3892 && m813Height()==3126 && same(pipelineScissor,cropRect(3892,3126)));
+  const auto image=reinterpret_cast<VkImage>(uintptr_t(302));
+  const auto view=reinterpret_cast<VkImageView>(uintptr_t(303));
+  m74gViews[view]={device,image};m75Sources[image]=1;
+  devices[device].createFramebuffer=createFramebuffer;
+  VkFramebufferCreateInfo fb{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+  fb.renderPass=pass;fb.width=3892;fb.height=3126;fb.layers=1;fb.attachmentCount=1;fb.pAttachments=&view;
+  VkFramebuffer framebuffer=VK_NULL_HANDLE;
+  assert(vkCreateFramebuffer(device,&fb,nullptr,&framebuffer)==VK_SUCCESS);
+  assert(m74dAttachments.at(framebuffer).views[0]==view);
+  passInfos[pass]={1,1,1,1,false,true};
+  VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+  begin.renderPass=pass;begin.framebuffer=framebuffer;begin.renderArea=eyeRect;
+  vkCmdBeginRenderPass(cmd,&begin,VK_SUBPASS_CONTENTS_INLINE);
+  assert(cropStates.at(cmd).eye==1 && cropStates.at(cmd).width==3892);
+  vkCmdSetScissor(cmd,0,1,&eyeRect);assert(same(scissors[0],cropRect(3892,3126,1)));
+  clearCalls=clearRects=0;vkCmdEndRenderPass(cmd);
+  assert(clearCalls==1 && clearRects==2 && !cropStates.count(cmd));
+  assert(uploadedPatterns.empty() && m83EyePatterns.empty() && m812Staging.empty() && m814ResourceSets.empty());
+  assert(!m8Enabled() && !devices[device].vrsEnabled && m89Variants.empty());
+  m84PrepareEyePatterns();assert(m812bPreparedCount[0]==0 && m812bPreparedCount[1]==0);
+  assert(m817LogLevel()==-1);log("ERROR logging-off fixture");
+  std::cout<<"Scissor-only: static/dynamic crop and black borders without VRS substitution or gaze pattern preparation passed\n";
+  return 0;
  }
  // Stage through the real producer. A newer sample with identical payload
  // must not create a new upload, even while the latest source slot is pinned.

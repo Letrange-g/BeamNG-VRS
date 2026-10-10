@@ -53,6 +53,11 @@ The debug outline is injected into rendering and can appear in temporal history.
 Disable it for gameplay and benchmarks. OpenXR visibility masks were unavailable
 in tested sessions; the experimental stencil path stays disabled by default.
 CPU gaze polling and source-to-upload timing do not measure eye-to-display latency.
+Turbo uses the OpenXR layer, not Vulkan pipeline flags. It overlaps a runtime
+wait with app work, can interfere with reprojection and cannot reduce shader or
+physics cost. A stalled runtime wait can also stall draining during teardown.
+Use the normal launcher and switch `[Performance] TurboMode=false/true` for a
+controlled test. `[Logging] Level=off` disables layer logs; diagnostics overrides it.
 
 See [configuration details](CONFIGURATION.md) and [performance findings](PERFORMANCE.md)
 for the exact controls and a comparison procedure. Automated tests use mock API

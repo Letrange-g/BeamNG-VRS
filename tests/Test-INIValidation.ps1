@@ -23,12 +23,20 @@ try {
         @{ Text = "[Scissor]`nLeftEyeLeft=0.05`nLeftEyeRight=0`nRightEyeLeft=0`nRightEyeRight=0.49"; Valid = $true },
         @{ Text = "[Scissor]`nLeftEyeLeft=0`nLeftEyeRight=0.49`nRightEyeLeft=0.49`nRightEyeRight=0"; Valid = $true },
         @{ Text = "[Scissor]`nLeft=0.1`nRightEyeLeft=0"; Valid = $true },
+        @{ Text = "[Foveation]`nEnabled=false`n[Scissor]`nEnabled=true`n[Performance]`nTurboMode=true"; Valid = $true },
+        @{ Text = "[Foveation]`nEnabled=TRUE`n[Scissor]`nEnabled=0`n[Performance]`nTurboMode=0"; Valid = $true },
+        @{ Text = "[Performance]`nTurboMode=1"; Valid = $true },
+        @{ Text = "[Logging]`nLevel=off"; Valid = $true },
+        @{ Text = "[Logging]`nLevel=errors"; Valid = $true },
+        @{ Text = "[Logging]`nLevel=INFO"; Valid = $true },
+        @{ Text = "[Logging]`nLevel=debug"; Valid = $true },
         @{ Text = "[Tracking]`nGracePeriodMs=0`nGazeRefreshMs=50"; Valid = $true },
         @{ Text = "[Tracking]`nGracePeriodMs=1000`nGazeRefreshMs=2"; Valid = $true },
         @{ Text = ([string][char]0xFEFF) + "; comment`r`n [DeBuG]`r`nDrawOutline = TRUE`r`n[Scissor]`r`nBottom=+0.30`r`n"; Valid = $true }
     )
     foreach ($bad in @(
-        "[Foveation]`nTypo=1", "[other]`nEnabled=1", "[Debug]`nDrawOutline=1`ndrawoutline=0",
+        "[Logging]`nLevel=verbose", "[Logging]`nLevel=off`nlevel=info", "[Performance]`nTurboMode=yes", "[Performance]`nTurboMode=true`nturbomode=false",
+        "[Foveation]`nEnabled=2", "[Foveation]`nEnabled=true`nenabled=false", "[Foveation]`nTypo=1", "[other]`nEnabled=1", "[Debug]`nDrawOutline=1`ndrawoutline=0",
         "[Debug]`nDrawOutline=1`n[DEBUG]`nDrawOutline=0", "[Foveation]`nSize1x1=nan",
         "[Foveation]`nSize1x1=Infinity", "[Foveation]`nSize1x1=1.2", "[Foveation]`nSize1x1=-1",
         "[Foveation]`nSize1x1=0.7`nSize2x2=0.5", "[Foveation]`nSize1x1=0.7",

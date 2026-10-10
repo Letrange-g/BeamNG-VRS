@@ -18,6 +18,7 @@ Windows PowerShell is included in Windows 10/11; the package adds no EXE.
 
 ## Settings
 
+- **Foveation Enabled:** set `false` to use scissor or turbo without VRS. Default `true`.
 - **Size1x1:** size of the sharp, full-quality center. Default `0.25`.
 - **Size2x2:** size of the medium-quality region around it. Default `0.60`.
 - **Shape:** `ellipse` (default), `circle`, or `square`.
@@ -40,6 +41,11 @@ Scissor top/bottom apply to both eyes. **Beta.9 adds independent horizontal edge
 if you can see those borders. Scissor is **disabled by default**.
 [All settings and examples →](docs/CONFIGURATION.md)
 
+**Optional turbo (beta.10):** `[Performance] TurboMode=true` can overlap CPU work
+with the headset runtime wait. Default `false`; check smoothness as well as FPS.
+It may interfere with motion reprojection. `[Logging] Level=off` disables layer
+logs; other choices are `errors`, `info` (default), and `debug`.
+
 ## See it in action
 
 [VRS off](https://youtu.be/dfVtQ83cNbM) ·
@@ -58,6 +64,6 @@ Launch BeamNG normally to stop using VRS. To uninstall, remove the `BeamNG-VRS`
 folder, `BeamNG-VRS.ini`, both CMD files and `READ-ME-FIRST.txt`.
 
 [Help and requirements](docs/TECHNICAL.md) · [Performance notes](docs/PERFORMANCE.md) ·
-[Build from source](docs/BUILDING.md) · [Report an issue safely](docs/SECURITY.md)
+[Source guide](docs/SOURCE-GUIDE.md) · [Build from source](docs/BUILDING.md) · [Report an issue safely](docs/SECURITY.md)
 
 Unofficial project. [MIT license](LICENSE).

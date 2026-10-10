@@ -1,11 +1,11 @@
 [CmdletBinding()]
 param(
-    [string]$Version = '0.1.0-beta.9',
+    [string]$Version = '0.1.0-beta.10',
     [string]$BuildDirectory,
     [string]$OutputDirectory
 )
 $ErrorActionPreference = 'Stop'
-if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.]+)?$') { throw 'Use a version such as 0.1.0-beta.9.' }
+if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.]+)?$') { throw 'Use a version such as 0.1.0-beta.10.' }
 $root = Split-Path -Parent $PSScriptRoot
 if (-not $BuildDirectory) { $BuildDirectory = Join-Path $root 'build/windows-release' }
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $root 'out/releases' }
