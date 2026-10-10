@@ -9,9 +9,9 @@ The project supports fixed center foveation without eye tracking, and eye-follow
 
 ## Status
 
-**Research beta source, not a plug-and-play release.** The latest source snapshot contains M8.26 dual outlines on top of M8.25 gaze grace, M8.24 region shapes, M8.23 lazy framebuffer creation, and M8.21 faster gaze polling. Testing has primarily covered a Pimax Dream Air and NVIDIA RTX 5090. Windows/MSVC builds and compatibility with other headsets/GPUs **are not yet validated from this repository**. Do not assume support for arbitrary games, headsets, Vulkan drivers, or VR runtimes.
+**Experimental beta.** The latest source snapshot contains M8.26 dual outlines on top of M8.25 gaze grace, M8.24 region shapes, M8.23 lazy framebuffer creation, and M8.21 faster gaze polling. Earlier rendering tests primarily covered a Pimax Dream Air and NVIDIA RTX 5090. The Windows/MSVC build and automated configuration, DLL loading, and launcher checks pass in GitHub Actions. The new INI/launcher package still needs testing in BeamNG with the target GPU/headset. Do not assume support for arbitrary games, headsets, Vulkan drivers, or VR runtimes.
 
-The layers read **`BeamNG-VRS.ini`** beside the DLLs. A portable ZIP launcher and a Windows build/package workflow are included. **No compiled DLLs are committed** in this repository. The new packaging path still requires a Windows build and a real BeamNG/headset smoke test before publication.
+The layers read **`BeamNG-VRS.ini`** beside the DLLs. A portable ZIP launcher and a Windows build/package workflow are included. **No compiled DLLs are committed** in this repository; binary beta packages are distributed through GitHub Releases.
 
 ## Portable installation
 

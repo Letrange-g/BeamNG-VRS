@@ -25,7 +25,9 @@ With Visual Studio 2022 C++ tools, Git, CMake 3.25+, and Python 3 installed on W
 
 This script fetches pinned Vulkan and OpenXR header revisions from Khronos, builds both DLLs and the INI validator, runs the portable C++/Python tests plus Windows configuration and launcher integration tests, then packages `out/releases/BeamNG-VRS-0.1.0-beta.1-windows-x64.zip` and a SHA-256 file. It does not require the full graphical SDKs for this header-only build path. The Release DLLs use the static MSVC runtime. The script refuses to overwrite an existing ZIP or staging directory; use a new version or output directory for another build.
 
-The GitHub Actions workflow **Build Windows beta ZIP** performs these steps on Windows 2022 and uploads the ZIP as a workflow artifact. It runs on main-branch pushes, pull requests, or manual dispatch. It does not publish a GitHub Release. Download the artifact and extract its inner release ZIP into the game root.
+The GitHub Actions workflow **Build Windows beta ZIP** performs these steps on Windows 2022 and uploads the ZIP as a workflow artifact. It runs on main-branch pushes, pull requests, or manual dispatch. Ordinary builds do not publish a release. For an intentional beta publication, dispatch it manually with the package version and **Publish the tested ZIP** enabled; a separate job verifies the archive checksum and publishes a prerelease using the workflow's GitHub token only after all build/tests pass. Repository visibility stays unchanged.
+
+For artifact downloads, extract the artifact's outer ZIP, then extract the inner release ZIP into the game root. GitHub Release assets provide the release ZIP directly. Private repositories require a GitHub account with repository access for either download.
 
 The ZIP contains:
 

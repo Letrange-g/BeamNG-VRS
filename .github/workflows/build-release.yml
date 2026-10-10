@@ -6,6 +6,10 @@ on:
         description: Package version (for example 0.1.0-beta.1)
         required: true
         default: 0.1.0-beta.1
+      publish_release:
+        description: Publish the tested ZIP as an experimental GitHub prerelease
+        type: boolean
+        default: false
   pull_request:
   push:
     branches: [main]
@@ -33,3 +37,30 @@ jobs:
             out/releases/*.zip
             out/releases/*.sha256
           if-no-files-found: error
+
+  publish:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_release
+    needs: windows
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: BeamNG-VRS-windows-x64
+          path: release-assets
+      - name: Verify archive checksum
+        working-directory: release-assets
+        run: sha256sum --check *.sha256
+      - name: Publish experimental beta
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_VERSION: ${{ inputs.version }}
+        run: >-
+          gh release create "v${PACKAGE_VERSION}"
+          release-assets/*.zip release-assets/*.sha256
+          --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA"
+          --prerelease --title "BeamNG-VRS ${PACKAGE_VERSION} — portable Windows x64"
+          --notes-file packaging/RELEASE-NOTES.md
