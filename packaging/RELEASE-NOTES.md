@@ -1,32 +1,37 @@
-Experimental Windows x64 beta with portable installation and streamlined INI settings.
+Experimental Windows x64 beta with independent horizontal cropping for each eye.
 
-The INI now sits at the extraction root, beside `Launch-BeamNG-VRS.cmd`, for easier editing. Back up your current INI before updating, then restore it at this new location. The new launcher selects this root copy explicitly. Update the launcher and both DLLs together.
+Beta.9 adds four `[Scissor]` settings, all defaulting to `0`:
 
-Beta.8 adds `Left` and `Right` under `[Scissor]`, as fractions of eye-image width from 0 to 0.49. Both default to `0`; old INIs without these keys keep zero horizontal crop. To try them, enable scissor and start with `Left=0.05` / `Right=0.05`, then check both eyes for visible black borders. Top/bottom retain their height-relative defaults of 0.30. Up to four non-overlapping black borders are cleared in one call. This new crop still needs testing in BeamNG with the target headset.
+- `LeftEyeLeft`: left eye, outside.
+- `LeftEyeRight`: left eye, near the nose.
+- `RightEyeLeft`: right eye, near the nose.
+- `RightEyeRight`: right eye, outside.
 
-M8.28 also reuses completed transfer recordings when their source slots, images, extents and queue family match; new staged bytes are read when the transfer executes. GPU barriers and fence ownership are retained.
+For outside-only cropping, try `LeftEyeLeft=0.05` and `RightEyeRight=0.05`,
+leaving both nose-side settings at `0`. Set `Enabled=true`, restart and check
+both eyes in your headset. Each edge accepts 0 to 0.49; top/bottom stay shared
+at 0.30 by default. Scissor remains disabled by default.
 
-Matching static scissors now carry through to the compatible VRS pipeline copies; previous copies could retain the original scissor. Dynamic scissors keep the existing command-hook path. The Windows checks exercise both paths, asymmetric crops, side-only crops, extreme margins, border clears and zero-size foveation.
+Old shared `Left`/`Right` keys still work. Explicit per-eye settings override
+them independently. Update the launcher and both DLLs together. The new crop
+uses classified eye images for dynamic scissors, matching static pipeline
+copies and border clears. Unknown eye targets keep the area either eye needs.
 
-M8.27 adds faster CPU pattern generation, skips byte-identical gaze uploads, reuses completed upload resources, and removes heap allocations from command dispatch. Scissor clears are batched, and live uploads also cover Vulkan Submit2. Live VRS now validates projected-gaze freshness independently of raw-pose diagnostics. Update both DLLs together. See [performance findings](https://github.com/Letrange-g/BeamNG-VRS/blob/main/docs/PERFORMANCE.md) for CPU benchmark results and an in-game comparison procedure; no FPS improvement or render-distance cap is claimed.
+1. Download the **Windows x64 ZIP** under Assets, not the source-code ZIP.
+2. Close BeamNG and extract the entire ZIP beside `Bin64`, or inside `Bin64`.
+3. Edit `BeamNG-VRS.ini` beside the launch CMD, then run `Launch-BeamNG-VRS.cmd`.
+4. Enable VR normally. Restart after every settings change.
 
-The package contains no BeamNG-VRS-Check.exe. The existing PowerShell launcher validates settings before starting BeamNG; no additional EXE is included. Defaults are now Shape=ellipse and Scissor Top=0.30/Bottom=0.30, with scissor disabled. Back up your INI before updating; delete the old BeamNG-VRS-Check.exe from an earlier installation. Existing INI files keep their values when restored.
+Back up your INI before updating. Restore it beside the launch CMD; older nested
+copies are ignored. The ZIP contains no EXEs and needs no administrator rights.
+Windows PowerShell 5.1 is included in Windows 10/11. Delete an old
+`BeamNG-VRS-Check.exe` if present from a previous installation.
 
-The package retains Windows relative paths in both manifests, resolving their DLLs beside the JSON files. Windows regression checks cover DLL loading from a different working directory, including spaces and Unicode in the installation path.
+The GitHub front page and packaged diagram now focus on installation and settings.
+[Settings guide](https://github.com/Letrange-g/BeamNG-VRS/blob/main/docs/CONFIGURATION.md) ·
+[Help and requirements](https://github.com/Letrange-g/BeamNG-VRS/blob/main/docs/TECHNICAL.md) ·
+[Performance details](https://github.com/Letrange-g/BeamNG-VRS/blob/main/docs/PERFORMANCE.md)
 
-Extraction into the game root or directly inside `Bin64` is supported. The launcher uses Windows PowerShell 5.1, included by default in Windows 10 and 11; PowerShell 7 is not required.
-
-The launcher preserves normal Vulkan layer discovery. For a rendering-device startup error, run `Diagnose-BeamNG-VRS.cmd` and close the game/error dialog to collect the loader log at the printed path. Run under your normal user account.
-
-1. Download the **BeamNG-VRS Windows x64 `.zip`** under Assets below. The GitHub source-code archives do not contain DLLs.
-2. Close BeamNG and extract the entire ZIP into its installation root, beside `Bin64`, or directly inside `Bin64`. Keep `Launch-BeamNG-VRS.cmd` and the `BeamNG-VRS` folder together.
-3. Edit `BeamNG-VRS.ini` beside the launch CMD if desired, then run `Launch-BeamNG-VRS.cmd`.
-4. Enable VR in BeamNG as usual. Restart the game after changing settings.
-
-The package includes both DLLs, script-based INI validation, installation/uninstall instructions, an MIT license, a visual settings guide, and checksums. No administrator rights or global layer registration are required. Start Steam first if your game installation needs it.
-
-Defaults: `Size1x1=0.25`, `Size2x2=0.60`, `Shape=ellipse`, `DrawOutline=false`, scissor disabled (top/bottom `0.30`, left/right `0`), `GracePeriodMs=30`, and `GazeRefreshMs=8`.
-
-Built on Windows with Visual Studio 2022. The portable tests, Windows configuration tests, DLL loading/export checks, and launcher integration test passed before packaging. The exact source commit is recorded in `BeamNG-VRS/BUILD-INFO.txt`.
-
-This version still needs testing in BeamNG with the target GPU/headset. It is unsigned and experimental; no universal compatibility or FPS gain is claimed. Launch BeamNG normally to stop using the layers.
+Built and tested on Windows with Visual Studio 2022. The exact source commit is
+in `BeamNG-VRS/BUILD-INFO.txt`. This beta still needs in-game headset testing;
+automated checks do not establish appearance or FPS gains.

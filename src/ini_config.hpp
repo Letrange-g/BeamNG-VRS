@@ -71,6 +71,8 @@ inline Values defaults() {
  out["BEAMNG_VRS_SCISSOR_BOTTOM"] = "0.30";
  out["BEAMNG_VRS_SCISSOR_LEFT"] = "0";
  out["BEAMNG_VRS_SCISSOR_RIGHT"] = "0";
+ for(const auto* edge : {"LEFT_EYE_LEFT", "LEFT_EYE_RIGHT", "RIGHT_EYE_LEFT", "RIGHT_EYE_RIGHT"})
+  out[std::string("BEAMNG_VRS_SCISSOR_") + edge] = "0";
  out["BEAMNG_VRS_M818_STENCIL"] = "0";
  out["BEAMNG_VRS_LOG_LEVEL"] = "1";
  return out;
@@ -86,12 +88,14 @@ inline void setting(Values& out, const std::string& section, const std::string& 
   out[id == "tracking.gazerefreshms" ? "BEAMNG_VRS_GAZE_UPDATE_MS" : "BEAMNG_VRS_GAZE_GRACE_MS"] = value;
  } else if(id == "debug.drawoutline" || id == "scissor.enabled")
   out[id == "debug.drawoutline" ? "BEAMNG_VRS_DEBUG_OUTLINE" : "BEAMNG_VRS_SCISSOR_ENABLE"] = boolean(value);
- else if(id == "scissor.top" || id == "scissor.bottom" || id == "scissor.left" || id == "scissor.right") {
+ else if(id == "scissor.top" || id == "scissor.bottom" || id == "scissor.left" || id == "scissor.right" ||
+         id == "scissor.lefteyeleft" || id == "scissor.lefteyeright" ||
+         id == "scissor.righteyeleft" || id == "scissor.righteyeright") {
   number(value, 0, 0.49);
-  const auto name = id == "scissor.top" ? "BEAMNG_VRS_SCISSOR_TOP" :
-                    id == "scissor.bottom" ? "BEAMNG_VRS_SCISSOR_BOTTOM" :
-                    id == "scissor.left" ? "BEAMNG_VRS_SCISSOR_LEFT" : "BEAMNG_VRS_SCISSOR_RIGHT";
-  out[name] = value;
+  const Values names{{"top", "TOP"}, {"bottom", "BOTTOM"}, {"left", "LEFT"}, {"right", "RIGHT"},
+    {"lefteyeleft", "LEFT_EYE_LEFT"}, {"lefteyeright", "LEFT_EYE_RIGHT"},
+    {"righteyeleft", "RIGHT_EYE_LEFT"}, {"righteyeright", "RIGHT_EYE_RIGHT"}};
+  out["BEAMNG_VRS_SCISSOR_" + names.at(key)] = value;
  } else throw std::runtime_error("unknown section or setting");
 }
 
@@ -120,6 +124,18 @@ inline Values parse(std::istream& input) {
    setting(out, section, key, value);
   } catch(const std::runtime_error& error) {
    throw std::runtime_error("INI line " + std::to_string(lineNumber) + ": " + error.what());
+  }
+ }
+ // Explicit per-eye edges win independently of file order. Old shared edges
+ // remain accepted for upgrades, but are omitted from the public template.
+ for(const auto& edge : {std::pair{"lefteyeleft", "LEFT_EYE_LEFT"},
+                         std::pair{"lefteyeright", "LEFT_EYE_RIGHT"},
+                         std::pair{"righteyeleft", "RIGHT_EYE_LEFT"},
+                         std::pair{"righteyeright", "RIGHT_EYE_RIGHT"}}) {
+  if(!seen.count(std::string("scissor.") + edge.first)) {
+   const bool left = std::string_view(edge.first).ends_with("left");
+   out[std::string("BEAMNG_VRS_SCISSOR_") + edge.second] =
+     out.at(left ? "BEAMNG_VRS_SCISSOR_LEFT" : "BEAMNG_VRS_SCISSOR_RIGHT");
   }
  }
  if(input.bad()) throw std::runtime_error("could not read INI file");

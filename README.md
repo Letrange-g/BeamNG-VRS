@@ -1,103 +1,64 @@
-# BeamNG-VRS (experimental source)
+# BeamNG-VRS
 
-An **unofficial, experimental** pair of Windows API layers for **BeamNG.drive** Vulkan VR rendering:
+Foveated rendering and optional edge cropping for **BeamNG.drive in Vulkan VR**.
+Keep more detail where you look and reduce rendering work around the edges.
+Works with a fixed center or supported eye tracking.
 
-- **`BeamNG_VRS.dll`** – Vulkan layer applying per-eye fragment shading-rate patterns.
-- **`BeamNG_EyeProbe.dll`** – OpenXR API layer collecting gaze/eye-swapchain information when supported.
+**Experimental Windows beta.** Performance varies by headset, GPU and scene.
 
-The project supports fixed center foveation without eye tracking, and eye-following foveation when an OpenXR eye-tracking source is available. Center and middle regions can be **circle**, **square**, or **ellipse** (the default). Ellipse uses width/height-relative diameters; circle uses height-relative diameter and square uses height-relative side length. The debug view can show a red 1×1 boundary and an orange 2×2-to-4×4 boundary.
+## Install
 
-[Watch the user's foveated VRS demonstration](https://gofile.io/d/0497e367-c9e8-4831-8618-0a52bc37e277) (video hosted on GoFile).
+1. [Download the Windows ZIP](https://github.com/Letrange-g/BeamNG-VRS/releases) from **Assets** (not the source-code ZIP).
+2. Close BeamNG and extract the whole ZIP into the game folder, beside `Bin64`.
+3. Double-click `Launch-BeamNG-VRS.cmd`, then enable VR in the game.
 
-Recorded Italy-map comparisons supplied by the user:
+Edit **`BeamNG-VRS.ini` beside the launch CMD** in Notepad to change settings.
+Restart the game after every change. Extraction inside `Bin64` also works.
+Windows PowerShell is included in Windows 10/11; the package adds no EXE.
 
-- [VRS off](https://youtu.be/dfVtQ83cNbM)
-- [VRS on](https://youtu.be/psoPj8rjUV8)
-- [VRS on with scissor](https://youtu.be/jXkz3hwZiLg)
+## Settings
 
-The VRS recordings include debug outlines. For performance comparisons, repeat
-with `DrawOutline=false`, the same stationary camera and identical graphics,
-resolution and headset settings; see the [comparison procedure](docs/PERFORMANCE.md#compare-in-beamng).
+- **Size1x1:** size of the sharp, full-quality center. Default `0.25`.
+- **Size2x2:** size of the medium-quality region around it. Default `0.60`.
+- **Shape:** `ellipse` (default), `circle`, or `square`.
+- **DrawOutline:** shows the quality-region borders for checking settings. Leave `false` for gameplay.
+- **Scissor:** crops image edges to save rendering work. Enable only after checking the edges in your headset.
 
-## Status
+![VRS quality regions and independent crop controls for each eye](docs/images/vrs-settings.png)
 
-**Experimental beta.** Beta.8 adds left/right scissor cropping, defaulting to zero, alongside the existing top/bottom crop. M8.28 reuses completed transfer command recordings on top of M8.27's faster CPU patterns, allocation-free dispatch, identical-upload skipping, completed-resource reuse and independent gaze projection freshness. It retains the earlier dual outlines, gaze grace, region shapes and lazy framebuffers. Earlier rendering tests primarily covered a Pimax Dream Air and NVIDIA RTX 5090. Automated checks cover configuration, DLL loading, launcher behavior and mock rendering lifetimes. These changes still need testing in BeamNG with the target GPU/headset; see [performance findings and the comparison procedure](docs/PERFORMANCE.md).
+Scissor top/bottom apply to both eyes. **Beta.9 adds independent horizontal edges:**
 
-The layers read **`BeamNG-VRS.ini`** beside the launch CMD at the extraction root. A portable ZIP launcher and a Windows build/package workflow are included. **No compiled DLLs are committed** in this repository; binary beta packages are distributed through GitHub Releases.
+| INI setting | Edge | Default |
+| --- | --- | --- |
+| `Top` / `Bottom` | Top / bottom of both eyes | `0.30` each |
+| `LeftEyeLeft` | Left eye, outside | `0` |
+| `LeftEyeRight` | Left eye, near the nose | `0` |
+| `RightEyeLeft` | Right eye, near the nose | `0` |
+| `RightEyeRight` | Right eye, outside | `0` |
 
-## Portable installation
+`0.05` crops 5% from that edge. Start small; keep the nose-side values at `0`
+if you can see those borders. Scissor is **disabled by default**.
+[All settings and examples →](docs/CONFIGURATION.md)
 
-1. Download the Windows x64 ZIP from [Releases](https://github.com/Letrange-g/BeamNG-VRS/releases) when a beta is available. Use the binary ZIP, not GitHub's source-code ZIP.
-2. Close BeamNG and extract the entire ZIP into its installation root, beside `Bin64`. Extraction directly inside `Bin64` also works; keep `Launch-BeamNG-VRS.cmd` and the `BeamNG-VRS` folder together.
-3. Edit `BeamNG-VRS.ini` beside `Launch-BeamNG-VRS.cmd` in Notepad if desired.
-4. Start Steam if your installation requires it, then double-click `Launch-BeamNG-VRS.cmd`.
-5. Enable VR in the game as usual. Restart after changing settings.
+## See it in action
 
-The launcher validates settings, starts the game in Vulkan mode, and activates both layers for that process. The ZIP is for Windows x64 and remains an experimental beta; see the requirements below before using it.
+[Demo](https://gofile.io/d/0497e367-c9e8-4831-8618-0a52bc37e277) ·
+[VRS off](https://youtu.be/dfVtQ83cNbM) ·
+[VRS on](https://youtu.be/psoPj8rjUV8) ·
+[VRS + scissor](https://youtu.be/jXkz3hwZiLg)
 
-The launcher uses Windows PowerShell 5.1, included by default in Windows 10 and 11. PowerShell 7 is not required. The PowerShell launcher validates your INI automatically before launch. The package contains no EXE files.
+The comparison videos have debug outlines enabled. Turn them off when comparing performance.
 
-If normal Vulkan works but this launcher reports no rendering device, run `Diagnose-BeamNG-VRS.cmd`. Close the game and any error dialog, then inspect the Vulkan loader log at the path printed in the window. The launcher adds its Vulkan layer folder while preserving normal layer discovery. Run it with your normal user account; elevated applications ignore Vulkan layer search paths.
+## Update or remove
 
-If a previous beta logs `Failed to open dynamic library "./BeamNG_VRS.dll" with error 87`, update to beta.4 or newer. It corrects the Windows relative paths in both loader manifests.
+Back up your INI, extract the new ZIP, then restore your settings in the INI beside
+the launch CMD. Update the launcher and both DLLs together. Older `Left`/`Right`
+settings still work; the four new controls let you adjust each eye separately.
 
-The ZIP keeps its DLLs inside `BeamNG-VRS/` and the INI beside the launch CMD; it does not replace original game files or register layers globally. Launch BeamNG normally to stop using the layers. To uninstall, close the game and remove that folder, the INI and both launch shortcuts. Back up the INI before extracting an update.
+Launch BeamNG normally to stop using VRS. To uninstall, remove the `BeamNG-VRS`
+folder, `BeamNG-VRS.ini`, both CMD files and `READ-ME-FIRST.txt`.
 
-When updating to beta.8, restore your saved INI beside the launch CMD. Older
-packages kept it inside `BeamNG-VRS/`; the new launcher uses the root copy.
+[Help and requirements](docs/TECHNICAL.md) · [Performance notes](docs/PERFORMANCE.md) ·
+[Build from source](docs/BUILDING.md) · [Report an issue safely](docs/SECURITY.md)
 
-When updating from beta.4 or earlier, delete the old `BeamNG-VRS/BeamNG-VRS-Check.exe`; the launcher no longer uses it. Restoring an old INI preserves its settings. To use the new defaults, set `Shape=ellipse`, `Top=0.30`, and `Bottom=0.30` or use the new INI.
-
-## Build
-
-See [docs/BUILDING.md](docs/BUILDING.md) for required SDKs, CMake configuration and loader manifests. There is no globally installed layer and no game-file patching needed for the source workflow.
-
-## Configuration
-
-See [docs/CONFIGURATION.md](docs/CONFIGURATION.md). The user-facing controls are:
-
-![Illustration of VRS region sizes, debug outlines, scissor cropping and gaze timing](docs/images/vrs-settings.png)
-
-```ini
-[Foveation]
-Size1x1=0.25
-Size2x2=0.60
-Shape=ellipse
-
-[Debug]
-DrawOutline=false
-
-[Scissor]
-Enabled=false
-Top=0.30
-Bottom=0.30
-Left=0
-Right=0
-
-[Tracking]
-GracePeriodMs=30
-GazeRefreshMs=8
-```
-
-Restart BeamNG after editing. For ellipse, sizes are diameters relative to eye-image width horizontally and height vertically. Circle uses height for its diameter; square uses height for its side length. The public launcher uses the INI settings; existing environment overrides remain supported when loading the layers through developer scripts.
-
-Scissor `Top`/`Bottom` use eye-image height; `Left`/`Right` use width. Each accepts
-0 to 0.49. To try horizontal cropping in beta.8, enable scissor and start with
-`Left=0.05` and `Right=0.05`, then check both eyes for visible black borders.
-Older INIs that omit these two keys retain zero horizontal crop.
-
-## Notes and limitations
-
-- Both layers are experimental and can cause application or headset-runtime instability.
-- A Vulkan driver must support the required attachment shading-rate features. Unsupported configurations need testing and should fail safely.
-- OpenXR visibility masks were unavailable in tested sessions; the experimental stencil implementation is **disabled** in the recommended configuration. Scissor crop is also experimental.
-- Faster gaze polling and CPU source-to-upload measurements do **not** measure eye-to-display latency.
-- The debug outline is injected into game rendering, and may appear in temporal history; disable it for normal gameplay.
-- Do not distribute log files, dumps, private headset identifiers, or graphics captures without reviewing them.
-- The code is not an official BeamNG or headset-vendor project. No affiliation or endorsement is implied.
-
-## Privacy and contributions
-
-Only curated source, manifests, and portable tests are included. No user logs, executables, graphics captures, API keys or personal settings are committed. See [docs/SECURITY.md](docs/SECURITY.md) before reporting an issue.
-
-**License:** [MIT](LICENSE).
+Unofficial project. [MIT license](LICENSE).

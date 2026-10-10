@@ -17,7 +17,11 @@ std::array<VkRect2D,16> scissors{};
 std::array<VkRect2D,4> cleared{};
 VkRect2D pipelineScissor{};
 uint32_t scissorCount=0,clearCalls=0,clearRects=0;
-uint32_t pipelineCreates=0;
+uint32_t pipelineCreates=0,failCreateAt=0,beginCalls=0;
+std::unordered_map<VkPipeline,VkRect2D> createdScissors;
+std::vector<VkPipeline> destroyedPipelines;
+VKAPI_ATTR void VKAPI_CALL beginPass(VkCommandBuffer,const VkRenderPassBeginInfo*,VkSubpassContents){++beginCalls;}
+VKAPI_ATTR void VKAPI_CALL beginPass2(VkCommandBuffer,const VkRenderPassBeginInfo*,const VkSubpassBeginInfo*){++beginCalls;}
 VKAPI_ATTR void VKAPI_CALL bind(VkCommandBuffer,VkPipelineBindPoint,VkPipeline p){bound=p;}
 VKAPI_ATTR void VKAPI_CALL setScissor(VkCommandBuffer,uint32_t,uint32_t count,const VkRect2D* rects){
  scissorCount=count;assert(count<=scissors.size());for(uint32_t i=0;i<count;++i)scissors[i]=rects[i];
@@ -29,9 +33,11 @@ VKAPI_ATTR void VKAPI_CALL clear(VkCommandBuffer,uint32_t attachmentCount,const 
 VKAPI_ATTR VkResult VKAPI_CALL createPipelines(VkDevice,VkPipelineCache,uint32_t count,const VkGraphicsPipelineCreateInfo* infos,const VkAllocationCallbacks*,VkPipeline* out){
  assert(count==1 && infos[0].pViewportState && infos[0].pViewportState->pScissors);
  pipelineScissor=infos[0].pViewportState->pScissors[0];
- out[0]=reinterpret_cast<VkPipeline>(uintptr_t(10+(++pipelineCreates)));return VK_SUCCESS;
+ out[0]=reinterpret_cast<VkPipeline>(uintptr_t(10+(++pipelineCreates)));
+ createdScissors[out[0]]=pipelineScissor;
+ return failCreateAt==pipelineCreates?VK_ERROR_OUT_OF_DEVICE_MEMORY:VK_SUCCESS;
 }
-VKAPI_ATTR void VKAPI_CALL destroyPipeline(VkDevice,VkPipeline,const VkAllocationCallbacks*){}
+VKAPI_ATTR void VKAPI_CALL destroyPipeline(VkDevice,VkPipeline pipeline,const VkAllocationCallbacks*){destroyedPipelines.push_back(pipeline);}
 bool contains(VkRect2D r,int32_t x,int32_t y){
  return x>=r.offset.x && y>=r.offset.y && uint32_t(x-r.offset.x)<r.extent.width && uint32_t(y-r.offset.y)<r.extent.height;
 }
@@ -46,6 +52,8 @@ int main(int argc,char** argv){
  assert(argc==2);
  const std::string mode=argv[1];
  const bool crop=mode!="quiet";
+ const bool perEye=mode=="scissor_per_eye" || mode=="scissor_per_eye_nose";
+ const bool nose=mode=="scissor_per_eye_nose";
  const bool sides=mode=="scissor_sides" || mode=="scissor_sides_only";
  const bool sidesOnly=mode=="scissor_sides_only", edges=mode=="scissor_edges";
  const VkRect2D expectedCrop=edges?VkRect2D{{49,49},{2,2}}:
@@ -56,6 +64,12 @@ int main(int argc,char** argv){
  SetEnvironmentVariableA("BEAMNG_VRS_SCISSOR_BOTTOM",edges?"0.49":sidesOnly?"0":"0.30");
  SetEnvironmentVariableA("BEAMNG_VRS_SCISSOR_LEFT",edges?"0.49":sides?"0.10":"0");
  SetEnvironmentVariableA("BEAMNG_VRS_SCISSOR_RIGHT",edges?"0.49":sides?"0.20":"0");
+ if(perEye){
+  SetEnvironmentVariableA("BEAMNG_VRS_SCISSOR_LEFT_EYE_LEFT",nose?"0":"0.10");
+  SetEnvironmentVariableA("BEAMNG_VRS_SCISSOR_LEFT_EYE_RIGHT",nose?"0.10":"0");
+  SetEnvironmentVariableA("BEAMNG_VRS_SCISSOR_RIGHT_EYE_LEFT",nose?"0.20":"0");
+  SetEnvironmentVariableA("BEAMNG_VRS_SCISSOR_RIGHT_EYE_RIGHT",nose?"0":"0.20");
+ }
  SetEnvironmentVariableA("BEAMNG_VRS_DEBUG_OUTLINE","0");
  SetEnvironmentVariableA("BEAMNG_VRS_M8_EXPERIMENTAL","1");
  SetEnvironmentVariableA("BEAMNG_VRS_M89_STATIC_TEST","1");
@@ -72,7 +86,7 @@ int main(int argc,char** argv){
  const auto original=reinterpret_cast<VkPipeline>(uintptr_t(3));
  const auto replacement=reinterpret_cast<VkPipeline>(uintptr_t(4));
  const auto pass=reinterpret_cast<VkRenderPass>(uintptr_t(5));
- DeviceDispatch d{};d.cmdBindPipeline=bind;d.cmdSetScissor=setScissor;d.cmdClearAttachments=clear;d.createPipelines=createPipelines;
+ DeviceDispatch d{};d.cmdBindPipeline=bind;d.cmdSetScissor=setScissor;d.cmdClearAttachments=clear;d.createPipelines=createPipelines;d.destroyPipeline=destroyPipeline;d.cmdBeginRenderPass=beginPass;d.cmdBeginRenderPass2=beginPass2;
  devices[device]=d;commandDevices[cmd]=device;
  m89ActiveShadows[cmd]=pass;m89Variants[original]={device,replacement,pass};
  m87ActivePasses[cmd]=pass;
@@ -100,6 +114,7 @@ int main(int argc,char** argv){
   cropStates[cmd]={true,100,100,expectedCrop,0};clearCalls=clearRects=0;
   cropBlackBars(cmd,d);assert(clearCalls==0 && clearRects==0);
  }
+ if(!perEye){
  // Matching static scissors use the same crop, while dynamic and other-size
  // pipeline scissors remain application-owned until the eye command hook.
  m814ActiveWidth=100;m814ActiveHeight=100;
@@ -126,7 +141,91 @@ int main(int argc,char** argv){
  info.pDynamicState=&dynamicInfo;createsBefore=pipelineCreates;
  assert(vkCreateGraphicsPipelines(device,VK_NULL_HANDLE,1,&info,nullptr,&made)==VK_SUCCESS);
  assert(pipelineCreates==createsBefore+2 && same(pipelineScissor,rect));
+ }
  m89ActiveShadows.erase(cmd);vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,original);assert(bound==original);
+ if(perEye){
+  m814ActiveWidth=m814ActiveHeight=100;
+  const VkRect2D leftKeep{{nose?0:10,30},{90,40}},rightKeep{{nose?20:0,30},{80,40}};
+  const auto leftImage=reinterpret_cast<VkImage>(uintptr_t(201)),rightImage=reinterpret_cast<VkImage>(uintptr_t(202));
+  const auto leftView=reinterpret_cast<VkImageView>(uintptr_t(203)),rightView=reinterpret_cast<VkImageView>(uintptr_t(204));
+  const auto framebuffer=reinterpret_cast<VkFramebuffer>(uintptr_t(205));
+  m74gViews[leftView]={device,leftImage};m74gViews[rightView]={device,rightImage};
+  m75Sources[leftImage]=0;m75Sources[rightImage]=1;
+  framebuffers[framebuffer]={100,100,1,1};passInfos[pass]={1,1,1,1,false,true};
+  VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};begin.renderPass=pass;begin.framebuffer=framebuffer;begin.renderArea=rect;
+  VkSubpassBeginInfo subpass{VK_STRUCTURE_TYPE_SUBPASS_BEGIN_INFO};subpass.contents=VK_SUBPASS_CONTENTS_INLINE;
+  // Actual begin/end hooks select by attachment image, independent of outlines,
+  // gaze and VRS substitution. Both APIs preserve the exact per-eye black bars.
+  for(int eye=0;eye<2;++eye){
+   m74dAttachments[framebuffer]={{eye?rightView:leftView},pass};
+   if(eye)vkCmdBeginRenderPass2(cmd,&begin,&subpass);
+   else vkCmdBeginRenderPass(cmd,&begin,VK_SUBPASS_CONTENTS_INLINE);
+   assert(cropStates.at(cmd).eye==eye);
+   const auto keep=eye?rightKeep:leftKeep;
+   vkCmdSetScissor(cmd,0,1,&rect);assert(same(scissors[0],keep));
+   clearCalls=clearRects=0;
+   if(eye)vkCmdEndRenderPass2(cmd,nullptr);else vkCmdEndRenderPass(cmd);
+   assert(clearCalls==1 && clearRects==3 && !cropStates.count(cmd));checkClears(rect,keep);
+  }
+  assert(beginCalls==2);
+  m74dAttachments[framebuffer]={{leftView,rightView},pass};
+  m830StartCrop(cmd,&begin,true);assert(cropStates.at(cmd).eye==-1);
+  vkCmdSetScissor(cmd,0,1,&rect);assert(same(scissors[0],expectedCrop));
+  m74dAttachments.erase(framebuffer);m830StartCrop(cmd,&begin,true);assert(cropStates.at(cmd).eye==-1);
+  m830StartCrop(cmd,&begin,false);assert(!cropStates.count(cmd));
+  framebuffers[framebuffer].layers=2;m830StartCrop(cmd,&begin,true);assert(!cropStates.count(cmd));
+  framebuffers[framebuffer].layers=1;
+  VkViewport viewport{0,0,100,100,0,1};
+  VkPipelineViewportStateCreateInfo vp{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+  vp.viewportCount=vp.scissorCount=1;vp.pViewports=&viewport;vp.pScissors=&rect;
+  VkGraphicsPipelineCreateInfo info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};info.pViewportState=&vp;info.renderPass=pass;
+  VkPipeline made=VK_NULL_HANDLE;
+  auto createsBefore=pipelineCreates;
+  assert(vkCreateGraphicsPipelines(device,VK_NULL_HANDLE,1,&info,nullptr,&made)==VK_SUCCESS);
+  assert(pipelineCreates==createsBefore+3 && m830CropVariants.count(made));
+  assert(same(createdScissors.at(made),expectedCrop));
+  auto checkStatic=[&](VkPipeline originalBase,VkPipeline actualBase){
+   assert(same(createdScissors.at(m830CropVariants.at(actualBase).eyes[0]),leftKeep));
+   assert(same(createdScissors.at(m830CropVariants.at(actualBase).eyes[1]),rightKeep));
+   for(int eye=0;eye<2;++eye){
+    cropStates[cmd]={true,100,100,rect,0,eye};
+    vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,originalBase);
+    assert(bound==m830CropVariants.at(actualBase).eyes[eye]);
+    const auto count=allocations.load();
+    for(unsigned i=0;i<1000;++i)vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,originalBase);
+    assert(allocations.load()==count);
+   }
+   cropStates[cmd]={true,100,100,rect,0,-1};
+   vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,originalBase);assert(bound==actualBase);
+  };
+  checkStatic(made,made);
+  vkDestroyPipeline(device,made,nullptr);assert(!m830CropVariants.count(made));
+  devices[device].vrsEnabled=true;
+  const auto shadow=reinterpret_cast<VkRenderPass>(uintptr_t(207));shadowPasses[pass]={device,shadow};
+  createsBefore=pipelineCreates;
+  assert(vkCreateGraphicsPipelines(device,VK_NULL_HANDLE,1,&info,nullptr,&made)==VK_SUCCESS);
+  assert(pipelineCreates==createsBefore+6 && m89Variants.count(made));
+  const auto compatible=m89Variants.at(made).pipeline;
+  m89ActiveShadows[cmd]=shadow;checkStatic(made,compatible);
+  const auto destroyedBefore=destroyedPipelines.size();
+  vkDestroyPipeline(device,made,nullptr);
+  assert(destroyedPipelines.size()==destroyedBefore+6 && !m830CropVariants.count(made) && !m830CropVariants.count(compatible));
+  m89ActiveShadows.erase(cmd);shadowPasses.erase(pass);devices[device].vrsEnabled=false;
+  // Partial copy creation must be cleaned up without failing the app pipeline.
+  createsBefore=pipelineCreates;failCreateAt=createsBefore+3;
+  const auto failureDestroyed=destroyedPipelines.size();
+  assert(vkCreateGraphicsPipelines(device,VK_NULL_HANDLE,1,&info,nullptr,&made)==VK_SUCCESS);
+  assert(!m830CropVariants.count(made) && destroyedPipelines.size()==failureDestroyed+2);
+  assert(same(createdScissors.at(made),expectedCrop));failCreateAt=0;
+  vkDestroyPipeline(device,made,nullptr);
+  const VkDynamicState dynamic=VK_DYNAMIC_STATE_SCISSOR;
+  VkPipelineDynamicStateCreateInfo dynamicInfo{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};dynamicInfo.dynamicStateCount=1;dynamicInfo.pDynamicStates=&dynamic;
+  info.pDynamicState=&dynamicInfo;createsBefore=pipelineCreates;
+  assert(vkCreateGraphicsPipelines(device,VK_NULL_HANDLE,1,&info,nullptr,&made)==VK_SUCCESS);
+  assert(pipelineCreates==createsBefore+1 && !m830CropVariants.count(made) && same(createdScissors.at(made),rect));
+  vkDestroyPipeline(device,made,nullptr);
+  cropStates.erase(cmd);
+ }
  // Stage through the real producer. A newer sample with identical payload
  // must not create a new upload, even while the latest source slot is pinned.
  m814ActiveWidth=64;m814ActiveHeight=64;

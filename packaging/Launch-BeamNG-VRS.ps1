@@ -32,6 +32,10 @@ function Test-BeamNGIni {
         'scissor.bottom' = @(0, 0.49, $false)
         'scissor.left' = @(0, 0.49, $false)
         'scissor.right' = @(0, 0.49, $false)
+        'scissor.lefteyeleft' = @(0, 0.49, $false)
+        'scissor.lefteyeright' = @(0, 0.49, $false)
+        'scissor.righteyeleft' = @(0, 0.49, $false)
+        'scissor.righteyeright' = @(0, 0.49, $false)
         'tracking.graceperiodms' = @(0, 1000, $true)
         'tracking.gazerefreshms' = @(2, 50, $true)
     }

@@ -100,7 +100,7 @@ struct DeviceDispatch {
 static_assert(std::is_trivially_copyable_v<DeviceDispatch>);
 std::unordered_map<VkDevice,std::vector<uint32_t>> m827GraphicsFamilies;
 std::unordered_map<VkCommandBuffer, VkDevice> commandDevices;
-struct CropState { bool active=false; uint32_t width=0,height=0; VkRect2D renderArea{}; uint32_t subpass=0; };
+struct CropState { bool active=false; uint32_t width=0,height=0; VkRect2D renderArea{}; uint32_t subpass=0; int eye=-1; };
 std::unordered_map<VkCommandBuffer,CropState> cropStates;
 bool settingFlag(const char* name){char v[8]{};return beamng_config::read(name,v,sizeof(v)) && strcmp(v,"1")==0;}
 bool cropEnabled(){static const bool on=settingFlag("BEAMNG_VRS_SCISSOR_ENABLE");return on;}
@@ -116,19 +116,37 @@ double cropFraction(const char* key, double fallback) {
   if (end == buffer || *end != '\0' || !std::isfinite(value)) return fallback;
   return std::clamp(value, 0.0, 0.49);
 }
-beamng_scissor::Crop cropGeometry(uint32_t w,uint32_t h) {
-  static const beamng_scissor::Margins margins{
-    cropFraction("BEAMNG_VRS_SCISSOR_TOP", 0.30),
-    cropFraction("BEAMNG_VRS_SCISSOR_BOTTOM", 0.30),
-    cropFraction("BEAMNG_VRS_SCISSOR_LEFT", 0.0),
-    cropFraction("BEAMNG_VRS_SCISSOR_RIGHT", 0.0)};
-  return beamng_scissor::make(w,h,margins);
+const std::array<beamng_scissor::Margins,2>& cropMargins() {
+  static const auto margins=[] {
+    const double top=cropFraction("BEAMNG_VRS_SCISSOR_TOP",0.30);
+    const double bottom=cropFraction("BEAMNG_VRS_SCISSOR_BOTTOM",0.30);
+    const double left=cropFraction("BEAMNG_VRS_SCISSOR_LEFT",0.0);
+    const double right=cropFraction("BEAMNG_VRS_SCISSOR_RIGHT",0.0);
+    return std::array<beamng_scissor::Margins,2>{{
+      {top,bottom,cropFraction("BEAMNG_VRS_SCISSOR_LEFT_EYE_LEFT",left),
+                  cropFraction("BEAMNG_VRS_SCISSOR_LEFT_EYE_RIGHT",right)},
+      {top,bottom,cropFraction("BEAMNG_VRS_SCISSOR_RIGHT_EYE_LEFT",left),
+                  cropFraction("BEAMNG_VRS_SCISSOR_RIGHT_EYE_RIGHT",right)}}};
+  }();
+  return margins;
+}
+bool cropAsymmetric() {
+  const auto& m=cropMargins();
+  return m[0].left!=m[1].left || m[0].right!=m[1].right;
+}
+beamng_scissor::Crop cropGeometry(uint32_t w,uint32_t h,int eye=-1) {
+  const auto& m=cropMargins();
+  if(eye==0 || eye==1)return beamng_scissor::make(w,h,m[eye]);
+  // Until an eye is known, retain everything either eye needs. Never guess by
+  // render-pass order: classification comes from OpenXR image transfers.
+  return beamng_scissor::make(w,h,{m[0].top,m[0].bottom,
+    std::min(m[0].left,m[1].left),std::min(m[0].right,m[1].right)});
 }
 VkRect2D cropVkRect(beamng_scissor::Rect r) {
   return {{static_cast<int32_t>(r.x),static_cast<int32_t>(r.y)},{r.width,r.height}};
 }
-VkRect2D cropRect(uint32_t w,uint32_t h) {
-  return cropVkRect(cropGeometry(w,h).keep);
+VkRect2D cropRect(uint32_t w,uint32_t h,int eye=-1) {
+  return cropVkRect(cropGeometry(w,h,eye).keep);
 }
 VkRect2D intersectRect(VkRect2D a,VkRect2D b) {
   int64_t x=std::max<int64_t>(a.offset.x,b.offset.x), y=std::max<int64_t>(a.offset.y,b.offset.y);
@@ -213,6 +231,10 @@ std::unordered_map<VkPipeline,M87Pipeline> m87Pipelines;
 struct M89Variant { VkDevice device; VkPipeline pipeline; VkRenderPass shadowPass;
                     VkPipeline maskedPipeline=VK_NULL_HANDLE; };
 std::unordered_map<VkPipeline,M89Variant> m89Variants;
+// M8.30: only asymmetric static scissors need additional pipeline copies.
+// Keyed by the real base pipeline, including compatible VRS/stencil variants.
+struct M830CropVariants { VkDevice device; std::array<VkPipeline,2> eyes{}; };
+std::unordered_map<VkPipeline,M830CropVariants> m830CropVariants;
 std::unordered_map<VkCommandBuffer,VkRenderPass> m89ActiveShadows;
 // M8.18: true stencil rejection is only legal for an eye render pass which
 // already owns a writable stencil attachment. Never invent or replace BeamNG's depth.
@@ -855,6 +877,9 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyDevice(VkDevice device, const VkA
         // vkDestroyDevice implicitly destroys pipelines; avoid calls after dispatch removal.
         it=m89Variants.erase(it);
       } else ++it;
+    }
+    for(auto it=m830CropVariants.begin();it!=m830CropVariants.end();){
+      if(it->second.device==device)it=m830CropVariants.erase(it);else ++it;
     }
     for(auto it=m87Pipelines.begin();it!=m87Pipelines.end();) {
       if(it->second.device==device)it=m87Pipelines.erase(it);else ++it;
@@ -1836,6 +1861,48 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkGetDeviceQueue2(VkDevice device, const V
   if (out && *out) { std::lock_guard<std::mutex> guard(mu); m812gQueueDevices[*out]=device; }
   if (info && out) recordGraphicsQueue(device, *out, info->queueFamilyIndex, info->queueIndex);
 }
+// Build static crop variants at pipeline creation, never during draw recording.
+// Dynamic-scissor pipelines are cropped by the command hook instead.
+static void m830CreateCropVariants(VkDevice device,VkPipelineCache cache,VkPipeline base,
+ const VkGraphicsPipelineCreateInfo& info,const VkPipelineViewportStateCreateInfo* original,
+ const VkAllocationCallbacks* alloc,const DeviceDispatch& d) {
+ if(!cropEnabled() || !cropAsymmetric() || !base || !d.destroyPipeline ||
+    !original || !original->pScissors || !original->scissorCount || original->scissorCount>16 ||
+    !info.pViewportState || !info.pViewportState->pScissors || info.basePipelineHandle ||
+    (info.flags & VK_PIPELINE_CREATE_DERIVATIVE_BIT))return;
+ if(info.pDynamicState)for(uint32_t i=0;i<info.pDynamicState->dynamicStateCount;++i)
+  if(info.pDynamicState->pDynamicStates[i]==VK_DYNAMIC_STATE_SCISSOR ||
+     info.pDynamicState->pDynamicStates[i]==VK_DYNAMIC_STATE_SCISSOR_WITH_COUNT)return;
+ const uint32_t width=m813Width(),height=m813Height();
+ bool eligible=false;
+ for(uint32_t i=0;i<original->scissorCount;++i) {
+  const auto& r=original->pScissors[i];
+  eligible|=r.offset.x==0 && r.offset.y==0 && r.extent.width==width && r.extent.height==height;
+ }
+ if(!eligible)return;
+ std::array<VkPipeline,2> copies{};
+ bool complete=true;
+ for(int eye=0;eye<2;++eye){
+  std::array<VkRect2D,16> scissors{};
+  for(uint32_t i=0;i<original->scissorCount;++i){
+   const auto& r=original->pScissors[i];
+   scissors[i]=info.pViewportState->pScissors[i];
+   if(r.offset.x==0 && r.offset.y==0 && r.extent.width==width && r.extent.height==height)
+    scissors[i]=intersectRect(scissors[i],cropRect(width,height,eye));
+  }
+  auto viewport=*info.pViewportState;viewport.pScissors=scissors.data();
+  auto variant=info;variant.pViewportState=&viewport;
+  const auto result=d.createPipelines(device,cache,1,&variant,alloc,&copies[eye]);
+  if(result!=VK_SUCCESS || !copies[eye]){complete=false;break;}
+ }
+ if(!complete){
+  for(auto copy:copies)if(copy)d.destroyPipeline(device,copy,alloc);
+  log("M8.30 per-eye static crop variants unavailable; retaining common crop and eye-specific border clears");
+  return;
+ }
+ std::lock_guard<std::mutex> guard(mu);
+ m830CropVariants[base]={device,copies};
+}
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
     VkDevice device, VkPipelineCache cache, uint32_t count,
     const VkGraphicsPipelineCreateInfo* infos,
@@ -1927,7 +1994,9 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
            stencilVariant.pDepthStencilState=&ds;
            if(d.createPipelines(device,cache,1,&stencilVariant,alloc,&masked)!=VK_SUCCESS)
             masked=VK_NULL_HANDLE;
+           if(masked)m830CreateCropVariants(device,cache,masked,stencilVariant,infos[i].pViewportState,alloc,d);
           }
+          m830CreateCropVariants(device,cache,replacement,variant,infos[i].pViewportState,alloc,d);
           std::lock_guard<std::mutex> guard(mu);
           m89Variants[out[i]]={device,replacement,shadow,masked};
           if(masked)m818MaskedVariantsByPass[infos[i].renderPass]++;
@@ -2032,6 +2101,8 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
     for(uint32_t i=0;i<count;++i)if(out[i] && infos[i].renderPass)
       m87Pipelines[out[i]]={device,infos[i].renderPass,infos[i].subpass};
   }
+  if(result==VK_SUCCESS && out)for(uint32_t i=0;i<count;++i)
+    m830CreateCropVariants(device,cache,out[i],modified[i],infos[i].pViewportState,alloc,d);
   m89CreateVariants(result);
   if (cropChanged) {
     char message[160];
@@ -2910,6 +2981,32 @@ std::unordered_map<VkCommandBuffer, M81OutlinePass> m81OutlinePasses;
 void m81StartOutline(VkCommandBuffer cmd, const VkRenderPassBeginInfo* info);
 void m81DrawOutline(VkCommandBuffer cmd, const DeviceDispatch& d);
 }
+namespace {
+// Caller holds mu. Mixed-eye and unknown framebuffers keep the common crop.
+int m830FramebufferEye(VkFramebuffer framebuffer) {
+ auto attachments=m74dAttachments.find(framebuffer);
+ if(attachments==m74dAttachments.end())return -1;
+ int eye=-1;
+ for(auto view:attachments->second.views){
+  auto v=m74gViews.find(view);if(v==m74gViews.end())continue;
+  const int candidate=m8ClassifiedEye(v->second.image);
+  if(candidate<0 || candidate>1)continue;
+  if(eye>=0 && eye!=candidate)return -1;
+  eye=candidate;
+ }
+ return eye;
+}
+void m830StartCrop(VkCommandBuffer cmd,const VkRenderPassBeginInfo* info,bool inlinePass) {
+ std::lock_guard<std::mutex> guard(mu);
+ cropStates.erase(cmd);
+ if(!cropEnabled() || !info || !inlinePass)return;
+ auto f=framebuffers.find(info->framebuffer);auto p=passInfos.find(info->renderPass);
+ if(f==framebuffers.end() || p==passInfos.end() || f->second.layers!=1 ||
+    f->second.width!=m813Width() || f->second.height!=m813Height() ||
+    !p->second.colors || p->second.subpasses!=1)return;
+ cropStates[cmd]={true,f->second.width,f->second.height,info->renderArea,0,m830FramebufferEye(info->framebuffer)};
+}
+}
 extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdBeginRenderPass(
  VkCommandBuffer cmd, const VkRenderPassBeginInfo* info, VkSubpassContents contents) {
  auto d = lookupCommand(cmd);
@@ -2933,15 +3030,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdBeginRenderPass(
  if (d.cmdBeginRenderPass) d.cmdBeginRenderPass(cmd, useShadow ? &modified : info, contents);
  if(contents==VK_SUBPASS_CONTENTS_INLINE)m818BeginStencil(cmd,info,useShadow,d);
  m81StartOutline(cmd, info);
- if (info) {
-   std::lock_guard<std::mutex> guard(mu);
-   auto f=framebuffers.find(info->framebuffer);
-   if (cropEnabled() && f!=framebuffers.end() && f->second.width==m813Width() && f->second.height==m813Height() &&
-       passInfos.count(info->renderPass) && passInfos.at(info->renderPass).colors > 0 &&
-       passInfos.at(info->renderPass).subpasses == 1)
-     cropStates[cmd]={true,f->second.width,f->second.height,info->renderArea,0};
-   else cropStates.erase(cmd);
- }
+ m830StartCrop(cmd,info,contents==VK_SUBPASS_CONTENTS_INLINE);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdBeginRenderPass2(
  VkCommandBuffer cmd, const VkRenderPassBeginInfo* info, const VkSubpassBeginInfo* begin) {
@@ -2966,15 +3055,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdBeginRenderPass2(
  if(begin && begin->contents==VK_SUBPASS_CONTENTS_INLINE)
   m818BeginStencil(cmd,info,useShadow,d);
  m81StartOutline(cmd, info);
- if (info) {
-   std::lock_guard<std::mutex> guard(mu);
-   auto f=framebuffers.find(info->framebuffer);
-   if (cropEnabled() && f!=framebuffers.end() && f->second.width==m813Width() && f->second.height==m813Height() &&
-       passInfos.count(info->renderPass) && passInfos.at(info->renderPass).colors > 0 &&
-       passInfos.at(info->renderPass).subpasses == 1)
-     cropStates[cmd]={true,f->second.width,f->second.height,info->renderArea,0};
-   else cropStates.erase(cmd);
- }
+ m830StartCrop(cmd,info,begin && begin->contents==VK_SUBPASS_CONTENTS_INLINE);
 }
 
 
@@ -2988,7 +3069,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdSetScissor(VkCommandBuffer cmd,uint32
  CropState c{};
  { std::lock_guard<std::mutex> guard(mu); auto it=cropStates.find(cmd); if(it!=cropStates.end()) c=it->second; }
  if (!c.active) { d.cmdSetScissor(cmd,first,count,rects); return; }
- const auto area=intersectRect(cropRect(c.width,c.height),c.renderArea);
+ const auto area=intersectRect(cropRect(c.width,c.height,c.eye),c.renderArea);
  // M8.17: avoid heap allocation in the common single-viewport scissor path.
  if(count==1){
   const VkRect2D clipped=intersectRect(rects[0],area);
@@ -3013,7 +3094,7 @@ static void cropBlackBars(VkCommandBuffer cmd,const DeviceDispatch& d) {
  VkClearAttachment color{}; color.aspectMask=VK_IMAGE_ASPECT_COLOR_BIT; color.colorAttachment=0;
  color.clearValue.color.float32[0]=0; color.clearValue.color.float32[1]=0;
  color.clearValue.color.float32[2]=0; color.clearValue.color.float32[3]=1;
- const auto crop=cropGeometry(c.width,c.height);
+ const auto crop=cropGeometry(c.width,c.height,c.eye);
  VkClearRect bars[4]={};
  uint32_t count=0;
  for(const auto& outside:crop.outside){
@@ -3120,6 +3201,14 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdBindPipeline(VkCommandBuffer cmd,VkPi
      }
    }
  }
+ if(point==VK_PIPELINE_BIND_POINT_GRAPHICS && cropEnabled() && cropAsymmetric()){
+  std::lock_guard<std::mutex> guard(mu);
+  const auto state=cropStates.find(cmd);const auto variants=m830CropVariants.find(pipeline);
+  const auto device=commandDevices.find(cmd);
+  if(state!=cropStates.end() && state->second.active && state->second.eye>=0 && state->second.eye<2 &&
+     variants!=m830CropVariants.end() && device!=commandDevices.end() && variants->second.device==device->second)
+   pipeline=variants->second.eyes[state->second.eye];
+ }
  if(d.cmdBindPipeline)d.cmdBindPipeline(cmd,point,pipeline);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyPipeline(VkDevice device,VkPipeline pipeline,const VkAllocationCallbacks* alloc) {
@@ -3135,7 +3224,16 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyPipeline(VkDevice device,VkPipeli
    m87Pipelines.erase(pipeInfo);
   }
   auto variant=m89Variants.find(pipeline);
+  auto destroyCrops=[&](VkPipeline base){
+   auto crops=m830CropVariants.find(base);if(crops==m830CropVariants.end())return;
+   auto dit=devices.find(device);
+   if(dit!=devices.end() && dit->second.destroyPipeline)
+    for(auto copy:crops->second.eyes)if(copy)dit->second.destroyPipeline(device,copy,alloc);
+   m830CropVariants.erase(crops);
+  };
+  destroyCrops(pipeline);
   if(variant!=m89Variants.end()) {
+    destroyCrops(variant->second.pipeline);destroyCrops(variant->second.maskedPipeline);
     auto dit=devices.find(device);
     if(dit!=devices.end() && dit->second.destroyPipeline)
       {

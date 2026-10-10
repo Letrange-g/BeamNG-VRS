@@ -1,4 +1,4 @@
-# Performance work: M8.27–M8.29
+# Performance work: M8.27–M8.30
 
 This beta reduces layer overhead while retaining the configured foveation sizes,
 shape, 30 ms gaze grace and 8 ms refresh interval. GPU/FPS improvements must be
@@ -48,6 +48,19 @@ environment.
   to the original render area. This avoids clearing retained corner pixels.
   Cropping reduces rasterization/pixel coverage; it does not cull objects or
   avoid vertex processing. Older INIs retain zero horizontal crop.
+- **Per-eye horizontal scissor (beta.9 / M8.30):** four width-relative controls
+  separate nose-side and outside edges. Eye selection follows framebuffer image
+  classification learned from OpenXR transfers, independently of debug outlines
+  and VRS substitution. Matching static pipelines with asymmetric settings get
+  two cropped copies at creation, including compatible VRS/stencil copies;
+  binds select the correct eye copy without creating pipelines or allocating.
+  Dynamic scissors and final border clears use the same eye selection. Unknown
+  or mixed-eye targets keep the common rectangle (minimum horizontal crop per
+  side), avoiding premature clipping of pixels the other eye needs. Copy creation
+  failure cleans up partial copies and falls back to the common static crop with
+  exact per-eye border clears. This fallback does not save the extra per-eye
+  rasterization work. Secondary-only, layered and dynamic-rendering crop paths
+  are not added. Old shared INI edges remain supported.
 - **Submission APIs:** live uploads now precede `vkQueueSubmit2` and
   `vkQueueSubmit2KHR` as well as the original `vkQueueSubmit` path.
 - **Gaze freshness:** live VRS reads a separate projection mapping. Raw-pose
@@ -187,3 +200,27 @@ Depth bounds and fog are also insufficient substitutes: normalized depth is not
 world distance, and obscuring pixels does not imply object culling. A Vulkan
 distance experiment should be compared against engine culling using actual CPU
 and GPU timings before adding a user-facing distance setting.
+
+## OpenXR Toolkit turbo mode: feasibility
+
+The upstream [frame hooks](https://github.com/mbucchia/OpenXR-Toolkit/blob/6b9ecb69a4b2dc714b14a86407868af315d02531/XR_APILAYER_MBUCCHIA_toolkit/layer.cpp#L2104)
+start a background `xrWaitFrame` after `xrEndFrame`. The next app-facing wait can
+return an extrapolated predicted display time before that wait completes; the
+real begin is deferred until submission. This overlaps app work with runtime
+waiting, rather than reducing shading or draw cost. A second poll waits, limiting
+pipelining to one frame. Transitions and swapchain destruction also drain waits.
+
+Toolkit's graphics integration uses D3D11/D3D12. The frame scheduling idea itself
+uses OpenXR, so a Vulkan application could use an implementation in our OpenXR
+layer; it is not a Vulkan VRS setting or a drop-in Toolkit switch. It needs session
+lifecycle, thread safety, frame call order, prediction, swapchain lifetime and
+runtime failure handling. Upstream explicitly warns about motion reprojection,
+ASW and motion smoothing, and documents a possible one-second transition freeze.
+
+**Not implemented in beta.9.** First measure normal `xrWaitFrame`, begin/end and
+swapchain wait durations, alongside GPU time, with the runtime and reprojection
+mode identified. Benefits depend on avoidable wait bubbles; it cannot reduce GPU
+rendering cost or the game's non-VR CPU variability. The supplied loader logs do
+not contain those timings. Any future turbo test should be opt-in and separate
+from crop comparisons, with frame pacing and head-motion appearance checked in
+the headset as well as FPS.

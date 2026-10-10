@@ -95,7 +95,7 @@ try {
     Set-Content -LiteralPath $ini -Value "[Foveation]`nSize1x1=0`nSize2x2=0`nShape=ellipse`n[Debug]`nDrawOutline=false`n[Scissor]`nEnabled=false" -Encoding UTF8
     Test-LaunchLayout -Layers $layers
     $launcher = Join-Path $layers 'Launch-BeamNG-VRS.ps1'
-    Set-Content -LiteralPath $ini -Value "[Scissor]`nEnabled=true`nTop=0.30`nBottom=0.30`nLeft=0.05`nRight=0.10" -Encoding UTF8
+    Set-Content -LiteralPath $ini -Value "[Scissor]`nEnabled=true`nTop=0.30`nBottom=0.30`nLeftEyeLeft=0.05`nLeftEyeRight=0`nRightEyeLeft=0`nRightEyeRight=0.10" -Encoding UTF8
     Test-LaunchLayout -Layers $layers
     # The public launcher must not silently edit/use an obsolete nested INI.
     Move-Item -LiteralPath $ini -Destination $layers

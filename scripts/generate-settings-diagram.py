@@ -34,23 +34,25 @@ ax.annotate("", (180, 300), (720, 300), arrowprops={"arrowstyle": "<->", "color"
 ax.text(35, 38, "Size2x2 = 0.60", color="white", fontsize=12)
 ax.annotate("", (180, 300), (155, 64), arrowprops={"arrowstyle": "-", "color": "white"})
 
-ax = panel([.525, .31, .43, .47], "2. Optional scissor crop")
-ax.add_patch(Rectangle((0, 0), 900, 600, facecolor="#244659", edgecolor="#75869c", lw=1.5))
-for y in (0, 420):
-    ax.add_patch(Rectangle((0, y), 900, 180, facecolor="#593641", edgecolor="#b67880", hatch="///", lw=0))
-    ax.text(450, y + 90, "CROPPED", ha="center", va="center", color="#f1cad0", fontsize=14)
-ax.hlines([180, 420], 0, 900, colors="#91d9e3", linestyles="--", lw=2)
-for x in (0, 810):
-    ax.add_patch(Rectangle((x, 180), 90, 240, facecolor="#593641", edgecolor="#b67880", hatch="///", lw=0))
-    ax.text(x + 45, 300, "10%", ha="center", va="center", color="#f1cad0", fontsize=11, rotation=90)
-ax.vlines([90, 810], 180, 420, colors="#91d9e3", linestyles="--", lw=2)
-ax.text(450, 335, "Enabled = true", ha="center", color="white", fontsize=16, weight="bold")
-ax.text(450, 290, "Top = 0.30  ·  Bottom = 0.30", ha="center", color="white", fontsize=12)
-ax.text(450, 248, "Example: Left = 0.10  ·  Right = 0.10", ha="center", color="white", fontsize=11)
-for y0, y1, label in ((420, 600, "30%"), (0, 180, "30%")):
-    ax.annotate("", (850, y0), (850, y1), arrowprops={"arrowstyle": "<->", "color": "white", "lw": 1.7})
-    ax.text(800, (y0 + y1) / 2, label, color="white", ha="right", va="center")
-ax.text(450, 207, "Defaults: disabled · Left = Right = 0", ha="center", color="#c7dee8", fontsize=10)
+ax = panel([.525, .31, .43, .47], "2. Scissor: tune each eye separately")
+for x, eye, outside_left in ((20, "LEFT EYE", True), (480, "RIGHT EYE", False)):
+    ax.text(x + 200, 560, eye, ha="center", color="white", fontsize=13, weight="bold")
+    ax.add_patch(Rectangle((x, 100), 400, 400, facecolor="#244659", edgecolor="#75869c", lw=1.5))
+    for y in (100, 380):
+        ax.add_patch(Rectangle((x, y), 400, 120, facecolor="#593641", edgecolor="#b67880", hatch="///", lw=0))
+        ax.text(x + 200, y + 60, "30% CROPPED", ha="center", va="center", color="#f1cad0", fontsize=10)
+    outer_x = x if outside_left else x + 360
+    ax.add_patch(Rectangle((outer_x, 220), 40, 160, facecolor="#593641", edgecolor="#b67880", hatch="///", lw=0))
+    ax.text(outer_x + 20, 300, "10%", ha="center", va="center", color="#f1cad0", fontsize=9, rotation=90)
+    ax.hlines([220, 380], x, x + 400, colors="#91d9e3", linestyles="--", lw=2)
+    ax.vlines(x + 40 if outside_left else x + 360, 220, 380, colors="#91d9e3", linestyles="--", lw=2)
+    ax.text(x + 200, 325, "Outside-only example", ha="center", color="white", fontsize=10)
+    ax.text(x + 200, 278, "Nose-side edge untouched", ha="center", color="#c7dee8", fontsize=9)
+    prefix = "LeftEye" if outside_left else "RightEye"
+    ax.text(x + 200, 65, prefix + "Left = " + ("0.10 (outer)" if outside_left else "0 (nose)"), ha="center", color="white", fontsize=10)
+    ax.text(x + 200, 30, prefix + "Right = " + ("0 (nose)" if outside_left else "0.10 (outer)"), ha="center", color="white", fontsize=10)
+ax.text(450, 520, "Top = Bottom = 0.30 · Enabled = true", ha="center", color="#c7dee8", fontsize=11)
+ax.text(450, -12, "Defaults: scissor off · all four horizontal edges = 0", ha="center", color="#aabbd0", fontsize=10)
 
 fig.text(.055, .255, "Ellipse diameters scale with eye-image width horizontally and height vertically.", color="white", fontsize=12)
 fig.text(.055, .22, "Size2x2 must be at least Size1x1. Larger values preserve more detail.", color="#aabbd0", fontsize=11)

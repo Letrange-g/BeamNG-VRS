@@ -11,8 +11,10 @@ The release ZIP puts `BeamNG-VRS.ini` beside `Launch-BeamNG-VRS.cmd` at the extr
 | Scissor | `Enabled` | `false` | Experimental four-edge crop. Test visible edges and frame times before enabling. |
 | Scissor | `Top` | `0.30` | Fraction of eye-image height cropped from the top when scissor is enabled (0 to 0.49). |
 | Scissor | `Bottom` | `0.30` | Fraction cropped from the bottom (0 to 0.49). |
-| Scissor | `Left` | `0` | Fraction of eye-image width cropped from the left (0 to 0.49). Requires beta.8 or newer. |
-| Scissor | `Right` | `0` | Fraction of eye-image width cropped from the right (0 to 0.49). Requires beta.8 or newer. |
+| Scissor | `LeftEyeLeft` | `0` | Left eye's outer/left edge, fraction of that eye's image width (0 to 0.49). Beta.9+. |
+| Scissor | `LeftEyeRight` | `0` | Left eye's nose-side/right edge (0 to 0.49). Beta.9+. |
+| Scissor | `RightEyeLeft` | `0` | Right eye's nose-side/left edge (0 to 0.49). Beta.9+. |
+| Scissor | `RightEyeRight` | `0` | Right eye's outer/right edge (0 to 0.49). Beta.9+. |
 | Tracking | `GracePeriodMs` | `30` | Hold the last valid gaze for this many milliseconds during temporary tracking loss (0 to 1000). |
 | Tracking | `GazeRefreshMs` | `8` | Minimum CPU gaze polling interval (2 to 50 ms). This does not measure eye-to-display latency. |
 
@@ -24,13 +26,40 @@ With `Size1x1=0.25`, `Size2x2=0.60`, and `Shape=ellipse`, the full-quality ellip
 
 ## Scissor crop
 
-When scissor is enabled, start horizontal cropping at `Left=0.05` and
-`Right=0.05` and inspect both eyes for visible black borders. Cropping reduces
-pixel coverage in matching eye passes; it does not cull scene objects or change
-the camera projection. With top/bottom 0.30 and left/right 0.05, approximately
-36% of the eye-image area remains, versus 40% with the horizontal defaults.
-This area reduction is not a predicted FPS gain. Restart after each adjustment.
-Old INIs that omit `Left` and `Right` retain zero horizontal crop.
+All four horizontal controls default to zero. Left/right refer to the image
+as seen by that eye; they are not mirrored. Top/bottom remain shared by both eyes.
+
+For **outside-only** cropping, start with:
+
+```ini
+[Scissor]
+Enabled=true
+Top=0.30
+Bottom=0.30
+LeftEyeLeft=0.05
+LeftEyeRight=0
+RightEyeLeft=0
+RightEyeRight=0.05
+```
+
+This leaves the nose-side edges untouched. To crop only near the nose instead,
+set `LeftEyeLeft=0` / `RightEyeRight=0` and adjust `LeftEyeRight` / `RightEyeLeft`.
+Inspect each eye separately in the headset and restart after each adjustment.
+Do not keep a crop whose black border is visible during normal use.
+
+`0.05` means 5% of image width for a horizontal edge. Top/bottom use image height.
+With top/bottom 0.30 and only one horizontal edge at 0.05, approximately 38% of
+each eye image remains. Cropping both horizontal edges at 0.05 leaves about 36%.
+This area reduction is not a predicted FPS gain. Cropping does not cull scene
+objects or change the camera projection.
+
+**Upgrading:** beta.8's shared `Left` and `Right` keys are still accepted. An
+omitted per-eye key inherits its corresponding shared edge, or zero if that
+shared key is absent. An explicit per-eye key wins regardless of file order.
+For example, `Left=0.10` with `RightEyeLeft=0` crops the left eye's outside by
+10% and leaves the right eye's nose-side edge untouched. These legacy keys
+are intentionally omitted from the new template. Update both DLLs and the
+launcher together; older versions do not understand the new per-eye names.
 
 ## Existing developer launch scripts
 
