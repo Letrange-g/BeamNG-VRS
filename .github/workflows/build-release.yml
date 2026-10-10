@@ -3,9 +3,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Package version (for example 0.1.0-beta.3)
+        description: Package version (for example 0.1.0-beta.4)
         required: true
-        default: 0.1.0-beta.3
+        default: 0.1.0-beta.4
       publish_release:
         description: Publish the tested ZIP as an experimental GitHub prerelease
         type: boolean
@@ -28,7 +28,7 @@ jobs:
       - name: Build DLLs, run tests, and package
         shell: pwsh
         env:
-          PACKAGE_VERSION: ${{ inputs.version || '0.1.0-beta.3' }}
+          PACKAGE_VERSION: ${{ inputs.version || '0.1.0-beta.4' }}
         run: ./scripts/Build-Release.ps1 -Version $env:PACKAGE_VERSION
       - uses: actions/upload-artifact@v4
         with:

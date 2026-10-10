@@ -1,6 +1,8 @@
 Experimental Windows x64 beta with portable installation and streamlined INI settings.
 
-This update fixes game discovery when the ZIP is extracted directly inside `Bin64`. Both installation locations are now supported. The launcher uses Windows PowerShell 5.1, included by default in Windows 10 and 11; PowerShell 7 is not required.
+This update fixes the startup failure `Failed to open dynamic library "./BeamNG_VRS.dll" with error 87`. Both manifests now use Windows relative paths so their DLLs resolve beside the JSON files instead of the game's working directory. A Windows regression check reproduces error 87 for the old path and loads both corrected manifest paths from a different working directory, including spaces and Unicode in the installation path.
+
+Extraction into the game root or directly inside `Bin64` is supported. The launcher uses Windows PowerShell 5.1, included by default in Windows 10 and 11; PowerShell 7 is not required.
 
 The launcher now preserves normal Vulkan layer discovery. For a rendering-device startup error, run `Diagnose-BeamNG-VRS.cmd` and close the game/error dialog to collect the loader log at the printed path. Run under your normal user account. This adds troubleshooting information; it does not establish the cause of every rendering-device error.
 

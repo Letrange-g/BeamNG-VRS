@@ -104,7 +104,9 @@ if(BUILD_TESTING)
     target_compile_options(dll_exports_test PRIVATE -UNDEBUG)
     target_link_options(dll_exports_test PRIVATE -municode)
   endif()
-  add_test(NAME dll_exports COMMAND dll_exports_test "$<TARGET_FILE_DIR:BeamNG_VRS>")
+  add_test(NAME dll_exports
+    COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_manifest_paths.py"
+    --package-dir "$<TARGET_FILE_DIR:BeamNG_VRS>" --dll-check "$<TARGET_FILE:dll_exports_test>")
   add_test(NAME launcher_integration
     COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/Test-Launcher.ps1"
     -BuildDirectory "$<TARGET_FILE_DIR:BeamNG_VRS>" -GameFixture "$<TARGET_FILE:launcher_game_fixture>")

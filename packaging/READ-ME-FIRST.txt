@@ -46,6 +46,8 @@ BeamNG-VRS folder.
 Back up your INI before extracting an update: extraction can overwrite it.
 
 TROUBLESHOOTING
+Previous betas can fail with "./BeamNG_VRS.dll" and Windows error 87.
+This package fixes the Windows relative paths in both loader manifests.
 If normal Vulkan works but VRS launch reports no rendering device, run
 Diagnose-BeamNG-VRS.cmd. Close the game and any error dialog, then inspect
 the loader log at the path printed in the window. Run with your normal user
