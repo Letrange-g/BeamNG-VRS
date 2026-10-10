@@ -6,6 +6,11 @@
 #include <cstring>
 
 namespace beamng_config {
+inline std::filesystem::path moduleIniPath(const std::filesystem::path& layerDirectory) {
+ const auto rootIni = layerDirectory.parent_path() / L"BeamNG-VRS.ini";
+ if(std::filesystem::exists(rootIni)) return rootIni;
+ return layerDirectory / L"BeamNG-VRS.ini"; // Older direct-loading layouts.
+}
 inline std::filesystem::path configPath() {
  std::wstring path(32768, L'\0');
  const DWORD length = GetEnvironmentVariableW(L"BEAMNG_VRS_CONFIG", path.data(), static_cast<DWORD>(path.size()));
@@ -22,7 +27,7 @@ inline std::filesystem::path configPath() {
  const DWORD size = GetModuleFileNameW(module, path.data(), static_cast<DWORD>(path.size()));
  if(!size || size >= path.size()) throw std::runtime_error("could not locate layer directory");
  path.resize(size);
- return std::filesystem::path(path).parent_path() / L"BeamNG-VRS.ini";
+ return moduleIniPath(std::filesystem::path(path).parent_path());
 }
 inline const Values& fileValues() {
  // Lazy initialization: no file I/O in DllMain or a static initializer.

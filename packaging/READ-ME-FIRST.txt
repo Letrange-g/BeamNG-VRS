@@ -5,7 +5,7 @@ INSTALL
 2. Extract this entire ZIP into the BeamNG installation root (beside Bin64).
    Extraction directly inside Bin64 also works.
    Keep the BeamNG-VRS folder and Launch-BeamNG-VRS.cmd together.
-3. Edit BeamNG-VRS/BeamNG-VRS.ini in Notepad if desired.
+3. Edit BeamNG-VRS.ini beside Launch-BeamNG-VRS.cmd in Notepad if desired.
 4. Start Launch-BeamNG-VRS.cmd. It launches BeamNG in Vulkan mode.
 5. Enable VR in BeamNG as usual. Restart the game after every settings change.
 
@@ -46,11 +46,13 @@ The game may require its normal Steam session. Start Steam first if needed.
 
 UNINSTALL / UPDATE
 Launch BeamNG normally to stop using these layers. To uninstall, close the
-game, then delete Launch-BeamNG-VRS.cmd, Diagnose-BeamNG-VRS.cmd and the
+game, then delete BeamNG-VRS.ini, Launch-BeamNG-VRS.cmd, Diagnose-BeamNG-VRS.cmd and the
 BeamNG-VRS folder.
 Back up your INI before extracting an update: extraction can overwrite it.
 When updating from an earlier beta, delete the old BeamNG-VRS-Check.exe;
 it is no longer used. Restore your INI after updating to keep your settings.
+Beta.8 moves the INI to the extraction root, beside the launch CMD. Restore
+an earlier beta's saved INI here instead of inside BeamNG-VRS.
 
 TROUBLESHOOTING
 Previous betas can fail with "./BeamNG_VRS.dll" and Windows error 87.

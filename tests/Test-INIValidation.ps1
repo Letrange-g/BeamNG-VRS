@@ -3,8 +3,9 @@ $ErrorActionPreference = 'Stop'
 $source = Split-Path -Parent $PSScriptRoot
 $temporary = Join-Path ([IO.Path]::GetTempPath()) ('BeamNG INI validation ' + [Guid]::NewGuid())
 try {
-    [void](New-Item -ItemType Directory -Path $temporary)
-    $launcher = Join-Path $temporary 'Launch-BeamNG-VRS.ps1'
+    $layers = Join-Path $temporary 'BeamNG-VRS'
+    [void](New-Item -ItemType Directory -Path $layers -Force)
+    $launcher = Join-Path $layers 'Launch-BeamNG-VRS.ps1'
     Copy-Item -LiteralPath (Join-Path $source 'packaging/Launch-BeamNG-VRS.ps1') -Destination $launcher
     $ini = Join-Path $temporary 'BeamNG-VRS.ini'
     $cases = @(

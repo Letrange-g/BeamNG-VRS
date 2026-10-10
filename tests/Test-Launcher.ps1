@@ -33,7 +33,7 @@ function Test-LaunchLayout {
     }
     $vulkanPathName = if ($env:VK_LAYER_PATH) { 'VK_LAYER_PATH' } else { 'VK_ADD_LAYER_PATH' }
     $existingPath = [Environment]::GetEnvironmentVariable($vulkanPathName, 'Process')
-    foreach ($binding in @(@('BEAMNG_VRS_CONFIG', (Join-Path $Layers 'BeamNG-VRS.ini')),
+    foreach ($binding in @(@('BEAMNG_VRS_CONFIG', (Join-Path (Split-Path -Parent $Layers) 'BeamNG-VRS.ini')),
                            @($vulkanPathName, ($Layers + ';' + $existingPath)), @('XR_API_LAYER_PATH', $Layers),
                            @('working_directory', $temp))) {
         if (-not $content.Contains($binding[0] + '=' + $binding[1])) { throw "Incorrect child path: $($binding[0])." }
@@ -64,7 +64,8 @@ try {
             'VK_LAYER_BEAMNG_vrs.json', 'XR_APILAYER_BEAMNG_eye_probe.json')) {
         Copy-Item -LiteralPath (Join-Path $BuildDirectory $file) -Destination $layers
     }
-    Copy-Item -LiteralPath (Join-Path $source 'packaging/BeamNG-VRS.ini') -Destination $layers
+    $ini = Join-Path $temp 'BeamNG-VRS.ini'
+    Copy-Item -LiteralPath (Join-Path $source 'packaging/BeamNG-VRS.ini') -Destination $ini
     Copy-Item -LiteralPath (Join-Path $source 'packaging/Launch-BeamNG-VRS.ps1') -Destination $layers
     $result = Join-Path $temp 'result.txt'
     $env:BEAMNG_LAUNCHER_TEST_OUTPUT = $result
@@ -76,6 +77,8 @@ try {
         if ($layout -eq 'Bin64') {
             Move-Item -LiteralPath $layers -Destination $bin
             $layers = Join-Path $bin 'BeamNG-VRS'
+            Move-Item -LiteralPath $ini -Destination $bin
+            $ini = Join-Path $bin 'BeamNG-VRS.ini'
         }
         foreach ($executable in @('BeamNG.drive.x64.exe', 'BeamNG.drive.exe')) {
             $env:VK_LAYER_PATH = if ($executable -eq 'BeamNG.drive.exe') { 'existing-override-path' } else { $null }
@@ -89,19 +92,24 @@ try {
     }
     Test-LaunchLayout -Layers $layers -Diagnostics
     # Zero-sized quality regions must pass validation and reach Process.Start.
-    Set-Content -LiteralPath (Join-Path $layers 'BeamNG-VRS.ini') -Value "[Foveation]`nSize1x1=0`nSize2x2=0`nShape=ellipse`n[Debug]`nDrawOutline=false`n[Scissor]`nEnabled=false" -Encoding UTF8
+    Set-Content -LiteralPath $ini -Value "[Foveation]`nSize1x1=0`nSize2x2=0`nShape=ellipse`n[Debug]`nDrawOutline=false`n[Scissor]`nEnabled=false" -Encoding UTF8
     Test-LaunchLayout -Layers $layers
     $launcher = Join-Path $layers 'Launch-BeamNG-VRS.ps1'
-    Set-Content -LiteralPath (Join-Path $layers 'BeamNG-VRS.ini') -Value "[Scissor]`nEnabled=true`nTop=0.30`nBottom=0.30`nLeft=0.05`nRight=0.10" -Encoding UTF8
+    Set-Content -LiteralPath $ini -Value "[Scissor]`nEnabled=true`nTop=0.30`nBottom=0.30`nLeft=0.05`nRight=0.10" -Encoding UTF8
     Test-LaunchLayout -Layers $layers
+    # The public launcher must not silently edit/use an obsolete nested INI.
+    Move-Item -LiteralPath $ini -Destination $layers
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -CheckOnly
+    if ($LASTEXITCODE -eq 0 -or (Test-Path -LiteralPath $result)) { throw 'Missing root INI was not rejected.' }
+    Move-Item -LiteralPath (Join-Path $layers 'BeamNG-VRS.ini') -Destination $ini
     Remove-Item -LiteralPath (Join-Path $bin 'BeamNG.drive.x64.exe')
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -CheckOnly
     if ($LASTEXITCODE -eq 0 -or (Test-Path -LiteralPath $result)) { throw 'Missing executable was not rejected.' }
     Copy-Item -LiteralPath $GameFixture -Destination (Join-Path $bin 'BeamNG.drive.x64.exe')
-    Set-Content -LiteralPath (Join-Path $layers 'BeamNG-VRS.ini') -Value "[Debug]`nDrawOutline=typo" -Encoding UTF8
+    Set-Content -LiteralPath $ini -Value "[Debug]`nDrawOutline=typo" -Encoding UTF8
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher
     if ($LASTEXITCODE -eq 0 -or (Test-Path -LiteralPath $result)) { throw 'Invalid INI started the game.' }
-    Write-Output 'Launcher integration passed: root/Bin64 layouts, both executable names, working directory, Vulkan discovery, diagnostic capture, arguments, child environment, CheckOnly, missing executable and invalid INI.'
+    Write-Output 'Launcher integration passed: root/Bin64 layouts, root INI, both executable names, working directory, Vulkan discovery, diagnostic capture, arguments, child environment, CheckOnly, missing INI/executable and invalid INI.'
 } finally {
     foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $before[$name], 'Process') }
     Remove-Item -LiteralPath $temp -Recurse -Force

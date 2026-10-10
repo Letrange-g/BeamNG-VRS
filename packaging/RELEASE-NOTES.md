@@ -1,5 +1,7 @@
 Experimental Windows x64 beta with portable installation and streamlined INI settings.
 
+The INI now sits at the extraction root, beside `Launch-BeamNG-VRS.cmd`, for easier editing. Back up your current INI before updating, then restore it at this new location. The new launcher selects this root copy explicitly. Update the launcher and both DLLs together.
+
 Beta.8 adds `Left` and `Right` under `[Scissor]`, as fractions of eye-image width from 0 to 0.49. Both default to `0`; old INIs without these keys keep zero horizontal crop. To try them, enable scissor and start with `Left=0.05` / `Right=0.05`, then check both eyes for visible black borders. Top/bottom retain their height-relative defaults of 0.30. Up to four non-overlapping black borders are cleared in one call. This new crop still needs testing in BeamNG with the target headset.
 
 M8.28 also reuses completed transfer recordings when their source slots, images, extents and queue family match; new staged bytes are read when the transfer executes. GPU barriers and fence ownership are retained.
@@ -18,7 +20,7 @@ The launcher preserves normal Vulkan layer discovery. For a rendering-device sta
 
 1. Download the **BeamNG-VRS Windows x64 `.zip`** under Assets below. The GitHub source-code archives do not contain DLLs.
 2. Close BeamNG and extract the entire ZIP into its installation root, beside `Bin64`, or directly inside `Bin64`. Keep `Launch-BeamNG-VRS.cmd` and the `BeamNG-VRS` folder together.
-3. Edit `BeamNG-VRS/BeamNG-VRS.ini` if desired, then run `Launch-BeamNG-VRS.cmd`.
+3. Edit `BeamNG-VRS.ini` beside the launch CMD if desired, then run `Launch-BeamNG-VRS.cmd`.
 4. Enable VR in BeamNG as usual. Restart the game after changing settings.
 
 The package includes both DLLs, script-based INI validation, installation/uninstall instructions, an MIT license, a visual settings guide, and checksums. No administrator rights or global layer registration are required. Start Steam first if your game installation needs it.

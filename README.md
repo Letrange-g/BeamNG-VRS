@@ -23,13 +23,13 @@ resolution and headset settings; see the [comparison procedure](docs/PERFORMANCE
 
 **Experimental beta.** Beta.8 adds left/right scissor cropping, defaulting to zero, alongside the existing top/bottom crop. M8.28 reuses completed transfer command recordings on top of M8.27's faster CPU patterns, allocation-free dispatch, identical-upload skipping, completed-resource reuse and independent gaze projection freshness. It retains the earlier dual outlines, gaze grace, region shapes and lazy framebuffers. Earlier rendering tests primarily covered a Pimax Dream Air and NVIDIA RTX 5090. Automated checks cover configuration, DLL loading, launcher behavior and mock rendering lifetimes. These changes still need testing in BeamNG with the target GPU/headset; see [performance findings and the comparison procedure](docs/PERFORMANCE.md).
 
-The layers read **`BeamNG-VRS.ini`** beside the DLLs. A portable ZIP launcher and a Windows build/package workflow are included. **No compiled DLLs are committed** in this repository; binary beta packages are distributed through GitHub Releases.
+The layers read **`BeamNG-VRS.ini`** beside the launch CMD at the extraction root. A portable ZIP launcher and a Windows build/package workflow are included. **No compiled DLLs are committed** in this repository; binary beta packages are distributed through GitHub Releases.
 
 ## Portable installation
 
 1. Download the Windows x64 ZIP from [Releases](https://github.com/Letrange-g/BeamNG-VRS/releases) when a beta is available. Use the binary ZIP, not GitHub's source-code ZIP.
 2. Close BeamNG and extract the entire ZIP into its installation root, beside `Bin64`. Extraction directly inside `Bin64` also works; keep `Launch-BeamNG-VRS.cmd` and the `BeamNG-VRS` folder together.
-3. Edit `BeamNG-VRS/BeamNG-VRS.ini` in Notepad if desired.
+3. Edit `BeamNG-VRS.ini` beside `Launch-BeamNG-VRS.cmd` in Notepad if desired.
 4. Start Steam if your installation requires it, then double-click `Launch-BeamNG-VRS.cmd`.
 5. Enable VR in the game as usual. Restart after changing settings.
 
@@ -41,7 +41,10 @@ If normal Vulkan works but this launcher reports no rendering device, run `Diagn
 
 If a previous beta logs `Failed to open dynamic library "./BeamNG_VRS.dll" with error 87`, update to beta.4 or newer. It corrects the Windows relative paths in both loader manifests.
 
-The ZIP keeps its DLLs and settings inside `BeamNG-VRS/`; it does not replace original game files or register layers globally. Launch BeamNG normally to stop using the layers. To uninstall, close the game and remove that folder and both launch shortcuts. Back up the INI before extracting an update.
+The ZIP keeps its DLLs inside `BeamNG-VRS/` and the INI beside the launch CMD; it does not replace original game files or register layers globally. Launch BeamNG normally to stop using the layers. To uninstall, close the game and remove that folder, the INI and both launch shortcuts. Back up the INI before extracting an update.
+
+When updating to beta.8, restore your saved INI beside the launch CMD. Older
+packages kept it inside `BeamNG-VRS/`; the new launcher uses the root copy.
 
 When updating from beta.4 or earlier, delete the old `BeamNG-VRS/BeamNG-VRS-Check.exe`; the launcher no longer uses it. Restoring an old INI preserves its settings. To use the new defaults, set `Shape=ellipse`, `Top=0.30`, and `Bottom=0.30` or use the new INI.
 

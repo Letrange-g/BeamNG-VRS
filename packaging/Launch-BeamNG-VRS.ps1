@@ -70,9 +70,13 @@ function Test-BeamNGIni {
 }
 try {
     $layerDirectory = $PSScriptRoot
-    Test-BeamNGIni -Path (Join-Path $layerDirectory 'BeamNG-VRS.ini')
-    if ($ValidateOnly) { return }
     $installDirectory = Split-Path -Parent $layerDirectory
+    $iniPath = Join-Path $installDirectory 'BeamNG-VRS.ini'
+    if (-not (Test-Path -LiteralPath $iniPath -PathType Leaf)) {
+        throw 'BeamNG-VRS.ini not found beside Launch-BeamNG-VRS.cmd. Extract the entire ZIP; when upgrading, move your saved INI beside the CMD.'
+    }
+    Test-BeamNGIni -Path $iniPath
+    if ($ValidateOnly) { return }
     # Accept extraction at the game root or directly inside its Bin64 folder.
     $binaryDirectory = if ((Split-Path -Leaf $installDirectory) -ieq 'Bin64') {
         $installDirectory
@@ -80,7 +84,7 @@ try {
         Join-Path $installDirectory 'Bin64'
     }
     foreach ($file in @('BeamNG_VRS.dll', 'BeamNG_EyeProbe.dll',
-            'VK_LAYER_BEAMNG_vrs.json', 'XR_APILAYER_BEAMNG_eye_probe.json', 'BeamNG-VRS.ini')) {
+            'VK_LAYER_BEAMNG_vrs.json', 'XR_APILAYER_BEAMNG_eye_probe.json')) {
         if (-not (Test-Path -LiteralPath (Join-Path $layerDirectory $file) -PathType Leaf)) {
             throw "Missing $file. Extract the entire release ZIP into the BeamNG root folder."
         }
@@ -106,7 +110,7 @@ try {
     foreach ($name in @($start.EnvironmentVariables.Keys)) {
         if ($name -like 'BEAMNG_VRS_*' -or $name -like 'BEAMNG_EYE_*') { $start.EnvironmentVariables.Remove($name) }
     }
-    $start.EnvironmentVariables['BEAMNG_VRS_CONFIG'] = Join-Path $layerDirectory 'BeamNG-VRS.ini'
+    $start.EnvironmentVariables['BEAMNG_VRS_CONFIG'] = $iniPath
     # VK_LAYER_PATH overrides registry discovery. Add our folder instead when
     # no explicit override exists; preserve an existing developer override.
     $vulkanPathName = if ($start.EnvironmentVariables['VK_LAYER_PATH']) { 'VK_LAYER_PATH' } else { 'VK_ADD_LAYER_PATH' }

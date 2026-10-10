@@ -1,6 +1,6 @@
 # Configuration
 
-The release ZIP puts `BeamNG-VRS.ini` next to both DLLs in the `BeamNG-VRS` folder. Edit it in Notepad and restart BeamNG. The launcher validates it before starting the game. No INI editor application is required.
+The release ZIP puts `BeamNG-VRS.ini` beside `Launch-BeamNG-VRS.cmd` at the extraction root. Edit it in Notepad and restart BeamNG. The launcher validates it before starting the game. No INI editor application is required. When upgrading from beta.7 or earlier, restore your saved INI here; the old nested copy is not used by the new launcher.
 
 | Section | Setting | Default | Meaning |
 | --- | --- | --- | --- |
@@ -36,4 +36,4 @@ Old INIs that omit `Left` and `Right` retain zero horizontal crop.
 
 Existing `BEAMNG_VRS_*` and `BEAMNG_EYE_*` process environment variables continue to override corresponding INI values. The public launcher clears these project-specific settings only in the child process, so its INI is authoritative and the parent shell remains unchanged. The old `BEAMNG_VRS_CENTER_RADIUS` and `BEAMNG_VRS_MID_RADIUS` variables map to `Size1x1` and `Size2x2`; their names remain for compatibility, while their values represent diameters.
 
-For custom layer-loading setups, the DLLs read `BeamNG-VRS.ini` beside their own modules. `BEAMNG_VRS_CONFIG` can select a different absolute file path, including Unicode paths. Without a file, the old environment-only behavior is retained. Invalid files disable the INI activation gates and emit a debugger diagnostic; existing environment overrides still take precedence. The packaged launcher instead rejects the file before launch and displays the parser error.
+For custom layer-loading setups, the DLLs prefer `BeamNG-VRS.ini` in the parent of their module folder, with a fallback to an older copy beside the modules if the root file is absent. `BEAMNG_VRS_CONFIG` selects a different absolute file path, including Unicode paths. The public launcher explicitly selects the root file. Without a file, the old environment-only behavior is retained. Invalid files disable the INI activation gates and emit a debugger diagnostic; existing environment overrides still take precedence. The packaged launcher instead rejects the file before launch and displays the parser error.

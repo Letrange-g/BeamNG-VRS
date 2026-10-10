@@ -18,6 +18,14 @@ int main(int argc, char** argv) {
  assert(SetEnvironmentVariableA("BEAMNG_VRS_ENABLE_FEATURES", nullptr));
  char buffer[32]{};
  if(mode == "valid") {
+  const auto layers = directory / L"BeamNG-VRS";
+  std::filesystem::create_directory(layers);
+  const auto legacyIni = layers / L"BeamNG-VRS.ini";
+  { std::ofstream file(legacyIni); file << "[Debug]\nDrawOutline=true\n"; }
+  assert(beamng_config::moduleIniPath(layers) == path); // Root wins over an old copy.
+  std::filesystem::remove(path);
+  assert(beamng_config::moduleIniPath(layers) == legacyIni);
+  std::filesystem::copy_file(std::filesystem::path(argv[2]) / "packaging/BeamNG-VRS.ini", path);
   assert(beamng_config::read("BEAMNG_VRS_SHAPE", buffer, sizeof(buffer)) == 7);
   assert(std::strcmp(buffer, "ellipse") == 0);
   char small[2]{'x','x'};

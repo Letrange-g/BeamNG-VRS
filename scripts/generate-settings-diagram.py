@@ -11,7 +11,7 @@ OUT.mkdir(parents=True, exist_ok=True)
 plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 11})
 fig = plt.figure(figsize=(13, 7.4), facecolor="#0c1321")
 fig.text(.055, .925, "BeamNG-VRS settings", color="white", fontsize=26, weight="bold")
-fig.text(.055, .876, "Edit BeamNG-VRS.ini, then restart the game", color="#aabbd0", fontsize=13)
+fig.text(.055, .876, "Edit BeamNG-VRS.ini beside the launch CMD, then restart the game", color="#aabbd0", fontsize=13)
 
 def panel(bounds, title):
     ax = fig.add_axes(bounds)
