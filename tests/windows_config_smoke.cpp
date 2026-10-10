@@ -26,12 +26,12 @@ int main(int argc, char** argv) {
   std::filesystem::remove(path);
   assert(beamng_config::moduleIniPath(layers) == legacyIni);
   std::filesystem::copy_file(std::filesystem::path(argv[2]) / "packaging/BeamNG-VRS.ini", path);
-  assert(beamng_config::read("BEAMNG_VRS_SHAPE", buffer, sizeof(buffer)) == 7);
-  assert(std::strcmp(buffer, "ellipse") == 0);
+  assert(beamng_config::read("BEAMNG_VRS_SHAPE", buffer, sizeof(buffer)) == 6);
+  assert(std::strcmp(buffer, "circle") == 0);
   char small[2]{'x','x'};
-  assert(beamng_config::read("BEAMNG_VRS_SHAPE", small, sizeof(small)) == 8);
+  assert(beamng_config::read("BEAMNG_VRS_SHAPE", small, sizeof(small)) == 7);
   assert(small[0] == '\0');
-  assert(beamng_config::read("BEAMNG_VRS_SHAPE", nullptr, 0) == 8);
+  assert(beamng_config::read("BEAMNG_VRS_SHAPE", nullptr, 0) == 7);
  } else if(mode == "missing") assert(beamng_config::read("BEAMNG_VRS_SHAPE", buffer, sizeof(buffer)) == 0);
  else {
   assert(beamng_config::read("BEAMNG_VRS_ENABLE_FEATURES", buffer, sizeof(buffer)) == 1);
