@@ -21,21 +21,21 @@ Windows PowerShell is included in Windows 10/11; the package adds no EXE.
 - **Foveation Enabled:** set `false` to use scissor or turbo without VRS. Default `true`.
 - **Size1x1:** size of the sharp, full-quality center. Default `0.25`.
 - **Size2x2:** size of the medium-quality region around it. Default `0.60`.
-- **Shape:** `ellipse` (default), `circle`, or `square`.
+- **Shape:** `circle` (default), `ellipse`, or `square`.
 - **DrawOutline:** shows the quality-region borders for checking settings. Leave `false` for gameplay.
 - **Scissor:** crops image edges to save rendering work. Enable only after checking the edges in your headset.
 
 ![VRS quality regions and independent crop controls for each eye](docs/images/vrs-settings.png)
 
-Scissor top/bottom apply to both eyes. **Beta.9 adds independent horizontal edges:**
+Scissor top/bottom apply to both eyes. Horizontal edges are independent:
 
 | INI setting | Edge | Default |
 | --- | --- | --- |
 | `Top` / `Bottom` | Top / bottom of both eyes | `0.30` each |
-| `LeftEyeLeft` | Left eye, outside | `0` |
+| `LeftEyeLeft` | Left eye, outside | `0.20` |
 | `LeftEyeRight` | Left eye, near the nose | `0` |
 | `RightEyeLeft` | Right eye, near the nose | `0` |
-| `RightEyeRight` | Right eye, outside | `0` |
+| `RightEyeRight` | Right eye, outside | `0.20` |
 
 `0.05` crops 5% from that edge. Start small; keep the nose-side values at `0`
 if you can see those borders. Scissor is **disabled by default**.

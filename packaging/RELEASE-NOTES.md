@@ -1,6 +1,12 @@
 Experimental Windows x64 beta with optional turbo, VRS on/off and logging controls.
 
-New in beta.10:
+New in beta.11:
+
+- Default shape is now `circle`.
+- Outer horizontal scissor edges default to `0.20`; nose-side edges stay `0`.
+  Scissor remains disabled by default. Explicit saved settings are retained.
+
+Included from beta.10:
 
 - `[Performance] TurboMode=true` overlaps CPU work with the next OpenXR runtime
   wait. Default `false`. Compare smoothness and frame times as well as FPS;
@@ -14,8 +20,8 @@ New in beta.10:
   and comments explain the main rendering, crop, gaze, upload and turbo paths.
 
 The four independent horizontal crop controls from beta.9 remain available,
-all defaulting to zero. Top/bottom remain 0.30 and scissor remains off by default.
-The existing shapes, quality-region sizes and tracking defaults are retained.
+with the defaults above. Top/bottom remain 0.30 and scissor remains off by default.
+Quality-region sizes and tracking defaults are retained.
 
 1. Download the **Windows x64 ZIP** under Assets, not a source-code archive.
 2. Back up your INI, close BeamNG and extract the whole ZIP beside or inside `Bin64`.

@@ -12,9 +12,9 @@ INSTALL
 SETTINGS
 Open BeamNG-VRS/VRS-SETTINGS.png for a visual explanation.
 [Foveation] Enabled=false disables VRS while leaving scissor/turbo available.
-The default Shape=ellipse uses width/height-relative diameters.
-Size1x1=0.25 spans 25% of eye width horizontally and eye height vertically.
-Size2x2=0.60 sets the medium-quality region's outer diameters to 60%.
+The default Shape=circle uses diameters relative to eye-image height.
+Size1x1=0.25 sets the sharp circle's diameter to 25% of eye height.
+Size2x2=0.60 sets the medium-quality region's outer diameter to 60%.
 Size2x2 must be at least Size1x1. Larger sizes preserve more detail.
 Shape can be circle, square or ellipse. Circle uses height-relative diameter;
 square uses height-relative side length.
@@ -26,7 +26,8 @@ LeftEyeLeft  = left eye, outside
 LeftEyeRight = left eye, near the nose
 RightEyeLeft = right eye, near the nose
 RightEyeRight= right eye, outside
-All four default to 0. Each accepts 0 to 0.49. Start small and check each eye.
+Outer edges default to 0.20 (20%); nose-side edges default to 0.
+Each accepts 0 to 0.49. Start small and check each eye.
 For outside-only cropping, try LeftEyeLeft=0.05 and RightEyeRight=0.05;
 keep LeftEyeRight=0 and RightEyeLeft=0 to leave the nose-side edges untouched.
 Old shared Left/Right settings remain accepted. Explicit per-eye keys override

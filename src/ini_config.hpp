@@ -58,7 +58,7 @@ inline Values defaults() {
  Values out;
  activation(out, true);
  out["BEAMNG_VRS_TURBO_MODE"] = "0";
- out["BEAMNG_VRS_SHAPE"] = "ellipse";
+ out["BEAMNG_VRS_SHAPE"] = "circle";
  out["BEAMNG_VRS_FOVEATION_MODE"] = "eye";
  out["BEAMNG_VRS_CENTER_RADIUS"] = "0.25";
  out["BEAMNG_VRS_MID_RADIUS"] = "0.60";
@@ -76,6 +76,8 @@ inline Values defaults() {
  out["BEAMNG_VRS_SCISSOR_RIGHT"] = "0";
  for(const auto* edge : {"LEFT_EYE_LEFT", "LEFT_EYE_RIGHT", "RIGHT_EYE_LEFT", "RIGHT_EYE_RIGHT"})
   out[std::string("BEAMNG_VRS_SCISSOR_") + edge] = "0";
+ out["BEAMNG_VRS_SCISSOR_LEFT_EYE_LEFT"] = "0.20";
+ out["BEAMNG_VRS_SCISSOR_RIGHT_EYE_RIGHT"] = "0.20";
  out["BEAMNG_VRS_M818_STENCIL"] = "0";
  out["BEAMNG_VRS_LOG_LEVEL"] = "1";
  return out;
@@ -143,8 +145,11 @@ inline Values parse(std::istream& input) {
                          std::pair{"righteyeright", "RIGHT_EYE_RIGHT"}}) {
   if(!seen.count(std::string("scissor.") + edge.first)) {
    const bool left = std::string_view(edge.first).ends_with("left");
-   out[std::string("BEAMNG_VRS_SCISSOR_") + edge.second] =
-     out.at(left ? "BEAMNG_VRS_SCISSOR_LEFT" : "BEAMNG_VRS_SCISSOR_RIGHT");
+   // Explicit legacy edges retain their old meaning; absent legacy settings
+   // leave the public per-eye defaults in place.
+   if(seen.count(left ? "scissor.left" : "scissor.right"))
+    out[std::string("BEAMNG_VRS_SCISSOR_") + edge.second] =
+      out.at(left ? "BEAMNG_VRS_SCISSOR_LEFT" : "BEAMNG_VRS_SCISSOR_RIGHT");
   }
  }
  if(input.bad()) throw std::runtime_error("could not read INI file");
