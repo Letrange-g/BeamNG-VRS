@@ -1,4 +1,4 @@
-BeamNG-VRS - experimental Windows x64 beta
+BeamNG-VRS 0.1.0 - portable Windows x64
 
 INSTALL
 1. Close BeamNG.
@@ -19,6 +19,8 @@ Size2x2 must be at least Size1x1. Larger sizes preserve more detail.
 Shape can be circle, square or ellipse. Circle uses height-relative diameter;
 square uses height-relative side length.
 DrawOutline=true shows region borders. Leave it false for gameplay.
+If VRS shimmers, try BeamNG's MSAA setting; performance cost varies by setup.
+You can also disable Foveation and keep Scissor enabled for cropping alone.
 Under [Scissor], Enabled=true activates experimental cropping. Top and Bottom
 are fractions of eye-image height: 0.30 crops 30% from that edge (range 0-0.49).
 Horizontal edges use each eye's image width, with four separate controls:
@@ -34,7 +36,7 @@ Old shared Left/Right settings remain accepted. Explicit per-eye keys override
 those edges independently. Update the launcher and both DLLs together.
 Leave scissor disabled unless you have tested visible edges and performance.
 [Performance] TurboMode=true enables experimental frame-wait overlap; default
-false. Restart after changes. It can interfere with motion reprojection. Compare
+true. Restart after changes. It can interfere with motion reprojection. Compare
 headset smoothness and frame times; set false if it worsens pacing or appearance.
 [Logging] Level accepts off, errors, info (default) or debug. Use off to stop
 layer log output; Diagnose-BeamNG-VRS.cmd overrides it with debug logging.

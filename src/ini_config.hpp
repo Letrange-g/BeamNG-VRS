@@ -57,7 +57,7 @@ inline void activation(Values& out, bool enabled) {
 inline Values defaults() {
  Values out;
  activation(out, true);
- out["BEAMNG_VRS_TURBO_MODE"] = "0";
+ out["BEAMNG_VRS_TURBO_MODE"] = "1";
  out["BEAMNG_VRS_SHAPE"] = "circle";
  out["BEAMNG_VRS_FOVEATION_MODE"] = "eye";
  out["BEAMNG_VRS_CENTER_RADIUS"] = "0.25";

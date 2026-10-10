@@ -218,7 +218,8 @@ lifecycle, thread safety, frame call order, prediction, swapchain lifetime and
 runtime failure handling. Upstream explicitly warns about motion reprojection,
 ASW and motion smoothing, and documents a possible one-second transition freeze.
 
-**Implemented as an opt-in experiment in beta.10 / M8.31.** The independent
+**Introduced in beta.10 / M8.31.** Turbo is enabled by default in the public
+0.1.0 package; set `TurboMode=false` to restore normal timing. The independent
 scheduler uses a persistent session worker, one outstanding runtime wait and
 short extrapolation only while the previous state was renderable. Ready states
 retain runtime `shouldRender`. Hitches, extension chains and an already-pipelined

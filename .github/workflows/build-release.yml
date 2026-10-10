@@ -1,13 +1,21 @@
-name: Build Windows beta ZIP
+name: Build Windows release ZIP
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: Package version (for example 0.1.0-beta.11)
+        description: Package version (for example 0.1.0)
         required: true
-        default: 0.1.0-beta.11
+        default: 0.1.0
       publish_release:
-        description: Publish the tested ZIP as an experimental GitHub prerelease
+        description: Create a GitHub release from the tested ZIP
+        type: boolean
+        default: false
+      prerelease:
+        description: Mark the release as a prerelease
+        type: boolean
+        default: true
+      draft_release:
+        description: Prepare a draft for package verification before publication
         type: boolean
         default: false
   pull_request:
@@ -28,7 +36,7 @@ jobs:
       - name: Build DLLs, run tests, and package
         shell: pwsh
         env:
-          PACKAGE_VERSION: ${{ inputs.version || '0.1.0-beta.11' }}
+          PACKAGE_VERSION: ${{ inputs.version || '0.1.0' }}
         run: ./scripts/Build-Release.ps1 -Version $env:PACKAGE_VERSION
       - name: Measure CPU pattern construction
         shell: pwsh
@@ -68,13 +76,22 @@ jobs:
       - name: Verify archive checksum
         working-directory: release-assets
         run: sha256sum --check *.sha256
-      - name: Publish experimental beta
+      - name: Create tested release
         env:
           GH_TOKEN: ${{ github.token }}
           PACKAGE_VERSION: ${{ inputs.version }}
-        run: >-
-          gh release create "v${PACKAGE_VERSION}"
-          release-assets/*.zip release-assets/*.sha256 release-assets/*.csv
-          --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA"
-          --prerelease --title "BeamNG-VRS ${PACKAGE_VERSION} — portable Windows x64"
-          --notes-file packaging/RELEASE-NOTES.md
+          RELEASE_PRERELEASE: ${{ inputs.prerelease }}
+          RELEASE_DRAFT: ${{ inputs.draft_release }}
+        run: |
+          release_args=(--repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA"
+            --title "BeamNG-VRS ${PACKAGE_VERSION} — portable Windows x64"
+            --notes-file packaging/RELEASE-NOTES.md)
+          if [[ "$RELEASE_PRERELEASE" == 'true' ]]; then
+            release_args+=(--prerelease)
+          else
+            release_args+=(--latest=false)
+          fi
+          if [[ "$RELEASE_DRAFT" == 'true' ]]; then release_args+=(--draft); fi
+          gh release create "v${PACKAGE_VERSION}" \
+            release-assets/*.zip release-assets/*.sha256 release-assets/*.csv \
+            "${release_args[@]}"

@@ -4,6 +4,6 @@
 - Review game installation paths and SDK paths for account names. Replace these with placeholders in GitHub issues.
 - The source is experimental and hooks both Vulkan and OpenXR; test with local process-only layer activation. Avoid system-wide registration.
 - The owner selected MIT for public distribution. Validate the Windows build and BeamNG/headset behavior before publishing a binary beta.
-- Before sharing a binary release, reproduce the build from this curated tree and scan the release archive; this repository intentionally contains source only.
+- Binary releases are built from the recorded source commit and distributed as GitHub Release assets. Generated DLLs, logs and local captures are kept out of the source tree.
 
 Please report regressions with minimal, redacted log excerpts and version/driver information instead of full logs.

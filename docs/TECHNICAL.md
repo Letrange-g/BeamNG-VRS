@@ -46,7 +46,9 @@ Foveation reduces eligible fragment shading; it does not lower render-target
 resolution. Scissor reduces pixel coverage in matching legacy eye render passes;
 it does not cull scene objects, avoid vertex processing, or cap render distance.
 Dynamic rendering, layered/multiview targets and secondary-only subpasses are
-outside the supported crop path. Unknown eye targets retain the horizontal
+outside the supported crop path. VRS substitution also targets eligible single-sample
+passes; enabling MSAA can change which passes receive VRS and its benefit.
+Unknown eye targets retain the horizontal
 area either eye needs, rather than guessing which eye is being rendered.
 
 The debug outline is injected into rendering and can appear in temporal history.

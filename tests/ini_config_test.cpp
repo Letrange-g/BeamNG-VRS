@@ -23,7 +23,7 @@ int main() {
  assert(defaults.at("BEAMNG_VRS_SCISSOR_BOTTOM") == "0.30");
  assert(defaults.at("BEAMNG_VRS_SCISSOR_LEFT") == "0");
  assert(defaults.at("BEAMNG_VRS_SCISSOR_RIGHT") == "0");
- assert(defaults.at("BEAMNG_VRS_TURBO_MODE")=="0");
+ assert(defaults.at("BEAMNG_VRS_TURBO_MODE")=="1");
  std::istringstream independent("[Foveation]\nEnabled=false\n[Scissor]\nEnabled=true\n[Performance]\nTurboMode=true\n");
  const auto options=parse(independent);
  for(const auto* gate:{"BEAMNG_VRS_ENABLE_FEATURES","BEAMNG_VRS_ATTACHMENT_PIPELINES","BEAMNG_VRS_M84_CPU_GAZE","BEAMNG_VRS_M815_ASYNC","BEAMNG_EYE_SAMPLE","BEAMNG_EYE_FORCE_EXTENSION"})
@@ -37,6 +37,7 @@ int main() {
  }
  std::istringstream omitted("[Debug]\nDrawOutline=false\n");
  const auto fallback = parse(omitted);
+ assert(fallback.at("BEAMNG_VRS_TURBO_MODE")=="1");
  assert(fallback.at("BEAMNG_VRS_SHAPE") == "circle");
  assert(fallback.at("BEAMNG_VRS_SCISSOR_TOP") == "0.30");
  assert(fallback.at("BEAMNG_VRS_SCISSOR_BOTTOM") == "0.30");

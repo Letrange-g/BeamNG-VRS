@@ -16,7 +16,7 @@ The release ZIP puts `BeamNG-VRS.ini` beside `Launch-BeamNG-VRS.cmd` at the extr
 | Scissor | `LeftEyeRight` | `0` | Left eye's nose-side/right edge (0 to 0.49). Beta.9+. |
 | Scissor | `RightEyeLeft` | `0` | Right eye's nose-side/left edge (0 to 0.49). Beta.9+. |
 | Scissor | `RightEyeRight` | `0.10` | Right eye's outer/right edge (0 to 0.49). Beta.9+. |
-| Performance | `TurboMode` | `false` | Experimental one-frame OpenXR wait overlap. Requires beta.10+. Restart to change. |
+| Performance | `TurboMode` | `true` | Experimental one-frame OpenXR wait overlap. Enabled by default in 0.1.0. Restart to change. |
 | Logging | `Level` | `info` | `off`, `errors`, `info`, or `debug`. Default is brief status/errors, not verbose diagnostics. |
 | Tracking | `GracePeriodMs` | `30` | Hold the last valid gaze for this many milliseconds during temporary tracking loss (0 to 1000). |
 | Tracking | `GazeRefreshMs` | `8` | Minimum CPU gaze polling interval (2 to 50 ms). This does not measure eye-to-display latency. |
@@ -90,7 +90,7 @@ TurboMode=true
 
 Requires the complete beta.10 package. Turbo starts the next runtime frame wait
 in the background and can let CPU/render work overlap that wait. It does not
-reduce CPU simulation work or GPU shading cost. It is off by default and can be
+reduce CPU simulation work or GPU shading cost. It is on by default in 0.1.0 and can be
 used with or without VRS/scissor. Restart after changing it. Compare the same
 scene with turbo off/on; check head movement, stutter and frame times, not just FPS.
 It may interfere with motion reprojection. Set it back to `false` if pacing or

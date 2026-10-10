@@ -15,21 +15,21 @@ cmake --build build --config Release
 
 The expected outputs are `BeamNG_VRS.dll`, `BeamNG_EyeProbe.dll` (when OpenXR headers are provided), and the corresponding `.json` manifests, **copied beside each built DLL**. On multi-config generators the output is usually `build/Release/`.
 
-## Build a portable beta ZIP
+## Build a portable release ZIP
 
 With Visual Studio 2022 C++ tools, Git, CMake 3.25+, and Python 3 installed on Windows, run:
 
 ```powershell
-./scripts/Build-Release.ps1 -Version 0.1.0-beta.11
+./scripts/Build-Release.ps1 -Version 0.1.0
 ```
 
-This script fetches pinned Vulkan and OpenXR header revisions from Khronos, builds both DLLs, runs the portable C++/Python tests plus Windows configuration and launcher integration tests, then packages `out/releases/BeamNG-VRS-0.1.0-beta.11-windows-x64.zip` and a SHA-256 file. It does not require the full graphical SDKs for this header-only build path. The Release DLLs use the static MSVC runtime. The script refuses to overwrite an existing ZIP or staging directory; use a new version or output directory for another build.
+This script fetches pinned Vulkan and OpenXR header revisions from Khronos, builds both DLLs, runs the portable C++/Python tests plus Windows configuration and launcher integration tests, then packages `out/releases/BeamNG-VRS-0.1.0-windows-x64.zip` and a SHA-256 file. It does not require the full graphical SDKs for this header-only build path. The Release DLLs use the static MSVC runtime. The script refuses to overwrite an existing ZIP or staging directory; use a new version or output directory for another build.
 
 The package contains no EXE files. INI validation runs in the existing PowerShell launcher, with a test-only C++ fixture checking that it agrees with the DLL parser on valid and invalid settings. The packaging script rejects EXE files in the staged release.
 
-The GitHub Actions workflow **Build Windows beta ZIP** performs these steps on Windows 2022 and uploads the ZIP as a workflow artifact. It runs on main-branch pushes, pull requests, or manual dispatch. Ordinary builds do not publish a release. For an intentional beta publication, dispatch it manually with the package version and **Publish the tested ZIP** enabled; a separate job verifies the archive checksum and publishes a prerelease using the workflow's GitHub token only after all build/tests pass. Repository visibility stays unchanged.
+The GitHub Actions workflow **Build Windows release ZIP** performs these steps on Windows 2022 and uploads the ZIP as a workflow artifact. It runs on main-branch pushes, pull requests, or manual dispatch. Ordinary builds do not publish a release. For a release, dispatch it manually with the package version and **Create a GitHub release** enabled. Choose whether to mark it as a prerelease and whether to prepare a draft for inspection first. A separate job verifies the archive checksum and creates the release using the workflow's GitHub token only after all build/tests pass. Publishing a draft and marking it latest are separate explicit actions. The workflow does not change repository visibility.
 
-For artifact downloads, extract the artifact's outer ZIP, then extract the inner release ZIP into the game root. GitHub Release assets provide the release ZIP directly. Private repositories require a GitHub account with repository access for either download.
+For artifact downloads, extract the artifact's outer ZIP, then extract the inner release ZIP into the game root. GitHub Release assets provide the release ZIP directly. Public release assets can be downloaded without a GitHub account.
 
 The ZIP contains:
 

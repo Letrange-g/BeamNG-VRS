@@ -1,43 +1,40 @@
-Experimental Windows x64 beta with optional turbo, VRS on/off and logging controls.
+BeamNG-VRS 0.1 — first public Windows x64 release.
 
-New in beta.11:
+Foveated VRS keeps detail around the fixed center or supported eye tracking.
+Optional scissor cropping reduces rendering around each eye's edges. VRS can
+be disabled to use cropping alone; optional Turbo overlaps OpenXR frame waiting.
 
-- Default shape is now `circle`.
-- Outer horizontal scissor edges default to `0.10`; nose-side edges stay `0`.
-  Scissor remains disabled by default. Explicit saved settings are retained.
+## Install
 
-Included from beta.10:
+1. Download **BeamNG-VRS-0.1.0-windows-x64.zip** below.
+2. Close BeamNG and extract the whole ZIP into the game folder, beside `Bin64`.
+   Extraction directly inside `Bin64` also works.
+3. Edit **BeamNG-VRS.ini** beside the CMD, then run **Launch-BeamNG-VRS.cmd**.
+4. Enable VR normally. Restart after changing settings.
 
-- `[Performance] TurboMode=true` overlaps CPU work with the next OpenXR runtime
-  wait. Default `false`. Compare smoothness and frame times as well as FPS;
-  motion reprojection may be incompatible. Restart to change it.
-- `[Foveation] Enabled=false` disables VRS while keeping scissor and turbo
-  available. Default `true`. The two sections' Enabled keys are independent.
-- `[Logging] Level=off` disables this project's layer logs. Other choices are
-  `errors`, `info` (default) and `debug`. The diagnostic launcher overrides this
-  setting with detailed logging.
-- A [source guide](https://github.com/Letrange-g/BeamNG-VRS/blob/main/docs/SOURCE-GUIDE.md)
-  and comments explain the main rendering, crop, gaze, upload and turbo paths.
+Requires Windows 10/11 x64, BeamNG Vulkan VR, an OpenXR runtime, and suitable
+GPU/driver VRS support for foveation. Windows PowerShell 5.1 is included in
+Windows 10/11. The package contains no EXEs and needs no administrator rights
+or global layer registration. Back up your INI before updating; update the
+launcher and both DLLs together.
 
-The four independent horizontal crop controls from beta.9 remain available,
-with the defaults above. Top/bottom remain 0.30 and scissor remains off by default.
-Quality-region sizes and tracking defaults are retained.
+## Defaults and options
 
-1. Download the **Windows x64 ZIP** under Assets, not a source-code archive.
-2. Back up your INI, close BeamNG and extract the whole ZIP beside or inside `Bin64`.
-3. Restore/edit `BeamNG-VRS.ini` beside the CMD. Update both DLLs and the launcher together.
-4. Run `Launch-BeamNG-VRS.cmd` and enable VR normally. Restart after changes.
-
-Windows PowerShell 5.1 is included in Windows 10/11. No EXEs, administrator
-rights or global layer registration are needed. Delete an old checker EXE if
-left over from earlier packages.
+- VRS enabled: `Size1x1=0.25`, `Size2x2=0.60`, `Shape=circle`.
+- Scissor disabled: top/bottom `0.30`, outer edges `0.10`, nose-side edges `0`.
+- Turbo enabled. It may interfere with motion reprojection; compare smoothness
+  with it off/on using the same settings. Set `TurboMode=false` for normal timing.
+- Debug outlines disabled, brief `info` logging, 30 ms gaze grace and 8 ms polling.
+- Use `[Foveation] Enabled=false` for scissor-only. Try BeamNG's MSAA if VRS
+  shimmers; its effect and performance cost depend on your setup.
 
 [Settings](https://github.com/Letrange-g/BeamNG-VRS/blob/main/docs/CONFIGURATION.md) ·
 [Help](https://github.com/Letrange-g/BeamNG-VRS/blob/main/docs/TECHNICAL.md) ·
-[Performance details](https://github.com/Letrange-g/BeamNG-VRS/blob/main/docs/PERFORMANCE.md)
+[Source guide](https://github.com/Letrange-g/BeamNG-VRS/blob/main/docs/SOURCE-GUIDE.md)
 
-Built and tested on Windows with Visual Studio 2022. Tests cover normal timing,
-one-frame overlap, real frame ordering, failure fallback, extension chains,
-existing app pipelining, swapchain/session teardown, configuration and launcher
-behavior. The source commit is in BUILD-INFO.txt. Turbo still needs in-game
-headset testing; no FPS or latency improvement is claimed from automated tests.
+The source commit and build details are included in `BUILD-INFO.txt`; archive
+and individual file SHA-256 checksums are provided. Both DLLs are built with
+Visual Studio 2022 and tested on Windows before packaging. Automated tests do
+not establish FPS gains or compatibility with every headset/runtime. Earlier
+in-game testing used a Pimax Dream Air and RTX 5090; Turbo was reported smooth
+with reprojection disabled. These renderer modifications remain experimental.
