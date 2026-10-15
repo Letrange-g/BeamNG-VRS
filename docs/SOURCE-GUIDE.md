@@ -15,6 +15,10 @@ top to bottom.
 | `packaging/BeamNG-VRS.ini` | Public controls and defaults | Sections and their comments |
 | `src/ini_config.hpp` | Portable INI parsing, validation and internal feature gates | `defaults`, `setting`, `parse`, `activation` |
 | `src/windows_config.hpp` | Locate/cache the INI; support developer environment overrides | `configPath`, `fileValues`, `read` |
+| `src/early_vrs.hpp` | Bounded one-hop producer inference (experimental) | `Tracker::draw`, `endPass`, `eye` |
+| `src/framebuffer_reuse.hpp` | Idle VRS framebuffer reuse; exact keys and lifetime invalidation | `IdleCache::take`, `release`, `invalidate` |
+| `src/early_cpu_timing.hpp` | Sampled CPU wall-time measurements | `Sample`, `counters` |
+| `src/early_vrs_hooks.inc` | Vulkan descriptor/draw/lifetime adapter | `m833Begin`, `m833Eye`, `m833Report` |
 | `src/ffr_pattern.hpp` | Build the per-eye shading-rate tile image | `make`, `makeGaze`, region geometry and row spans |
 | `src/scissor_crop.hpp` | Calculate retained pixels and four non-overlapping border rectangles | `make` |
 | `src/layer.cpp` | Intercept Vulkan calls; manage pipelines, crop state and GPU uploads | Functions listed below |

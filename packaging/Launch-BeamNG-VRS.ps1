@@ -47,7 +47,7 @@ function Test-BeamNGIni {
             if ($line.StartsWith('[')) {
                 if (-not $line.EndsWith(']')) { throw 'invalid section header' }
                 $section = $line.Substring(1, $line.Length - 2).Trim($whitespace).ToLowerInvariant()
-                if (@('foveation', 'debug', 'scissor', 'tracking', 'performance', 'logging') -cnotcontains $section) { throw 'unknown section' }
+                if (@('foveation', 'debug', 'scissor', 'tracking', 'performance', 'logging', 'experimental') -cnotcontains $section) { throw 'unknown section' }
                 continue
             }
             $equals = $line.IndexOf('=')
@@ -63,6 +63,8 @@ function Test-BeamNGIni {
                 if ($sizes.ContainsKey($id)) { $sizes[$id] = $number }
             } elseif ($id -eq 'foveation.shape') {
                 if (@('circle', 'square', 'ellipse') -cnotcontains $value.ToLowerInvariant()) { throw 'unsupported setting value' }
+            } elseif ($id -eq 'experimental.earlypasses') {
+                if (@('false', 'true', '0', '1', 'off', 'trace', 'on') -cnotcontains $value.ToLowerInvariant()) { throw 'expected true or false (advanced: trace; legacy: on/off)' }
             } elseif ($id -eq 'logging.level') {
                 if (@('off', 'errors', 'info', 'debug') -cnotcontains $value.ToLowerInvariant()) { throw 'unsupported setting value' }
             } elseif ($id -eq 'debug.drawoutline' -or $id -eq 'scissor.enabled' -or $id -eq 'foveation.enabled' -or $id -eq 'performance.turbomode') {
