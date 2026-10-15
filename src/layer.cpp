@@ -130,7 +130,7 @@ template<class T> uint64_t m833Id(T handle){return uint64_t(uintptr_t(handle));}
 void m833Begin(VkCommandBuffer,const VkRenderPassBeginInfo*,bool);
 void m833End(VkCommandBuffer);
 void m833Invalidate(VkCommandBuffer);
-int m833Eye(VkDevice,const VkRenderPassBeginInfo*);
+int m833Eye(VkDevice,VkCommandBuffer,const VkRenderPassBeginInfo*);
 void m833ForgetImage(VkImage);
 void m833Report(VkDevice);
 bool cropEnabled(){static const bool on=settingFlag("BEAMNG_VRS_SCISSOR_ENABLE");return on;}
@@ -2922,7 +2922,7 @@ static bool m57SelectShadow(VkCommandBuffer cmd, const VkRenderPassBeginInfo* in
      }
    }
    if(m8Enabled() && !eyeFound[0] && !eyeFound[1]){
-    const int earlyEye=m833Eye(device,info);
+    const int earlyEye=m833Eye(device,cmd,info);
     if(earlyEye>=0){eyeFound[earlyEye]=true;earlySelection=true;}
    }
    if (m8Enabled() && (eyeFound[0] == eyeFound[1])) return false;

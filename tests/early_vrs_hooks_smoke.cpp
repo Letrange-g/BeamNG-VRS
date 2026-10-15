@@ -75,6 +75,8 @@ int main(int argc,char** argv){
  };
  for(int i=0;i<3;++i)record();assert(draws==6 && begins==6);
  rp.framebuffer=sf;VkRenderPassBeginInfo modified{};
+ m833Begin(cmd,&rp,false);assert(!m57SelectShadow(cmd,&rp,modified));
+ m833Begin(cmd,&rp,true);
  assert(m57SelectShadow(cmd,&rp,modified)==(mode=="on"));
  const auto pipeline=reinterpret_cast<VkPipeline>(uintptr_t(40)),replacement=reinterpret_cast<VkPipeline>(uintptr_t(41));
  m832ShadowSignatures[shadow]={{1}};m89Variants[pipeline]={device,replacement,shadow,VK_NULL_HANDLE,{{1}}};

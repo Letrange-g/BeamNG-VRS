@@ -34,13 +34,17 @@ void m833Invalidate(VkCommandBuffer cmd){
  if(!m833Enabled())return;std::lock_guard<std::mutex> guard(mu);
  auto t=m833Command(cmd);if(t)t->invalidate(m833Id(cmd));
 }
-int m833Eye(VkDevice device,const VkRenderPassBeginInfo* info){
+int m833Eye(VkDevice device,VkCommandBuffer cmd,const VkRenderPassBeginInfo* info){
  // Called inside m57SelectShadow's mutex. This is the ONLY widened classifier;
  // crop and debug outlines keep their original eye/output scope.
  if(m833Mode()!=2 || !m833Enabled())return -1;
  auto t=m833Trackers.find(device);if(t==m833Trackers.end())return -1;
  t->second.extent(m813Width(),m813Height());
- const auto image=m833Output(info);const auto eye=t->second.eye(m833Id(image),GetTickCount64(),info?m833Id(info->renderPass):0);
+ const auto image=m833Output(info);const auto command=t->second.commands.find(m833Id(cmd));
+ // A previously learned image must not widen a secondary-only or otherwise
+ // unsupported pass when the game later changes how it records that target.
+ if(!image || command==t->second.commands.end() || !command->second.recording || command->second.output!=m833Id(image))return -1;
+ const auto eye=t->second.eye(m833Id(image),GetTickCount64(),info?m833Id(info->renderPass):0);
  return eye;
 }
 void m833Draw(VkCommandBuffer c){
