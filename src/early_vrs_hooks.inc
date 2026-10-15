@@ -97,20 +97,24 @@ void m833Report(VkDevice device){
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkBeginCommandBuffer(VkCommandBuffer c,const VkCommandBufferBeginInfo* i){
  auto d=lookupCommand(c);if(!d.early_vkBeginCommandBuffer)return VK_ERROR_INITIALIZATION_FAILED;
  auto r=d.early_vkBeginCommandBuffer(c,i);
+ if(m835Enabled() && r==VK_SUCCESS)m835Profiler.begin(c,i);
  if(m833Enabled()){std::lock_guard<std::mutex> g(mu);m833ActiveEarlier.erase(c);auto t=m833Command(c);if(t)t->resetCommand(m833Id(c),r==VK_SUCCESS);}
  return r;
 }
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkResetCommandBuffer(VkCommandBuffer c,VkCommandBufferResetFlags f){
  auto d=lookupCommand(c);if(!d.early_vkResetCommandBuffer)return VK_ERROR_INITIALIZATION_FAILED;
  auto r=d.early_vkResetCommandBuffer(c,f);
+ if(m835Enabled() && r==VK_SUCCESS)m835Profiler.reset(c);
  if(m833Enabled()){std::lock_guard<std::mutex> g(mu);m833ActiveEarlier.erase(c);auto t=m833Command(c);if(t)t->resetCommand(m833Id(c));}return r;
 }
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkResetCommandPool(VkDevice device,VkCommandPool p,VkCommandPoolResetFlags f){
  auto d=lookupDevice(device);if(!d.early_vkResetCommandPool)return VK_ERROR_INITIALIZATION_FAILED;
  auto r=d.early_vkResetCommandPool(device,p,f);
+ if(m835Enabled() && r==VK_SUCCESS)m835Profiler.resetPool(device,p);
  if(m833Enabled()){std::lock_guard<std::mutex> g(mu);m833Trackers[device].resetCommands(m833Id(p));}return r;
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyCommandPool(VkDevice device,VkCommandPool p,const VkAllocationCallbacks* a){
+ if(m835Enabled()){auto removed=m835Profiler.resetPool(device,p,true);std::lock_guard<std::mutex> g(mu);for(auto c:removed)commandDevices.erase(c);}
  auto d=lookupDevice(device);
  if(m833Enabled()){std::lock_guard<std::mutex> g(mu);auto& t=m833Trackers[device];
   for(const auto& [id,c]:t.commands)if(c.pool==m833Id(p))commandDevices.erase(reinterpret_cast<VkCommandBuffer>(uintptr_t(id)));
@@ -179,11 +183,13 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdBindDescriptorSets(VkCommandBuffer c,
  if(fn)fn(c,p,l,first,n,s,dc,offsets);
 }
 #define EARLY_FORWARD(name,signature,arguments,tracking) \
-extern "C" VKAPI_ATTR void VKAPI_CALL name signature {auto fn=m834Command(c,&DeviceDispatch::early_##name,beamng_cpu::Draw,[&](auto& t){tracking;});if(fn)fn arguments;}
+extern "C" VKAPI_ATTR void VKAPI_CALL name signature {auto fn=m834Command(c,&DeviceDispatch::early_##name,beamng_cpu::Draw,[&](auto& t){tracking;});if(m835Enabled() && !strncmp(#name,"vkCmdDraw",9))m835Profiler.draw(c);if(m835Enabled() && !strncmp(#name,"vkCmdDispatch",13))m835Profiler.compute(c);if(fn)fn arguments;if(m835Enabled() && !strncmp(#name,"vkCmdDispatch",13))m835Profiler.endCompute(c);}
 EARLY_FORWARD(vkCmdPushDescriptorSetKHR,(VkCommandBuffer c,VkPipelineBindPoint p,VkPipelineLayout l,uint32_t s,uint32_t n,const VkWriteDescriptorSet* w),(c,p,l,s,n,w),t.invalidate(m833Id(c)))
 EARLY_FORWARD(vkCmdPushDescriptorSetWithTemplateKHR,(VkCommandBuffer c,VkDescriptorUpdateTemplate t,VkPipelineLayout l,uint32_t s,const void* data),(c,t,l,s,data),t.invalidate(m833Id(c)))
 EARLY_FORWARD(vkCmdExecuteCommands,(VkCommandBuffer c,uint32_t n,const VkCommandBuffer* s),(c,n,s),t.invalidate(m833Id(c)))
 EARLY_FORWARD(vkCmdDispatch,(VkCommandBuffer c,uint32_t x,uint32_t y,uint32_t z),(c,x,y,z),t.invalidate(m833Id(c)))
+EARLY_FORWARD(vkCmdDispatchBase,(VkCommandBuffer c,uint32_t bx,uint32_t by,uint32_t bz,uint32_t x,uint32_t y,uint32_t z),(c,bx,by,bz,x,y,z),t.invalidate(m833Id(c)))
+EARLY_FORWARD(vkCmdDispatchBaseKHR,(VkCommandBuffer c,uint32_t bx,uint32_t by,uint32_t bz,uint32_t x,uint32_t y,uint32_t z),(c,bx,by,bz,x,y,z),t.invalidate(m833Id(c)))
 EARLY_FORWARD(vkCmdDispatchIndirect,(VkCommandBuffer c,VkBuffer b,VkDeviceSize o),(c,b,o),t.invalidate(m833Id(c)))
 EARLY_FORWARD(vkCmdDraw,(VkCommandBuffer c,uint32_t v,uint32_t n,uint32_t first,uint32_t instance),(c,v,n,first,instance),if(v && n)t.draw(m833Id(c)))
 EARLY_FORWARD(vkCmdDrawIndexed,(VkCommandBuffer c,uint32_t v,uint32_t n,uint32_t first,int32_t offset,uint32_t instance),(c,v,n,first,offset,instance),if(v && n)t.draw(m833Id(c)))
@@ -202,4 +208,24 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyImage(VkDevice device,VkImage i,c
  auto d=lookupDevice(device);
  if(m833Enabled()){std::lock_guard<std::mutex> g(mu);m833Trackers[device].eraseImage(m833Id(i));m833ForgetImage(i);}
  if(d.early_vkDestroyImage)d.early_vkDestroyImage(device,i,a);
+}
+
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateCommandPool(VkDevice device,const VkCommandPoolCreateInfo* i,const VkAllocationCallbacks* a,VkCommandPool* o){
+ auto d=lookupDevice(device);if(!d.early_vkCreateCommandPool)return VK_ERROR_INITIALIZATION_FAILED;
+ auto result=d.early_vkCreateCommandPool(device,i,a,o);
+ if(m835Enabled() && result==VK_SUCCESS && i && o)m835Profiler.pool(device,*o,i->queueFamilyIndex,i->flags);
+ return result;
+}
+namespace {
+void m835BeginPass(VkCommandBuffer cmd,const VkRenderPassBeginInfo* info,bool secondary,bool shadow){
+ if(!info)return;int eye=-1;uint32_t reject=~0u;
+ {std::lock_guard<std::mutex> guard(mu);
+  const auto a=m74dAttachments.find(info->framebuffer);
+  if(a!=m74dAttachments.end())for(auto view:a->second.views){auto v=m74gViews.find(view);if(v!=m74gViews.end()){
+   const int candidate=m8ClassifiedEye(v->second.image);if(candidate>=0){if(eye>=0 && eye!=candidate){eye=-1;break;}eye=candidate;}
+  }}
+  auto r=shadowRejectFlags.find(info->renderPass);if(r!=shadowRejectFlags.end())reject=r->second;
+ }
+ m835Profiler.legacy(cmd,info,eye,reject,secondary,shadow);
+}
 }

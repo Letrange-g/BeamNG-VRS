@@ -27,3 +27,7 @@ EARLY_ENTRY(void, vkCmdDrawIndexedIndirectCountKHR, (VkCommandBuffer c,VkBuffer 
 EARLY_ENTRY(void, vkDestroyImage, (VkDevice d,VkImage i,const VkAllocationCallbacks* a))
 EARLY_ENTRY(void, vkCmdClearColorImage, (VkCommandBuffer c,VkImage i,VkImageLayout l,const VkClearColorValue* v,uint32_t n,const VkImageSubresourceRange* r))
 EARLY_ENTRY(void, vkCmdClearDepthStencilImage, (VkCommandBuffer c,VkImage i,VkImageLayout l,const VkClearDepthStencilValue* v,uint32_t n,const VkImageSubresourceRange* r))
+
+EARLY_ENTRY(VkResult, vkCreateCommandPool, (VkDevice d,const VkCommandPoolCreateInfo* i,const VkAllocationCallbacks* a,VkCommandPool* o))
+EARLY_ENTRY(void, vkCmdDispatchBase, (VkCommandBuffer c,uint32_t bx,uint32_t by,uint32_t bz,uint32_t x,uint32_t y,uint32_t z))
+EARLY_ENTRY(void, vkCmdDispatchBaseKHR, (VkCommandBuffer c,uint32_t bx,uint32_t by,uint32_t bz,uint32_t x,uint32_t y,uint32_t z))

@@ -57,6 +57,8 @@ try {
     }
     $cases += @{ Text = "[Experimental]`nEarlyPasses=yes"; Valid = $false }
     $cases += @{ Text = "[Experimental]`nEarlyPasses=on`nearlypasses=off"; Valid = $false }
+    $cases += @{ Text = "[Experimental]`nProfileGPU=TRUE`nEarlyPasses=false"; Valid = $true }
+    $cases += @{ Text = "[Experimental]`nProfileGPU=trace"; Valid = $false }
     $caseNumber = 0
     foreach ($case in $cases) {
         ++$caseNumber

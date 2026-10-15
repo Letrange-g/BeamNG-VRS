@@ -1,25 +1,23 @@
-EXPERIMENTAL BUILD: EARLIER-PASS VRS (0.1.1-early.3)
+GPU PASS PROFILING TEST (0.1.1-profile.1)
+Back up DLLs, launcher and INI together. Extract this ZIP beside Bin64.
+In BeamNG-VRS.ini set:
+[Experimental]
+EarlyPasses=false
+ProfileGPU=true
+[Logging]
+Level=info
 
-Back up your old DLLs and INI before installing. Keep this test launcher too.
-In the root INI, under [Experimental], set EarlyPasses=true and restart.
-Allow 10 seconds in your scene. Compare against EarlyPasses=false with the same
-sizes, resolution, Turbo and scissor settings; keep debug outlines off.
-Old on/off values still work; use true/false for normal editing.
-EarlyPasses=trace learns candidates without widening VRS (tracking overhead test).
-The default is off. A confirmed FPS improvement is not promised.
+Restart. Load your usual scene, wait until loading settles, then stay in the
+same view for 45-60 seconds. Exit normally and share the new M8.35 entries in
+%TEMP%\BeamNG_VRS_layer.log (or ZIP the full log). Keep normal VRS enabled and
+debug outlines off. GPU profiling adds overhead: this is not an FPS benchmark.
+Set ProfileGPU=false and restart for normal play.
 
-This build reduces tracking overhead and reuses up to 64 idle VRS framebuffers.
-Reuse is active in false/trace/true; early-pass inference defaults to false.
-M8.34 reports framebuffer reuse and sampled CPU overhead (not GPU timings).
-
-With Logging Level=info, look in %TEMP%\BeamNG_VRS_layer.log for M8.33 EARLY_VRS.
-Both selected and binds must increase to confirm additional recorded VRS coverage.
-If they stay zero, send that log: this narrow experiment did not find a usable path.
-Check both eyes for flicker/incorrect shading. Restore off if anything is worse.
-For full instructions, see docs/EARLY-VRS-TEST.md on the experiment/early-vrs branch.
-This is separate from the public 0.1.0 release.
-
-BeamNG-VRS 0.1.0 - portable Windows x64
+Graphics passes and compute dispatches are sampled. Query results are read
+without waiting, when the game resets/frees command buffers. Dynamic rendering,
+protected/simultaneous-use recording and some newer draw APIs are not covered.
+No rendering quality or pass-selection change is made by ProfileGPU itself.
+See docs/GPU-PROFILING.md in the repository for interpretation and limitations.
 
 INSTALL
 1. Close BeamNG.
