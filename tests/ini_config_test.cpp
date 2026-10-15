@@ -7,6 +7,9 @@
 int main() {
  using namespace beamng_config;
  assert(beamng_config::defaults().at("BEAMNG_VRS_EARLY_PASSES")=="off");
+ assert(beamng_config::defaults().at("BEAMNG_VRS_PROFILE_GPU")=="0");
+ std::istringstream profile("[Experimental]\nProfileGPU=TRUE\nEarlyPasses=false");
+ assert(parse(profile).at("BEAMNG_VRS_PROFILE_GPU")=="1");
  for(const char* mode:{"off","trace","on"}){
   std::istringstream input(std::string("[Experimental]\nEarlyPasses=")+mode);
   assert(parse(input).at("BEAMNG_VRS_EARLY_PASSES")==mode);
@@ -108,7 +111,7 @@ int main() {
  assert(values.at("BEAMNG_VRS_SCISSOR_BOTTOM") == "0.3");
  assert(values.at("BEAMNG_VRS_SHAPE") == "square");
  assert(values.at("BEAMNG_VRS_GAZE_GRACE_MS") == "30");
- for(const char* bad : {"[Experimental]\nEarlyPasses=yes", "[Experimental]\nEarlyPasses=on\nearlypasses=off","[Logging]\nLevel=verbose", "[Logging]\nLevel=off\nlevel=info", "[Performance]\nTurboMode=yes", "[Performance]\nTurboMode=true\nturbomode=false",
+ for(const char* bad : {"[Experimental]\nProfileGPU=trace", "[Experimental]\nEarlyPasses=yes", "[Experimental]\nEarlyPasses=on\nearlypasses=off","[Logging]\nLevel=verbose", "[Logging]\nLevel=off\nlevel=info", "[Performance]\nTurboMode=yes", "[Performance]\nTurboMode=true\nturbomode=false",
      "[Foveation]\nEnabled=2", "[Foveation]\nEnabled=true\nenabled=false", "[Foveation]\nTypo=1", "[other]\nEnabled=1", "[Debug]\nDrawOutline=1\ndrawoutline=0",
      "[Foveation]\nSize1x1=nan", "[Foveation]\nSize1x1=1.2", "[Foveation]\nSize1x1=-1",
      "[Foveation]\nSize1x1=0.7\nSize2x2=0.5", "[Foveation]\nSize1x1=0,25",

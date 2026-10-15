@@ -131,4 +131,4 @@ testing. It deliberately does not recursively spread VRS through the whole graph
 The tracking adds CPU work in `trace` and `true`; compare both against `false`.
 Automatic tests cover graph scope, ambiguity, resource reuse, actual Vulkan hook
 forwarding and mode-dependent selection. They cannot establish driver/headset
-compatibility or performance. No GPU-timestamp instrumentation is included.
+compatibility or performance. A separate opt-in [GPU profiling mode](GPU-PROFILING.md) is available in the profiling test build; leave it disabled during FPS comparisons.

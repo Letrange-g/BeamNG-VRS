@@ -59,6 +59,7 @@ inline Values defaults() {
  activation(out, true);
  out["BEAMNG_VRS_TURBO_MODE"] = "1";
  out["BEAMNG_VRS_EARLY_PASSES"] = "off";
+ out["BEAMNG_VRS_PROFILE_GPU"] = "0";
  out["BEAMNG_VRS_SHAPE"] = "circle";
  out["BEAMNG_VRS_FOVEATION_MODE"] = "eye";
  out["BEAMNG_VRS_CENTER_RADIUS"] = "0.25";
@@ -91,6 +92,7 @@ inline void setting(Values& out, const std::string& section, const std::string& 
   out["BEAMNG_VRS_LOG_LEVEL"]=level=="off"?"-1":level=="errors"?"0":level=="debug"?"2":"1";
  }
  else if(id == "performance.turbomode") out["BEAMNG_VRS_TURBO_MODE"]=boolean(value);
+ else if(id == "experimental.profilegpu") out["BEAMNG_VRS_PROFILE_GPU"]=boolean(value);
  else if(id == "experimental.earlypasses") {
   // Public booleans match the other switches; preserve the first test builds'
   // on/off spellings and the diagnostic-only trace mode. Internal modes stay stable.

@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Version = '0.1.1-early.3',
+    [string]$Version = '0.1.1-profile.1',
     [string]$BuildDirectory,
     [string]$OutputDirectory
 )
