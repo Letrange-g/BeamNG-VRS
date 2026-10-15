@@ -1,5 +1,56 @@
 # Performance work: M8.27–M8.31
 
+## VRS coverage investigation after 0.1.0
+
+The earlier RTX 5090 runtime log contains repeated
+`SHADOW_BIND substituted=0 hasVariant=1 matchingPass=0` entries, reaching at
+least 1,000 skipped pipeline binds in a selected VRS render pass. These are
+command-recording counts, not draw counts or GPU timings. The old selection
+required the active render-pass **handle** to equal the handle used to create
+the VRS pipeline. BeamNG can legally reuse a pipeline with a different,
+compatible render pass. This restriction left available VRS copies unused.
+
+The compatibility fix compares retained render-pass descriptions, including
+attachment formats/sample counts/flags, subpass references and dependencies.
+Only load/store operations and layouts may differ. This is deliberately stricter
+than every compatibility case permitted by Vulkan. Unknown extension state
+does not qualify. Both passes must have gone through the same supported shadow
+translation, and the pipeline must belong to the command buffer's device.
+The pipeline owns its description so destroying or recycling its original
+render-pass handle cannot invalidate the comparison. Binding needs no new
+pipeline compilation or heap allocation. Diagnostic `SHADOW_BIND` lines add
+`compatibleReuse=1` when a different compatible shadow handle is used.
+
+Mock-driver tests exercise the real creation/bind/destruction hooks, permitted
+layout/load/store differences, incompatible formats/flags/dependencies,
+destroyed and recycled handles, device isolation, and allocation-free repeated
+binds. Existing per-eye scissor tests also cover selection of cropped VRS copies.
+GPU compatibility, additional shimmer and performance still need an in-game test.
+
+There are other limits to VRS savings:
+
+- Scissor prevents rasterization outside the retained rectangle. VRS primarily
+  reduces fragment-shader invocations; geometry, coverage, attachment traffic,
+  resolves, compute work and runtime waits can still dominate.
+- Only classified, full-eye-size, single-layer legacy render passes with a
+  supported single-subpass layout receive the current VRS substitution. It does
+  not extend to every intermediate target or compute post-processing pass.
+- Multisampled passes are currently excluded. The earlier RTX 5090 log reports
+  4×4 shading at 1 sample and 2×2 shading at 1/2/4 samples. Enabling VRS on MSAA
+  passes therefore needs a separate capability-aware implementation, resolve
+  handling and sample-shading checks. Removing the single-sample gate alone
+  would not be a sufficient change. This fix retains that gate.
+
+For the next comparison, keep the same MSAA setting, scene, eye resolution and
+Turbo setting. Disable debug outlines. Compare 0.1.0 with the test build first
+with scissor off, then compare VRS on/off with your normal scissor settings.
+Record GPU frame time as well as FPS after warming up the same stationary view.
+Use normal logging for timings; run diagnostics separately to inspect
+`compatibleReuse=1`. Check both eyes and head movement for visual regressions.
+No FPS gain has yet been measured for this change.
+
+Vulkan reference: [render-pass compatibility](https://registry.khronos.org/vulkan/specs/latest/html/vkspec.html#renderpass-compatibility).
+
 This beta reduces layer overhead while retaining the configured foveation sizes,
 shape, 30 ms gaze grace and 8 ms refresh interval. GPU/FPS improvements must be
 measured in BeamNG; there is no game, headset or rendering GPU in the cloud test

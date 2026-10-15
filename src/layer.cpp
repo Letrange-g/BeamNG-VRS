@@ -191,8 +191,11 @@ std::unordered_set<VkFramebuffer> m74dReported;
 struct PassInfo { uint32_t attachments, subpasses, colors, samples; bool hasDepth, eligible; };
 std::unordered_map<VkRenderPass, PassInfo> passInfos;
 // M8.8: compatibility signature of legacy VkRenderPassCreateInfo.
-// This is deliberately more exact than comparing VkRenderPass handles or
-// attachment counts. Only render-pass compatibility-relevant fields are used.
+// Conservative compatibility key: identical descriptions except for the
+// load/store operations and layouts Vulkan explicitly permits to differ.
+// Keeping attachment indices/counts exact can miss legal matches, but cannot
+// broaden compatibility to unrelated targets. Unknown extension chains fail
+// closed. This key is also used to select VRS pipelines, not just diagnostics.
 struct M88PassSignature {
  std::vector<uint64_t> fields;
 };
@@ -201,10 +204,12 @@ std::unordered_set<uint64_t> m88ReportedPairs;
 std::atomic<unsigned> m88Reports{0};
 static M88PassSignature m88Signature(const VkRenderPassCreateInfo& ci) {
  M88PassSignature s;
+ if(ci.pNext || (ci.attachmentCount && !ci.pAttachments) ||
+    !ci.subpassCount || !ci.pSubpasses || (ci.dependencyCount && !ci.pDependencies))return s;
  auto add=[&](uint64_t v){s.fields.push_back(v);};
- add(ci.attachmentCount);add(ci.subpassCount);
+ add(ci.flags);add(ci.attachmentCount);add(ci.subpassCount);
  for(uint32_t i=0;i<ci.attachmentCount;++i){
-  const auto& a=ci.pAttachments[i];add(uint32_t(a.format));add(uint32_t(a.samples));
+  const auto& a=ci.pAttachments[i];add(a.flags);add(uint32_t(a.format));add(uint32_t(a.samples));
  }
  for(uint32_t i=0;i<ci.subpassCount;++i){
   const auto& sp=ci.pSubpasses[i];
@@ -219,11 +224,21 @@ static M88PassSignature m88Signature(const VkRenderPassCreateInfo& ci) {
   add(sp.preserveAttachmentCount);
   for(uint32_t j=0;j<sp.preserveAttachmentCount;++j)add(sp.pPreserveAttachments?sp.pPreserveAttachments[j]:VK_ATTACHMENT_UNUSED);
  }
- // pNext may contain multiview or extension metadata not represented here.
- // Such passes are treated as unknown, never certified compatible.
- add(ci.pNext?1:0);
+ add(ci.dependencyCount);
+ for(uint32_t i=0;i<ci.dependencyCount;++i){
+  const auto& dep=ci.pDependencies[i];
+  add(dep.srcSubpass);add(dep.dstSubpass);add(dep.srcStageMask);add(dep.dstStageMask);
+  add(dep.srcAccessMask);add(dep.dstAccessMask);add(dep.dependencyFlags);
+ }
  return s;
 }
+static bool m832Compatible(const M88PassSignature& a,const M88PassSignature& b){
+ return !a.fields.empty() && a.fields==b.fields;
+}
+// All shadows use the same added R8_UINT attachment, 16x16 tile size and
+// single-subpass translation. Equal original keys therefore imply equal
+// shadow compatibility. Entries live exactly as long as their shadow pass.
+std::unordered_map<VkRenderPass,M88PassSignature> m832ShadowSignatures;
 
 struct ShadowPass { VkDevice device; VkRenderPass shadow; };
 struct ShadowFramebuffer { VkDevice device; VkFramebuffer shadow; };
@@ -238,7 +253,10 @@ struct M87Pipeline { VkDevice device; VkRenderPass renderPass; uint32_t subpass;
 std::unordered_map<VkPipeline,M87Pipeline> m87Pipelines;
 // M8.9: shadow-compatible pipeline variants, owned by the layer.
 struct M89Variant { VkDevice device; VkPipeline pipeline; VkRenderPass shadowPass;
-                    VkPipeline maskedPipeline=VK_NULL_HANDLE; };
+                    VkPipeline maskedPipeline=VK_NULL_HANDLE;
+                    // Pipelines may outlive the render pass used to create them.
+                    // Own the key so destroyed/recycled handles cannot change it.
+                    M88PassSignature compatibility; };
 std::unordered_map<VkPipeline,M89Variant> m89Variants;
 // M8.30: only asymmetric static scissors need additional pipeline copies.
 // Keyed by the real base pipeline, including compatible VRS/stencil variants.
@@ -876,7 +894,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyDevice(VkDevice device, const VkA
       it=m83EyeFramebuffers.erase(it);
     }
     for (auto it3=shadowPasses.begin(); it3!=shadowPasses.end();) {
-      if (it3->second.device==device) { orphanShadows.push_back(it3->second.shadow); it3=shadowPasses.erase(it3); }
+      if (it3->second.device==device) { orphanShadows.push_back(it3->second.shadow); m832ShadowSignatures.erase(it3->second.shadow); it3=shadowPasses.erase(it3); }
       else ++it3;
     }
     for (auto it4=shadowFramebuffers.begin(); it4!=shadowFramebuffers.end();) {
@@ -1957,9 +1975,15 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
         if(!out || !out[i] || !infos[i].renderPass || infos[i].basePipelineHandle ||
            (infos[i].flags & VK_PIPELINE_CREATE_DERIVATIVE_BIT))continue;
         VkRenderPass shadow=VK_NULL_HANDLE;
+        M88PassSignature compatibility;
         {std::lock_guard<std::mutex> guard(mu);
          auto it=shadowPasses.find(infos[i].renderPass);
-         if(it!=shadowPasses.end() && it->second.device==device)shadow=it->second.shadow;
+         if(it!=shadowPasses.end() && it->second.device==device){
+          const auto key=m832ShadowSignatures.find(it->second.shadow);
+          if(key!=m832ShadowSignatures.end() && !key->second.fields.empty()){
+           shadow=it->second.shadow;compatibility=key->second;
+          }
+         }
         }
         if(!shadow){
           if(m89VariantReports.fetch_add(1,std::memory_order_relaxed)<40)
@@ -2021,7 +2045,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
           }
           m830CreateCropVariants(device,cache,replacement,variant,infos[i].pViewportState,alloc,d);
           std::lock_guard<std::mutex> guard(mu);
-          m89Variants[out[i]]={device,replacement,shadow,masked};
+          m89Variants[out[i]]={device,replacement,shadow,masked,std::move(compatibility)};
           if(masked)m818MaskedVariantsByPass[infos[i].renderPass]++;
         }
         if(m89VariantReports.fetch_add(1,std::memory_order_relaxed)<40) {
@@ -2254,6 +2278,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateRenderPass(
     if (sr==VK_SUCCESS && shadow) {
       std::lock_guard<std::mutex> guard(mu);
       shadowPasses[*out]={device,shadow};
+      m832ShadowSignatures[shadow]=m88Signature(*ci);
     }
   }
   std::lock_guard<std::mutex> guard(mu);
@@ -2291,7 +2316,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyRenderPass(
  {
    std::lock_guard<std::mutex> guard(mu);
    auto it=shadowPasses.find(pass);
-   if (it!=shadowPasses.end()) { shadow=it->second.shadow; shadowPasses.erase(it); }
+   if (it!=shadowPasses.end()) { shadow=it->second.shadow; m832ShadowSignatures.erase(shadow); shadowPasses.erase(it); }
    passInfos.erase(pass);
    m818StencilCapable.erase(pass);
    m819DepthFormatByPass.erase(pass);
@@ -3161,7 +3186,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdBindPipeline(VkCommandBuffer cmd,VkPi
     else {
      auto a=m88PassSignatures.find(actual), b=m88PassSignatures.find(expected);
      if(a!=m88PassSignatures.end() && b!=m88PassSignatures.end())
-      status=a->second.fields==b->second.fields?2:3;
+      status=m832Compatible(a->second,b->second)?2:3;
     }
     // Use actual pair of handles as key, not a hash of pass descriptions.
     const uint64_t ah=uint64_t(std::hash<VkRenderPass>{}(actual));
@@ -3179,7 +3204,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdBindPipeline(VkCommandBuffer cmd,VkPi
   }
  }
  if(point==VK_PIPELINE_BIND_POINT_GRAPHICS) {
-   bool shadowActive=false, substituted=false, hasVariant=false, matchingPass=false,usedStencil=false;
+   bool shadowActive=false, substituted=false, hasVariant=false, matchingPass=false,usedStencil=false,compatibleReuse=false;
    VkRenderPass activePass=VK_NULL_HANDLE;
    {
      std::lock_guard<std::mutex> guard(mu);
@@ -3190,11 +3215,18 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdBindPipeline(VkCommandBuffer cmd,VkPi
      hasVariant=(variant!=m89Variants.end());
      if(shadowActive) {
        activePass=active->second;
-       matchingPass=hasVariant && variant->second.shadowPass==activePass;
+       // BeamNG reuses pipelines across compatible render-pass objects. Handle
+       // equality alone skipped these binds even when a VRS copy was ready.
+       // Compare owned descriptions: no allocation, pipeline compilation or
+       // reliance on the lifetime of the pipeline's original render pass.
+       const auto key=m832ShadowSignatures.find(activePass);
+       matchingPass=hasVariant && key!=m832ShadowSignatures.end() &&
+         m832Compatible(variant->second.compatibility,key->second);
        if(matchingPass && dev!=commandDevices.end() && variant->second.device==dev->second) {
          usedStencil=m818MaskedCommands.count(cmd) && variant->second.maskedPipeline;
          pipeline=usedStencil ? variant->second.maskedPipeline : variant->second.pipeline;
          substituted=true;
+         compatibleReuse=variant->second.shadowPass!=activePass;
        }
      }
    }
@@ -3220,8 +3252,8 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdBindPipeline(VkCommandBuffer cmd,VkPi
      unsigned n=(substituted?m810BindReports:m810MissingReports).fetch_add(1,std::memory_order_relaxed);
      if(n<96) {
        char msg[256]{};
-       sprintf_s(msg,"M8.10 SHADOW_BIND substituted=%u hasVariant=%u matchingPass=%u passHash=%llu",
-         substituted?1u:0u,hasVariant?1u:0u,matchingPass?1u:0u,
+       sprintf_s(msg,"M8.10 SHADOW_BIND substituted=%u hasVariant=%u matchingPass=%u compatibleReuse=%u passHash=%llu",
+         substituted?1u:0u,hasVariant?1u:0u,matchingPass?1u:0u,compatibleReuse?1u:0u,
          static_cast<unsigned long long>(std::hash<VkRenderPass>{}(activePass)));
        log(msg);
      }
