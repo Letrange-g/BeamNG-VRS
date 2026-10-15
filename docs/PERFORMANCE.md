@@ -1,4 +1,4 @@
-# Performance work: M8.27–M8.33
+# Performance work: M8.27–M8.34
 
 For the opt-in earlier-pass experiment, see [EARLY-VRS-TEST.md](EARLY-VRS-TEST.md).
 
@@ -299,3 +299,13 @@ rendering cost or the game's non-VR CPU variability. The supplied loader logs do
 not contain those timings. Turbo tests should be opt-in and separate
 from crop comparisons, with frame pacing and head-motion appearance checked in
 the headset as well as FPS.
+
+## M8.34 experimental CPU overhead reduction
+
+The first early-pass user log confirmed 9,810 extra pipeline binds but no reported
+worthwhile GPU gain. It also recorded 29,866 lazy VRS framebuffer creations; this
+is a workload count, not a measurement of their cost. `early.2` adds bounded idle
+framebuffer reuse, narrower single-lock command dispatch/tracking, descriptor
+scan invalidation, and sampled CPU timing. See [the test guide](EARLY-VRS-TEST.md)
+for comparison instructions and counter limitations. Native tests use a mock
+Vulkan driver; real GPU/headset performance remains unverified.

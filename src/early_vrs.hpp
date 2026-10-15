@@ -18,13 +18,13 @@ struct Command {
  Id pool=0,layout=0,output=0,input=0,pass=0;
  bool primary=false,recording=false,ambiguous=false,drew=false;
  int eye=-1;
- uint64_t sequence=0;
+ uint64_t sequence=0,checkedRevision=0;
  std::array<Id,8> sets{};
  std::unordered_map<Id,Id> producers;
 };
-struct Stats { uint64_t draws=0,observed=0,ambiguous=0,noInput=0,unsupported=0,selected=0,binds=0; };
+struct Stats { uint64_t draws=0,observed=0,ambiguous=0,noInput=0,unsupported=0,selected=0,binds=0,descriptorScans=0,scanSkips=0; };
 class Tracker {
- uint64_t sequence_=0;
+ uint64_t sequence_=0,descriptorRevision_=1;
  uint32_t width_=0,height_=0;
 public:
  std::unordered_map<Id,Image> images;
@@ -45,12 +45,13 @@ public:
   eraseImage(id);if(images.size()<8192)images[id]={w,h};
  }
  void eraseImage(Id id){
-  images.erase(id);evidence.erase(id);
+  ++descriptorRevision_;images.erase(id);evidence.erase(id);
   for(auto& [key,c]:commands){c.producers.erase(id);if(c.output==id || c.input==id)c.ambiguous=true;}
   // Descriptor references to destroyed views/images are unusable until updated.
   for(auto& [key,s]:sets)for(auto& [binding,image]:s.images)if(image==id)image=0;
  }
  void erasePass(Id pass){
+  ++descriptorRevision_;
   for(auto i=evidence.begin();i!=evidence.end();)if(i->second.pass==pass)i=evidence.erase(i);else ++i;
   for(auto& [id,c]:commands){
    for(auto i=c.producers.begin();i!=c.producers.end();)if(i->second==pass){
@@ -60,19 +61,19 @@ public:
    if(c.pass==pass){c.output=0;c.ambiguous=true;}
   }
  }
- void allocateSet(Id id,Id pool){sets.erase(id);if(sets.size()<65536)sets[id].pool=pool;}
+ void allocateSet(Id id,Id pool){++descriptorRevision_;sets.erase(id);if(sets.size()<65536)sets[id].pool=pool;}
  void eraseSet(Id id){
-  sets.erase(id);for(auto& [key,c]:commands)for(auto& set:c.sets)if(set==id)set=0;
+  ++descriptorRevision_;sets.erase(id);for(auto& [key,c]:commands)for(auto& set:c.sets)if(set==id)set=0;
  }
  void resetDescriptors(Id pool){
   for(auto i=sets.begin();i!=sets.end();)if(i->second.pool==pool){auto id=i->first;++i;eraseSet(id);}else ++i;
  }
- void unknown(Id id){auto i=sets.find(id);if(i!=sets.end()){i->second.unknown=true;i->second.images.clear();}++stats.unsupported;}
+ void unknown(Id id){++descriptorRevision_;auto i=sets.find(id);if(i!=sets.end()){i->second.unknown=true;i->second.images.clear();}++stats.unsupported;}
  void write(Id id,uint32_t binding,uint32_t element,Id image){
   auto s=sets.find(id);if(s==sets.end() || s->second.unknown)return;
   const uint64_t slot=(uint64_t(binding)<<32)|element;
   if(s->second.images.size()>=128 && !s->second.images.count(slot)){unknown(id);return;}
-  s->second.images[slot]=image;
+  ++descriptorRevision_;s->second.images[slot]=image;
  }
  void copy(Id source,uint32_t sb,uint32_t se,Id dest,uint32_t db,uint32_t de){
   auto s=sets.find(source);
@@ -104,11 +105,12 @@ public:
   auto i=commands.find(cmd);if(i==commands.end() || !i->second.recording)return;
   auto& c=i->second;c.output=eligible(output)?output:0;c.eye=eye;c.input=0;c.ambiguous=false;c.drew=false;c.pass=pass;
   // Rebinding after begin is required. This intentionally misses prebound sets.
-  c.sets={};c.layout=0;
+  c.sets={};c.layout=0;c.checkedRevision=0;
   if(!c.output)c.producers.clear();else c.producers.erase(output);
  }
  void bind(Id cmd,Id layout,unsigned first,unsigned count,const Id* bound){
-  auto c=commands.find(cmd);if(c==commands.end() || !c->second.recording)return;
+  auto c=commands.find(cmd);if(c==commands.end() || !c->second.recording || !c->second.output)return;
+  c->second.checkedRevision=0;
   if(first>8 || count>8-first){invalidate(cmd);return;}
   if(c->second.layout!=layout)c->second.sets={};
   c->second.layout=layout;
@@ -119,6 +121,10 @@ public:
   auto& c=i->second;if(!c.output)return;c.drew=true;
   if(c.eye<0 || c.eye>1)return; // Only directly classified eyes seed discovery.
   ++stats.draws;
+  // Once ambiguous, more draws cannot make this pass safe. Otherwise revisit
+  // bindings only after a bind, descriptor edit, or image/pass invalidation.
+  if(c.ambiguous || c.checkedRevision==descriptorRevision_){++stats.scanSkips;return;}
+  c.checkedRevision=descriptorRevision_;++stats.descriptorScans;
   for(Id id:c.sets){
    if(!id)continue;
    auto s=sets.find(id);

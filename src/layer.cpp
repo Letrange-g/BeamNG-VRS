@@ -15,6 +15,8 @@
 #include "gaze_freshness.hpp"
 #include "scissor_crop.hpp"
 #include "early_vrs.hpp"
+#include "framebuffer_reuse.hpp"
+#include "early_cpu_timing.hpp"
 #include <windows.h>
 #include <cmath>
 #include <cstdlib>
@@ -476,8 +478,8 @@ struct M85EyeFramebufferPair {
 };
 std::unordered_map<VkFramebuffer, M85EyeFramebufferPair> m83EyeFramebuffers;
 // M8.23: optional LAZY eye framebuffer variants. Save the original attachment
-// handles only during the ORIGINAL framebuffer lifetime; never reuse a view
-// after vkDestroyFramebuffer. Non-trivial pNext structures use eager fallback.
+// handles during the original framebuffer lifetime. M8.34 may retain an idle
+// variant while its views/pass remain alive. Non-trivial pNext uses eager fallback.
 struct M823LazyFramebuffer {
  VkDevice device=VK_NULL_HANDLE;
  VkRenderPass shadowPass=VK_NULL_HANDLE;
@@ -496,6 +498,12 @@ struct M823Stats {
  std::atomic<uint64_t> eagerVariants{0}, lazyVariants{0}, lazyFailures{0}, shadowSelections{0}, skipped{0};
 };
 M823Stats m823Stats;
+// Protected by m823CreateMutex, acquired before mu. Idle entries never own
+// application views. Rate-image generations remain alive until device teardown.
+beamng_framebuffer::IdleCache m834FramebufferCache;
+std::atomic<uint64_t> m834FbCreateNs{0},m834FbCreateCalls{0};
+void m834Report();
+
 
 // M8.16: legacy spare framebuffer bookkeeping retained for compatibility with
 // the device cleanup path; no spare framebuffers are created anymore.
@@ -587,7 +595,7 @@ bool m817Verbose() { return m817LogLevel()>=2; }
 int m817MessageLevel(const char* msg) {
  if(strstr(msg,"FAILED") || strstr(msg,"ERROR") || strstr(msg,"WARNING") ||
     strstr(msg,"FATAL") || strstr(msg,"VkResult=-") || strstr(msg,"result=-")) return 0;
- if(strstr(msg,"M8.33 ") || strstr(msg,"M8.17") || strstr(msg,"M8.18") || strstr(msg,"M8.21 ") || strstr(msg,"M8.23 ") || strstr(msg,"M8.24 ") || strstr(msg,"M8.25 ") || strstr(msg,"M8.27 ") || strstr(msg,"M8.28 ") || strstr(msg,"M8.14 AUTO_RESOLUTION") ||
+ if(strstr(msg,"M8.34 ") || strstr(msg,"M8.33 ") || strstr(msg,"M8.17") || strstr(msg,"M8.18") || strstr(msg,"M8.21 ") || strstr(msg,"M8.23 ") || strstr(msg,"M8.24 ") || strstr(msg,"M8.25 ") || strstr(msg,"M8.27 ") || strstr(msg,"M8.28 ") || strstr(msg,"M8.14 AUTO_RESOLUTION") ||
     strstr(msg,"M8.14 RESOURCE_") || strstr(msg,"M8.16 EYE_FB_STATS") ||
     strstr(msg,"M8.16 UNUSED_VRS") || strstr(msg,"M8.15 STATS") ||
     strstr(msg,"M3 VRS enabled") || strstr(msg,"M4.2 GPU:") ||
@@ -874,6 +882,8 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyDevice(VkDevice device, const VkA
   PFN_vkDestroyRenderPass destroyPass = nullptr;
   std::vector<VkRenderPass> orphanShadows;
   std::vector<VkFramebuffer> orphanFramebuffers;
+  for(auto id:m834FramebufferCache.invalidate([&](const auto& k){return k.device==m833Id(device);}))
+   orphanFramebuffers.push_back(reinterpret_cast<VkFramebuffer>(uintptr_t(id)));
   PFN_vkDestroyFramebuffer destroyFb = nullptr;
   {
     std::lock_guard<std::mutex> guard(mu);
@@ -2356,6 +2366,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateRenderPass(
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyRenderPass(
  VkDevice device, VkRenderPass pass, const VkAllocationCallbacks* alloc) {
+ std::lock_guard<std::mutex> reuseGuard(m823CreateMutex);
  auto d=lookupDevice(device);
  VkRenderPass shadow=VK_NULL_HANDLE;
  {
@@ -2371,6 +2382,8 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyRenderPass(
    m88PassSignatures.erase(pass);
    shadowRejectFlags.erase(pass);
  }
+ for(auto id:m834FramebufferCache.invalidate([&](const auto& k){return k.device==m833Id(device) && k.pass==m833Id(shadow);}))
+  if(d.destroyFramebuffer)d.destroyFramebuffer(device,reinterpret_cast<VkFramebuffer>(uintptr_t(id)),nullptr);
  if (shadow && d.destroyRenderPass) d.destroyRenderPass(device,shadow,alloc);
  if (d.destroyRenderPass) d.destroyRenderPass(device,pass,alloc);
 }
@@ -2422,7 +2435,11 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateImageView(
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyImageView(
  VkDevice device, VkImageView view, const VkAllocationCallbacks* alloc) {
+ std::lock_guard<std::mutex> reuseGuard(m823CreateMutex);
  auto d = lookupDevice(device);
+ for(auto id:m834FramebufferCache.invalidate([&](const auto& k){return k.device==m833Id(device) &&
+  (k.rateView==m833Id(view) || std::find(k.views.begin(),k.views.end(),m833Id(view))!=k.views.end());}))
+  if(d.destroyFramebuffer)d.destroyFramebuffer(device,reinterpret_cast<VkFramebuffer>(uintptr_t(id)),nullptr);
  {
    std::lock_guard<std::mutex> guard(mu);
    m74gViews.erase(view);
@@ -2581,6 +2598,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateFramebuffer(
            (unsigned long long)m823Stats.shadowSelections.load(std::memory_order_relaxed),
            (unsigned long long)m823Stats.lazyFailures.load(std::memory_order_relaxed));
          log(report);
+         m834Report();
        }
      } else {
        // Preserve the legacy non-eye shadow framebuffer mode unchanged.
@@ -2649,7 +2667,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyFramebuffer(
    auto it=shadowFramebuffers.find(framebuffer);
    if (it!=shadowFramebuffers.end()) { shadow=it->second.shadow; shadowFramebuffers.erase(it); }
  }
- for(auto f:eyeFbs)if(f && d.destroyFramebuffer)d.destroyFramebuffer(device,f,alloc);
+ for(auto f:eyeFbs)if(f && !m834FramebufferCache.release(m833Id(f)) && d.destroyFramebuffer)d.destroyFramebuffer(device,f,alloc);
  for(auto& eye:spareFbs.spare)for(auto f:eye)if(f && d.destroyFramebuffer)d.destroyFramebuffer(device,f,alloc);
  if (shadow && d.destroyFramebuffer) d.destroyFramebuffer(device, shadow, alloc);
  if (d.destroyFramebuffer) d.destroyFramebuffer(device, framebuffer, alloc);
@@ -2823,6 +2841,7 @@ static bool m823EnsureEyeFramebuffer(VkDevice device,VkFramebuffer original,int 
  std::lock_guard<std::mutex> resolutionGuard(m814ResourceMutex);
  std::lock_guard<std::mutex> createGuard(m823CreateMutex);
  M823LazyFramebuffer plan{};
+ beamng_framebuffer::Key reuseKey{};bool reusable=false;
  DeviceDispatch d{};
  VkImageView rateView=VK_NULL_HANDLE;
  {
@@ -2843,6 +2862,15 @@ static bool m823EnsureEyeFramebuffer(VkDevice device,VkFramebuffer original,int 
     sp.second.shadow==it->second.shadowPass){passAlive=true;break;}
   if(!passAlive)return false;
   plan=it->second;d=di->second;rateView=vrs->second[eye].view;
+  reusable=!plan.hasAllocator;
+  for(auto view:plan.views){auto v=m74gViews.find(view);if(v==m74gViews.end() || v->second.device!=device)reusable=false;}
+  if(reusable){
+   reuseKey={m833Id(device),m833Id(plan.shadowPass),m833Id(rateView),plan.flags,plan.width,plan.height,plan.layers,{}};
+   for(auto view:plan.views)reuseKey.views.push_back(m833Id(view));
+   if(auto cached=m834FramebufferCache.take(reuseKey)){
+    existing->second.eyes[eye]=reinterpret_cast<VkFramebuffer>(uintptr_t(cached));return true;
+   }
+  }
  }
  plan.views.push_back(rateView);
  VkFramebufferCreateInfo ci{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
@@ -2853,7 +2881,10 @@ static bool m823EnsureEyeFramebuffer(VkDevice device,VkFramebuffer original,int 
  ci.width=plan.width;ci.height=plan.height;ci.layers=plan.layers;
  const VkAllocationCallbacks* alloc=plan.hasAllocator?&plan.allocator:nullptr;
  VkFramebuffer created=VK_NULL_HANDLE;
+ const auto createStart=std::chrono::steady_clock::now();
  const VkResult result=d.createFramebuffer(device,&ci,alloc,&created);
+ m834FbCreateNs.fetch_add(uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-createStart).count()),std::memory_order_relaxed);
+ m834FbCreateCalls.fetch_add(1,std::memory_order_relaxed);
  if(result!=VK_SUCCESS || !created){
   m823Stats.lazyFailures.fetch_add(1,std::memory_order_relaxed);
   static std::atomic<unsigned> failed{0};
@@ -2873,6 +2904,7 @@ static bool m823EnsureEyeFramebuffer(VkDevice device,VkFramebuffer original,int 
   }
  }
  if(!keep){d.destroyFramebuffer(device,created,alloc);return false;}
+ if(reusable)m834FramebufferCache.created(m833Id(created),std::move(reuseKey));
  m823Stats.lazyVariants.fetch_add(1,std::memory_order_relaxed);
  return true;
 }
