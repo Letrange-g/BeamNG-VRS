@@ -5,7 +5,7 @@ on:
       version:
         description: Package version (for example 0.1.0)
         required: true
-        default: 0.1.1-early.2
+        default: 0.1.1-early.3
       publish_release:
         description: Create a GitHub release from the tested ZIP
         type: boolean
@@ -36,7 +36,7 @@ jobs:
       - name: Build DLLs, run tests, and package
         shell: pwsh
         env:
-          PACKAGE_VERSION: ${{ inputs.version || '0.1.1-early.2' }}
+          PACKAGE_VERSION: ${{ inputs.version || '0.1.1-early.3' }}
         run: ./scripts/Build-Release.ps1 -Version $env:PACKAGE_VERSION
       - name: Measure CPU pattern construction
         shell: pwsh

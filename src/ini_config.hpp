@@ -91,7 +91,13 @@ inline void setting(Values& out, const std::string& section, const std::string& 
   out["BEAMNG_VRS_LOG_LEVEL"]=level=="off"?"-1":level=="errors"?"0":level=="debug"?"2":"1";
  }
  else if(id == "performance.turbomode") out["BEAMNG_VRS_TURBO_MODE"]=boolean(value);
- else if(id == "experimental.earlypasses") out["BEAMNG_VRS_EARLY_PASSES"]=choice(value,{"off","trace","on"});
+ else if(id == "experimental.earlypasses") {
+  // Public booleans match the other switches; preserve the first test builds'
+  // on/off spellings and the diagnostic-only trace mode. Internal modes stay stable.
+  const auto mode=choice(value,{"false","true","0","1","off","trace","on"});
+  out["BEAMNG_VRS_EARLY_PASSES"]=(mode=="true" || mode=="1")?"on":
+                                (mode=="false" || mode=="0")?"off":mode;
+ }
  else if(id == "foveation.shape") out["BEAMNG_VRS_SHAPE"] = choice(value, {"circle", "square", "ellipse"});
  else if(id == "foveation.size1x1" || id == "foveation.size2x2") {
   number(value, 0, 1);

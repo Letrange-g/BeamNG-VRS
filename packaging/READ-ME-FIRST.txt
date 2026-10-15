@@ -1,14 +1,15 @@
-EXPERIMENTAL BUILD: EARLIER-PASS VRS (0.1.1-early.2)
+EXPERIMENTAL BUILD: EARLIER-PASS VRS (0.1.1-early.3)
 
 Back up your old DLLs and INI before installing. Keep this test launcher too.
-In the root INI, under [Experimental], set EarlyPasses=on and restart.
-Allow 10 seconds in your scene. Compare against EarlyPasses=off with the same
+In the root INI, under [Experimental], set EarlyPasses=true and restart.
+Allow 10 seconds in your scene. Compare against EarlyPasses=false with the same
 sizes, resolution, Turbo and scissor settings; keep debug outlines off.
+Old on/off values still work; use true/false for normal editing.
 EarlyPasses=trace learns candidates without widening VRS (tracking overhead test).
 The default is off. A confirmed FPS improvement is not promised.
 
 This build reduces tracking overhead and reuses up to 64 idle VRS framebuffers.
-Reuse is active in off/trace/on; the early-pass inference still defaults to off.
+Reuse is active in false/trace/true; early-pass inference defaults to false.
 M8.34 reports framebuffer reuse and sampled CPU overhead (not GPU timings).
 
 With Logging Level=info, look in %TEMP%\BeamNG_VRS_layer.log for M8.33 EARLY_VRS.

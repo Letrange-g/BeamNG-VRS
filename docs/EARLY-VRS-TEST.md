@@ -8,7 +8,7 @@ has been established. It does not replace the public 0.1.0 release.
 
 Back up your existing DLLs and INI. Extract the test ZIP in the same location as
 your current installation. GitHub Actions downloads have an outer artifact ZIP;
-extract that first to find `BeamNG-VRS-0.1.1-early.2-windows-x64.zip`.
+extract that first to find `BeamNG-VRS-0.1.1-early.3-windows-x64.zip`.
 Use the matching test launcher because older launchers reject the new setting.
 Keep your usual sizes, shape, resolution, Turbo and scissor settings fixed.
 
@@ -16,7 +16,7 @@ In the root `BeamNG-VRS.ini`, add or edit:
 
 ```ini
 [Experimental]
-EarlyPasses=on
+EarlyPasses=true
 ```
 
 Restart BeamNG after each change. Run the same warmed-up stationary scene for
@@ -25,14 +25,19 @@ at least 10 seconds, with debug outlines off. Compare these three modes in the
 
 | Value | Purpose |
 | --- | --- |
-| `off` (default) | Existing VRS scope, without the new tracking hooks. |
+| `false` (default) | Existing VRS scope, without the new tracking hooks. |
 | `trace` | Discover candidate inputs, but keep the existing VRS scope. Helps isolate tracking overhead. |
-| `on` | Track candidates and extend VRS to candidates with repeated, unambiguous evidence. |
+| `true` | Track candidates and extend VRS to candidates with repeated, unambiguous evidence. |
+
+From `early.3`, use `true`/`false` like the other INI switches. The old `on`/`off`
+spellings remain accepted, as do `1`/`0`; values are case-insensitive. `trace` is
+an advanced diagnostic mode. Logs retain the internal `mode=on`/`mode=trace` names.
+Older DLLs and launchers reject `true`/`false` here: update both together.
 
 Keep `[Foveation] Enabled=true`. The experiment does nothing when VRS is disabled.
 Record GPU time and CPU/frame time, then turn your head and inspect each eye for
 shimmer, lighting changes, misplaced sharp regions or flicker. An inference can
-be wrong even when all Vulkan objects are valid. Restore `off` if appearance or
+be wrong even when all Vulkan objects are valid. Restore `false` if appearance or
 performance is worse. To return to 0.1.0, restore the old DLLs/launcher/INI together.
 
 The `early.2` build also reuses idle VRS framebuffers in **all three modes**.
@@ -61,7 +66,7 @@ Keep `[Logging] Level=info`. Every five seconds the Vulkan layer writes a brief
 - `descriptorScans` / `scanSkips`: actual descriptor inspections / repeated draws
   that avoided them (also includes already-ambiguous draws).
 
-If `selected` and `binds` remain zero in `on`, the experiment did not widen VRS
+If `selected` and `binds` remain zero in `true`, the experiment did not widen VRS
 coverage. That result does **not** demonstrate that earlier VRS cannot help;
 the discovery path may simply miss this renderer's command structure. Share the
 Vulkan layer log, mode, per-eye resolution and corresponding frame times.
@@ -89,9 +94,9 @@ sample, not necessarily the slowest actual call. Brief runs can have few samples
 Sample timing is disabled at logging levels below `info`.
 
 For a useful comparison, record CPU and GPU frame times in the same scene with
-`off`, `trace`, and `on`, and share the corresponding M8.33/M8.34 lines. Compare
+`false`, `trace`, and `true`, and share the corresponding M8.33/M8.34 lines. Compare
 counter differences over the same interval; logs append across launches. Check
-that `selected`/`binds` still rise in `on`: CPU savings must not come merely from
+that `selected`/`binds` still rise in `true`: CPU savings must not come merely from
 losing VRS coverage. No FPS gain is claimed without that headset comparison.
 
 ## Scope and limitations
@@ -123,7 +128,7 @@ reduces accidental matches but does not prove a pass is scene colour rather
 than an intermediate effect. That is why this remains opt-in and needs visual
 testing. It deliberately does not recursively spread VRS through the whole graph.
 
-The tracking adds CPU work in `trace` and `on`; compare both against `off`.
+The tracking adds CPU work in `trace` and `true`; compare both against `false`.
 Automatic tests cover graph scope, ambiguity, resource reuse, actual Vulkan hook
 forwarding and mode-dependent selection. They cannot establish driver/headset
 compatibility or performance. No GPU-timestamp instrumentation is included.

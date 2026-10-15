@@ -52,10 +52,10 @@ try {
         "[Debug]`nDrawOutline=1 ; inline comment", "[Debug", "DrawOutline=1", "# empty`n",
         '', "[Debug]`nDrawOutline="
     )) { $cases += @{ Text = $bad; Valid = $false } }
-    foreach ($mode in @('off', 'trace', 'ON')) {
+    foreach ($mode in @('false', 'true', 'FALSE', 'True', '0', '1', 'off', 'trace', 'ON')) {
         $cases += @{ Text = "[Experimental]`nEarlyPasses=$mode"; Valid = $true }
     }
-    $cases += @{ Text = "[Experimental]`nEarlyPasses=true"; Valid = $false }
+    $cases += @{ Text = "[Experimental]`nEarlyPasses=yes"; Valid = $false }
     $cases += @{ Text = "[Experimental]`nEarlyPasses=on`nearlypasses=off"; Valid = $false }
     $caseNumber = 0
     foreach ($case in $cases) {
