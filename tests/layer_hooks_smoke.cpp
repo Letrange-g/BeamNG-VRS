@@ -92,7 +92,9 @@ int main(int argc,char** argv){
  const auto pass=reinterpret_cast<VkRenderPass>(uintptr_t(5));
  DeviceDispatch d{};d.cmdBindPipeline=bind;d.cmdSetScissor=setScissor;d.cmdClearAttachments=clear;d.createPipelines=createPipelines;d.destroyPipeline=destroyPipeline;d.cmdBeginRenderPass=beginPass;d.cmdBeginRenderPass2=beginPass2;
  devices[device]=d;commandDevices[cmd]=device;
- if(!cropOnly){m89ActiveShadows[cmd]=pass;m89Variants[original]={device,replacement,pass};}
+ // Synthetic compatibility keys for the mock render passes below. Real pass
+ // creation/translation and mismatches are covered by vrs_compatibility_smoke.
+ if(!cropOnly){m89ActiveShadows[cmd]=pass;m89Variants[original]={device,replacement,pass,VK_NULL_HANDLE,{{1}}};m832ShadowSignatures[pass]={{1}};}
  const auto expectedBound=cropOnly?original:replacement;
  m87ActivePasses[cmd]=pass;
  vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,original);assert(bound==expectedBound);
@@ -140,6 +142,7 @@ int main(int argc,char** argv){
  // The replacement bound during a shadow pass must inherit the static crop.
  devices[device].vrsEnabled=true;devices[device].destroyPipeline=destroyPipeline;
  shadowPasses[pass]={device,reinterpret_cast<VkRenderPass>(uintptr_t(7))};
+ m832ShadowSignatures[shadowPasses[pass].shadow]={{1}};
  info.renderPass=pass;vp.pScissors=&rect;
  auto createsBefore=pipelineCreates;
  assert(vkCreateGraphicsPipelines(device,VK_NULL_HANDLE,1,&info,nullptr,&made)==VK_SUCCESS);
@@ -209,6 +212,7 @@ int main(int argc,char** argv){
   vkDestroyPipeline(device,made,nullptr);assert(!m830CropVariants.count(made));
   devices[device].vrsEnabled=true;
   const auto shadow=reinterpret_cast<VkRenderPass>(uintptr_t(207));shadowPasses[pass]={device,shadow};
+  m832ShadowSignatures[shadow]={{1}};
   createsBefore=pipelineCreates;
   assert(vkCreateGraphicsPipelines(device,VK_NULL_HANDLE,1,&info,nullptr,&made)==VK_SUCCESS);
   assert(pipelineCreates==createsBefore+6 && m89Variants.count(made));
