@@ -1,4 +1,6 @@
-# Performance work: M8.27–M8.31
+# Performance work: M8.27–M8.33
+
+For the opt-in earlier-pass experiment, see [EARLY-VRS-TEST.md](EARLY-VRS-TEST.md).
 
 ## VRS coverage investigation after 0.1.0
 

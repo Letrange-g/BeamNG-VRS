@@ -1,3 +1,19 @@
+EXPERIMENTAL BUILD: EARLIER-PASS VRS (0.1.1-early.1)
+
+Back up your old DLLs and INI before installing. Keep this test launcher too.
+In the root INI, under [Experimental], set EarlyPasses=on and restart.
+Allow 10 seconds in your scene. Compare against EarlyPasses=off with the same
+sizes, resolution, Turbo and scissor settings; keep debug outlines off.
+EarlyPasses=trace learns candidates without widening VRS (tracking overhead test).
+The default is off. A confirmed FPS improvement is not promised.
+
+With Logging Level=info, look in %TEMP%\BeamNG_VRS_layer.log for M8.33 EARLY_VRS.
+Both selected and binds must increase to confirm additional recorded VRS coverage.
+If they stay zero, send that log: this narrow experiment did not find a usable path.
+Check both eyes for flicker/incorrect shading. Restore off if anything is worse.
+For full instructions, see docs/EARLY-VRS-TEST.md on the experiment/early-vrs branch.
+This is separate from the public 0.1.0 release.
+
 BeamNG-VRS 0.1.0 - portable Windows x64
 
 INSTALL
