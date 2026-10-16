@@ -17,6 +17,8 @@ The release ZIP puts `BeamNG-VRS.ini` beside `Launch-BeamNG-VRS.cmd` at the extr
 | Scissor | `LeftEyeRight` | `0` | Left eye's nose-side/right edge (0 to 0.49). Beta.9+. |
 | Scissor | `RightEyeLeft` | `0` | Right eye's nose-side/left edge (0 to 0.49). Beta.9+. |
 | Scissor | `RightEyeRight` | `0.10` | Right eye's outer/right edge (0 to 0.49). Beta.9+. |
+| LensMask | `Enabled` | `false` | Skip rendering the image corners outside an ellipse, which the headset lenses hide. Experimental; check the edges in the headset. |
+| LensMask | `Size` | `1.15` | Kept ellipse diameter relative to eye-image width/height (0.5 to 1.5). `1.0` touches all four edges and skips about 21% of pixels; `1.41` skips none. Increase it if black corners are visible. |
 | Performance | `TurboMode` | `true` | Experimental one-frame OpenXR wait overlap. Enabled by default in 0.1.0. Restart to change. |
 | Logging | `Level` | `info` | `off`, `errors`, `info`, or `debug`. Default is brief status/errors, not verbose diagnostics. |
 | Tracking | `GracePeriodMs` | `30` | Hold the last valid gaze for this many milliseconds during temporary tracking loss (0 to 1000). |

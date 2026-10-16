@@ -80,6 +80,8 @@ inline Values defaults() {
  out["BEAMNG_VRS_SCISSOR_LEFT_EYE_LEFT"] = "0.10";
  out["BEAMNG_VRS_SCISSOR_RIGHT_EYE_RIGHT"] = "0.10";
  out["BEAMNG_VRS_M818_STENCIL"] = "0";
+ out["BEAMNG_VRS_LENS_MASK"] = "0";
+ out["BEAMNG_VRS_LENS_MASK_SIZE"] = "1.15";
  out["BEAMNG_VRS_LOG_LEVEL"] = "1";
  return out;
 }
@@ -92,6 +94,8 @@ inline void setting(Values& out, const std::string& section, const std::string& 
  }
  else if(id == "performance.turbomode") out["BEAMNG_VRS_TURBO_MODE"]=boolean(value);
  else if(id == "foveation.allpasses") out["BEAMNG_VRS_ALL_PASSES"]=boolean(value);
+ else if(id == "lensmask.enabled") out["BEAMNG_VRS_LENS_MASK"]=boolean(value);
+ else if(id == "lensmask.size") { number(value, 0.5, 1.5); out["BEAMNG_VRS_LENS_MASK_SIZE"] = value; }
  else if(id == "foveation.shape") out["BEAMNG_VRS_SHAPE"] = choice(value, {"circle", "square", "ellipse"});
  else if(id == "foveation.size1x1" || id == "foveation.size2x2") {
   number(value, 0, 1);
@@ -125,7 +129,7 @@ inline Values parse(std::istream& input) {
    if(line[0] == '[') {
     if(line.back() != ']') throw std::runtime_error("invalid section header");
     section = lower(trim(line.substr(1, line.size() - 2)));
-    if(section != "foveation" && section != "debug" && section != "scissor" && section != "tracking" && section != "performance" && section != "logging")
+    if(section != "foveation" && section != "debug" && section != "scissor" && section != "tracking" && section != "performance" && section != "logging" && section != "lensmask")
      throw std::runtime_error("unknown section");
     continue;
    }

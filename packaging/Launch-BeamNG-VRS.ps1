@@ -38,6 +38,7 @@ function Test-BeamNGIni {
         'scissor.righteyeright' = @(0, 0.49, $false)
         'tracking.graceperiodms' = @(0, 1000, $true)
         'tracking.gazerefreshms' = @(2, 50, $true)
+        'lensmask.size' = @(0.5, 1.5, $false)
     }
     foreach ($line in ($text -split "`n")) {
         ++$lineNumber
@@ -47,7 +48,7 @@ function Test-BeamNGIni {
             if ($line.StartsWith('[')) {
                 if (-not $line.EndsWith(']')) { throw 'invalid section header' }
                 $section = $line.Substring(1, $line.Length - 2).Trim($whitespace).ToLowerInvariant()
-                if (@('foveation', 'debug', 'scissor', 'tracking', 'performance', 'logging') -cnotcontains $section) { throw 'unknown section' }
+                if (@('foveation', 'debug', 'scissor', 'lensmask', 'tracking', 'performance', 'logging') -cnotcontains $section) { throw 'unknown section' }
                 continue
             }
             $equals = $line.IndexOf('=')
@@ -65,7 +66,7 @@ function Test-BeamNGIni {
                 if (@('circle', 'square', 'ellipse') -cnotcontains $value.ToLowerInvariant()) { throw 'unsupported setting value' }
             } elseif ($id -eq 'logging.level') {
                 if (@('off', 'errors', 'info', 'debug') -cnotcontains $value.ToLowerInvariant()) { throw 'unsupported setting value' }
-            } elseif ($id -eq 'debug.drawoutline' -or $id -eq 'scissor.enabled' -or $id -eq 'foveation.enabled' -or $id -eq 'foveation.allpasses' -or $id -eq 'performance.turbomode') {
+            } elseif ($id -eq 'debug.drawoutline' -or $id -eq 'scissor.enabled' -or $id -eq 'foveation.enabled' -or $id -eq 'foveation.allpasses' -or $id -eq 'lensmask.enabled' -or $id -eq 'performance.turbomode') {
                 if (@('0', '1', 'false', 'true') -cnotcontains $value.ToLowerInvariant()) { throw 'expected 0, 1, false or true' }
             } else { throw 'unknown section or setting' }
         } catch { throw "INI line ${lineNumber}: $($_.Exception.Message)" }

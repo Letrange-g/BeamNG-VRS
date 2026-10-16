@@ -14,6 +14,7 @@
 #include "m825_gaze_hold.hpp"
 #include "gaze_freshness.hpp"
 #include "scissor_crop.hpp"
+#include "lens_mask.hpp"
 #include <windows.h>
 #include <cmath>
 #include <cstdlib>
@@ -115,9 +116,18 @@ std::unordered_map<VkCommandBuffer, VkDevice> commandDevices;
 // remain tied to the render pass that began recording, not to later frame order.
 struct CropState { bool active=false; uint32_t width=0,height=0; VkRect2D renderArea{}; uint32_t subpass=0; int eye=-1; };
 std::unordered_map<VkCommandBuffer,CropState> cropStates;
+// M8.34: eye final passes whose lens corners are cleared to black at the end.
+std::unordered_map<VkCommandBuffer,VkExtent2D> m834BlackPasses; // guarded by mu
 bool settingFlag(const char* name){char v[8]{};return beamng_config::read(name,v,sizeof(v)) && strcmp(v,"1")==0;}
 bool cropEnabled(){static const bool on=settingFlag("BEAMNG_VRS_SCISSOR_ENABLE");return on;}
 bool outlineEnabled(){static const bool on=settingFlag("BEAMNG_VRS_DEBUG_OUTLINE");return on;}
+bool lensMaskEnabled(){static const bool on=settingFlag("BEAMNG_VRS_LENS_MASK");return on;}
+double lensMaskSize(){static const double size=[](){
+ char v[32]{};const DWORD n=beamng_config::read("BEAMNG_VRS_LENS_MASK_SIZE",v,sizeof(v));
+ if(!n || n>=sizeof(v))return 1.15;
+ char* end=nullptr;const double value=strtod(v,&end);
+ return end!=v && !*end && std::isfinite(value) && value>=beamng_lens::minSize &&
+   value<=beamng_lens::maxSize ? value : 1.15;}();return size;}
 // Read at process startup (restart BeamNG to apply new crop settings).
 // Fractions of eye height for top/bottom, eye width for left/right.
 double cropFraction(const char* key, double fallback) {
@@ -192,7 +202,9 @@ struct M74dAttachmentSet { std::vector<VkImageView> views; VkRenderPass pass; };
 std::unordered_map<VkFramebuffer, M74dAttachmentSet> m74dAttachments;
 std::unordered_set<VkFramebuffer> m74dReported;
 
-struct PassInfo { uint32_t attachments, subpasses, colors, samples; bool hasDepth, eligible; };
+struct PassInfo { uint32_t attachments, subpasses, colors, samples; bool hasDepth, eligible;
+ // M8.34: depth attachment cleared at pass begin, used to stamp the lens mask.
+ uint32_t depthIndex=VK_ATTACHMENT_UNUSED; bool depthCleared=false; };
 std::unordered_map<VkRenderPass, PassInfo> passInfos;
 // M8.8: compatibility signature of legacy VkRenderPassCreateInfo.
 // This is deliberately more exact than comparing VkRenderPass handles or
@@ -553,7 +565,7 @@ int m817MessageLevel(const char* msg) {
  if(strstr(msg,"FAILED") || strstr(msg,"ERROR") || strstr(msg,"WARNING") ||
     strstr(msg,"FATAL") || strstr(msg,"VkResult=-") || strstr(msg,"result=-")) return 0;
  if(strstr(msg,"M8.17") || strstr(msg,"M8.18") || strstr(msg,"M8.21 ") || strstr(msg,"M8.23 ") || strstr(msg,"M8.24 ") || strstr(msg,"M8.25 ") || strstr(msg,"M8.27 ") || strstr(msg,"M8.28 ") ||
-    strstr(msg,"M8.32 ") || strstr(msg,"M8.33 ") || strstr(msg,"M8.14 AUTO_RESOLUTION") ||
+    strstr(msg,"M8.32 ") || strstr(msg,"M8.33 ") || strstr(msg,"M8.34 ") || strstr(msg,"M8.14 AUTO_RESOLUTION") ||
     strstr(msg,"M8.14 RESOURCE_") || strstr(msg,"M8.16 EYE_FB_STATS") ||
     strstr(msg,"M8.16 UNUSED_VRS") || strstr(msg,"M8.15 STATS") ||
     strstr(msg,"M3 VRS enabled") || strstr(msg,"M4.2 GPU:") ||
@@ -1771,7 +1783,7 @@ bool m814Target(uint32_t& w,uint32_t& h){
 // Resolve it during object creation, never by guessing from a desktop target
 // and never by allocating VRS resources or waiting for the GPU.
 void m831RefreshCropTarget(){
- if(m8Enabled() || !cropEnabled())return;
+ if(m8Enabled() || !(cropEnabled() || lensMaskEnabled()))return;
  uint32_t w=0,h=0;
  if(!m814Target(w,h))return;
  std::lock_guard<std::mutex> guard(mu);
@@ -2186,6 +2198,11 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateRenderPass(
    }
    p.samples = singleSample ? 1 : 0;
    p.eligible = sp.colorAttachmentCount > 0 && singleSample;
+   if (p.hasDepth && sp.pDepthStencilAttachment->attachment < ci->attachmentCount) {
+    const auto& att = ci->pAttachments[sp.pDepthStencilAttachment->attachment];
+    p.depthIndex = sp.pDepthStencilAttachment->attachment;
+    p.depthCleared = att.loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR && att.format != VK_FORMAT_S8_UINT;
+   }
   }
   // Shadow creation is opt-in and never changes BeamNG's original handles.
   // Vulkan render-pass VRS requires VkRenderPassFragmentDensityMapCreateInfoEXT? No:
@@ -2617,7 +2634,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkFreeCommandBuffers(
  auto d = lookupDevice(device);
  if (buffers) {
   std::lock_guard<std::mutex> guard(mu);
-  for (uint32_t i=0; i<count; ++i) commandDevices.erase(buffers[i]);
+  for (uint32_t i=0; i<count; ++i) {commandDevices.erase(buffers[i]);m834BlackPasses.erase(buffers[i]);}
  }
  if (d.freeCommandBuffers) d.freeCommandBuffers(device, pool, count, buffers);
 }
@@ -3133,6 +3150,89 @@ void m830StartCrop(VkCommandBuffer cmd,const VkRenderPassBeginInfo* info,bool in
     !p->second.colors || p->second.subpasses!=1)return;
  cropStates[cmd]={true,f->second.width,f->second.height,info->renderArea,0,m830FramebufferEye(info->framebuffer)};
 }
+// M8.34: lens-corner mask. Eye-sized passes that clear depth get the corners
+// outside the lens ellipse stamped with the nearest depth, so depth-tested
+// geometry there fails before shading. The eye's final image (the one copied
+// to OpenXR) gets those corners cleared to black at the end of its pass.
+struct M834Stats { std::atomic<uint64_t> stamped{0}, blackened{0}, unknownClear{0}; };
+M834Stats m834Stats;
+// Rectangles are computed once per eye size and never modified afterwards.
+const std::vector<VkClearRect>& m834Rects(uint32_t width,uint32_t height){
+ static std::mutex cacheMutex;
+ static std::map<uint64_t,std::vector<VkClearRect>> cache;
+ std::lock_guard<std::mutex> lock(cacheMutex);
+ auto [it,inserted]=cache.try_emplace(m814Key(width,height));
+ if(inserted)for(const auto& r:beamng_lens::outside(width,height,lensMaskSize()))
+  it->second.push_back({{{int32_t(r.x),int32_t(r.y)},{r.width,r.height}},0,1});
+ return it->second;
+}
+void m834Report(){
+ const auto n=m834Stats.stamped.load(std::memory_order_relaxed);
+ if(n!=1 && n%8192)return;
+ char msg[220]{};
+ sprintf_s(msg,"M8.34 LENS_MASK size=%.3f depthStamped=%llu finalBlackened=%llu unknownDepthClear=%llu",
+   lensMaskSize(),(unsigned long long)n,
+   (unsigned long long)m834Stats.blackened.load(std::memory_order_relaxed),
+   (unsigned long long)m834Stats.unknownClear.load(std::memory_order_relaxed));
+ log(msg);
+}
+void m834BeginPass(VkCommandBuffer cmd,const VkRenderPassBeginInfo* info,bool inlinePass,const DeviceDispatch& d){
+ if(!lensMaskEnabled() || !info || !d.cmdClearAttachments)return;
+ uint32_t width=0,height=0;
+ bool stamp=false;
+ float nearDepth=0.f;
+ {
+  std::lock_guard<std::mutex> guard(mu);
+  m834BlackPasses.erase(cmd);
+  if(!inlinePass)return;
+  const auto f=framebuffers.find(info->framebuffer);
+  const auto p=passInfos.find(info->renderPass);
+  if(f==framebuffers.end() || p==passInfos.end() || f->second.layers!=1 ||
+     f->second.width!=m813Width() || f->second.height!=m813Height() || p->second.subpasses!=1)return;
+  // Clear rectangles must lie inside the render area.
+  const auto& area=info->renderArea;
+  if(area.offset.x || area.offset.y || area.extent.width!=f->second.width ||
+     area.extent.height!=f->second.height)return;
+  width=f->second.width;height=f->second.height;
+  if(p->second.depthCleared && info->pClearValues && p->second.depthIndex<info->clearValueCount){
+   // Reversed depth clears to 0 (far) and keeps greater values; standard
+   // depth clears to 1. Either way the opposite value is nearest.
+   const float clear=info->pClearValues[p->second.depthIndex].depthStencil.depth;
+   if(clear==0.f){nearDepth=1.f;stamp=true;}
+   else if(clear==1.f){nearDepth=0.f;stamp=true;}
+   else m834Stats.unknownClear.fetch_add(1,std::memory_order_relaxed);
+  }
+  if(p->second.colors && m830FramebufferEye(info->framebuffer)>=0)
+   m834BlackPasses[cmd]={width,height};
+ }
+ if(!stamp)return;
+ const auto& rects=m834Rects(width,height);
+ if(rects.empty())return;
+ VkClearAttachment depth{};
+ depth.aspectMask=VK_IMAGE_ASPECT_DEPTH_BIT;
+ depth.clearValue.depthStencil.depth=nearDepth;
+ d.cmdClearAttachments(cmd,1,&depth,uint32_t(rects.size()),rects.data());
+ m834Stats.stamped.fetch_add(1,std::memory_order_relaxed);
+ m834Report();
+}
+void m834BlackCorners(VkCommandBuffer cmd,const DeviceDispatch& d){
+ if(!lensMaskEnabled())return;
+ VkExtent2D size{};
+ {
+  std::lock_guard<std::mutex> guard(mu);
+  const auto it=m834BlackPasses.find(cmd);
+  if(it==m834BlackPasses.end())return;
+  size=it->second;m834BlackPasses.erase(it);
+ }
+ if(!d.cmdClearAttachments)return;
+ const auto& rects=m834Rects(size.width,size.height);
+ if(rects.empty())return;
+ VkClearAttachment color{};
+ color.aspectMask=VK_IMAGE_ASPECT_COLOR_BIT;color.colorAttachment=0;
+ color.clearValue.color.float32[3]=1.f;
+ d.cmdClearAttachments(cmd,1,&color,uint32_t(rects.size()),rects.data());
+ m834Stats.blackened.fetch_add(1,std::memory_order_relaxed);
+}
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdBeginRenderPass(
  VkCommandBuffer cmd, const VkRenderPassBeginInfo* info, VkSubpassContents contents) {
@@ -3159,6 +3259,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdBeginRenderPass(
  if(contents==VK_SUBPASS_CONTENTS_INLINE)m818BeginStencil(cmd,info,useShadow,d);
  m81StartOutline(cmd, info);
  m830StartCrop(cmd,info,contents==VK_SUBPASS_CONTENTS_INLINE);
+ m834BeginPass(cmd,info,contents==VK_SUBPASS_CONTENTS_INLINE,d);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdBeginRenderPass2(
  VkCommandBuffer cmd, const VkRenderPassBeginInfo* info, const VkSubpassBeginInfo* begin) {
@@ -3185,6 +3286,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdBeginRenderPass2(
   m818BeginStencil(cmd,info,useShadow,d);
  m81StartOutline(cmd, info);
  m830StartCrop(cmd,info,begin && begin->contents==VK_SUBPASS_CONTENTS_INLINE);
+ m834BeginPass(cmd,info,begin && begin->contents==VK_SUBPASS_CONTENTS_INLINE,d);
 }
 
 
@@ -3379,19 +3481,19 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyPipeline(VkDevice device,VkPipeli
 extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdEndRenderPass(VkCommandBuffer cmd) {
  {std::lock_guard<std::mutex> guard(mu);m87ActivePasses.erase(cmd);m87PassBindCounts.erase(cmd);m89ActiveShadows.erase(cmd);
   m818MaskedCommands.erase(cmd);m818SelectedEye.erase(cmd);}
- auto d=lookupCommand(cmd); m81DrawOutline(cmd,d); cropBlackBars(cmd,d); if(d.cmdEndRenderPass) d.cmdEndRenderPass(cmd);
+ auto d=lookupCommand(cmd); m81DrawOutline(cmd,d); cropBlackBars(cmd,d); m834BlackCorners(cmd,d); if(d.cmdEndRenderPass) d.cmdEndRenderPass(cmd);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdEndRenderPass2(VkCommandBuffer cmd,const VkSubpassEndInfo* end) {
  {std::lock_guard<std::mutex> guard(mu);m87ActivePasses.erase(cmd);m87PassBindCounts.erase(cmd);m89ActiveShadows.erase(cmd);
   m818MaskedCommands.erase(cmd);m818SelectedEye.erase(cmd);}
- auto d=lookupCommand(cmd); m81DrawOutline(cmd,d); cropBlackBars(cmd,d); if(d.cmdEndRenderPass2) d.cmdEndRenderPass2(cmd,end);
+ auto d=lookupCommand(cmd); m81DrawOutline(cmd,d); cropBlackBars(cmd,d); m834BlackCorners(cmd,d); if(d.cmdEndRenderPass2) d.cmdEndRenderPass2(cmd,end);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdNextSubpass(VkCommandBuffer cmd,VkSubpassContents contents) {
- auto d=lookupCommand(cmd); {std::lock_guard<std::mutex> guard(mu); cropStates.erase(cmd);m81OutlinePasses.erase(cmd);}
+ auto d=lookupCommand(cmd); {std::lock_guard<std::mutex> guard(mu); cropStates.erase(cmd);m81OutlinePasses.erase(cmd);m834BlackPasses.erase(cmd);}
  if(d.cmdNextSubpass) d.cmdNextSubpass(cmd,contents);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdNextSubpass2(VkCommandBuffer cmd,const VkSubpassBeginInfo* begin,const VkSubpassEndInfo* end) {
- auto d=lookupCommand(cmd); {std::lock_guard<std::mutex> guard(mu); cropStates.erase(cmd);m81OutlinePasses.erase(cmd);}
+ auto d=lookupCommand(cmd); {std::lock_guard<std::mutex> guard(mu); cropStates.erase(cmd);m81OutlinePasses.erase(cmd);m834BlackPasses.erase(cmd);}
  if(d.cmdNextSubpass2) d.cmdNextSubpass2(cmd,begin,end);
 }
 

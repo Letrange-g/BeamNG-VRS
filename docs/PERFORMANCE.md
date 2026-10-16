@@ -48,6 +48,30 @@ VRS and, for the rest, the reason: `msaa`, `depthOnly`, `multiSubpass`,
 Sizes that are not the eye size (for example half-resolution effects) are never
 foveated yet; their begin counts show whether that would be worth adding.
 
+## Lens-corner mask (M8.34)
+
+`[LensMask] Enabled=true` skips the image corners outside an ellipse centered
+in each eye image (`Size` = ellipse diameter relative to image width/height).
+Pimax runtimes returned no OpenXR visibility mask, so the ellipse is a manual
+approximation. At `Size=1.0` it skips about 21% of each eye's pixels.
+
+At the start of every eye-sized, single-subpass pass that clears its depth
+attachment, the layer clears the outside rectangles of depth to the nearest
+value (1 for reversed depth that clears to 0, 0 for standard depth that clears
+to 1; other clear values are left alone and counted). Depth-tested geometry
+there then fails before shading, colour writes and blending. Passes without
+depth testing, such as full-screen lighting and post-processing, still run in
+the corners, but VRS already shades those areas at 4x4. The eye's final pass,
+the one copied to OpenXR, clears the same rectangles to black, so the headset
+never shows leftover corner content. Effects that sample neighbouring depth
+(ambient occlusion, reflections) can darken a thin band at the mask edge; it
+sits at the lens edge, so increase `Size` if it is visible.
+
+The info log reports `M8.34 LENS_MASK size=… depthStamped=… finalBlackened=…
+unknownDepthClear=…`. `depthStamped` should grow by several per frame; if it
+stays at zero the game's scene passes do not clear depth at pass begin and the
+mask only blackens the final image.
+
 ## Implemented changes
 
 - **Pattern generation:** each row intersects a circle, square or ellipse in a

@@ -27,6 +27,7 @@ try {
         @{ Text = "[Foveation]`nEnabled=TRUE`n[Scissor]`nEnabled=0`n[Performance]`nTurboMode=0"; Valid = $true },
         @{ Text = "[Performance]`nTurboMode=1"; Valid = $true },
         @{ Text = "[Foveation]`nAllPasses=false"; Valid = $true },
+        @{ Text = "[LensMask]`nEnabled=true`nSize=1.05"; Valid = $true },
         @{ Text = "[Logging]`nLevel=off"; Valid = $true },
         @{ Text = "[Logging]`nLevel=errors"; Valid = $true },
         @{ Text = "[Logging]`nLevel=INFO"; Valid = $true },
@@ -37,7 +38,7 @@ try {
     )
     foreach ($bad in @(
         "[Logging]`nLevel=verbose", "[Logging]`nLevel=off`nlevel=info", "[Performance]`nTurboMode=yes", "[Performance]`nTurboMode=true`nturbomode=false",
-        "[Foveation]`nAllPasses=yes", "[Foveation]`nEnabled=2", "[Foveation]`nEnabled=true`nenabled=false", "[Foveation]`nTypo=1", "[other]`nEnabled=1", "[Debug]`nDrawOutline=1`ndrawoutline=0",
+        "[Foveation]`nAllPasses=yes", "[LensMask]`nSize=1.6", "[LensMask]`nSize=0.4", "[LensMask]`nEnabled=on", "[Foveation]`nEnabled=2", "[Foveation]`nEnabled=true`nenabled=false", "[Foveation]`nTypo=1", "[other]`nEnabled=1", "[Debug]`nDrawOutline=1`ndrawoutline=0",
         "[Debug]`nDrawOutline=1`n[DEBUG]`nDrawOutline=0", "[Foveation]`nSize1x1=nan",
         "[Foveation]`nSize1x1=Infinity", "[Foveation]`nSize1x1=1.2", "[Foveation]`nSize1x1=-1",
         "[Foveation]`nSize1x1=0.7`nSize2x2=0.5", "[Foveation]`nSize1x1=0.7",
