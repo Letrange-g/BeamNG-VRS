@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <array>
 #include <map>
+#include <list>
+#include <iterator>
 #include <memory>
 #include <set>
 #include <string>
@@ -66,11 +68,21 @@ struct BoundSets {
 };
 class Resources {
  struct Descriptor {ViewPtr view;VkDescriptorType type{};};
- struct Set {uint64_t pool=0;bool partial=false;std::map<std::pair<uint32_t,uint32_t>,Descriptor> slots;};
+ struct Set {
+  uint64_t pool=0;bool partial=false;
+  std::map<std::pair<uint32_t,uint32_t>,Descriptor> slots;
+  std::list<Key>::iterator recent;
+ };
  struct Pass {uint32_t color=VK_ATTACHMENT_UNUSED,depth=VK_ATTACHMENT_UNUSED;bool partial=false;};
  struct Framebuffer {std::vector<ViewPtr> views;bool partial=false;};
  struct Transfer {ImagePtr src,dst;std::string op;uint64_t count=0;uint32_t regions=0;};
  uint64_t next_=1,revision_=1,dropped_=0;
+ struct Counters {
+  uint64_t imageDrops=0,viewDrops=0,passDrops=0,framebufferDrops=0,slotDrops=0,transferDrops=0;
+  uint64_t setEvictions=0,setRecoveries=0,setMisses=0,unknownUpdates=0,missingViews=0;
+ } counters_;
+ size_t setCapacity_;
+ std::list<Key> recentSets_;
  std::map<Key,ImagePtr> images_;
  std::map<Key,ViewPtr> views_;
  std::map<Key,Set> sets_;
@@ -90,7 +102,7 @@ class Resources {
  ImagePtr image(VkDevice d,VkImage i) {
   if(!i)return {};
   Key k{d,handle(i)};auto p=images_.find(k);if(p!=images_.end())return p->second;
-  if(images_.size()>=32768){++dropped_;return {};}
+  if(images_.size()>=32768){++dropped_;++counters_.imageDrops;return {};}
   auto v=std::make_shared<Image>();v->id=next_++;images_[k]=v;return v;
  }
  ViewPtr view(VkDevice d,VkImageView v)const {
@@ -99,9 +111,32 @@ class Resources {
  template<class Map> static void eraseDevice(Map& values,VkDevice d) {
   for(auto i=values.begin();i!=values.end();)if(i->first.first==d)i=values.erase(i);else ++i;
  }
+ using SetIterator=std::map<Key,Set>::iterator;
+ SetIterator eraseSet(SetIterator it) {
+  recentSets_.erase(it->second.recent);return sets_.erase(it);
+ }
+ void eraseSet(const Key& key){auto it=sets_.find(key);if(it!=sets_.end())eraseSet(it);}
+ void touch(SetIterator it){recentSets_.splice(recentSets_.end(),recentSets_,it->second.recent);}
+ SetIterator ensureSet(const Key& key,bool recovering) {
+  auto it=sets_.find(key);if(it!=sets_.end()){touch(it);return it;}
+  // The old cache stopped accepting new sets when full. BeamNG can retain more
+  // sets than this across loading and gameplay, starving final-eye observations.
+  // Evict the least recently observed entry; never increase the memory bound.
+  if(sets_.size()>=setCapacity_){eraseSet(recentSets_.front());++counters_.setEvictions;++dropped_;}
+  recentSets_.push_back(key);it=sets_.try_emplace(key).first;it->second.recent=std::prev(recentSets_.end());
+  if(recovering){it->second.partial=true;++counters_.setRecoveries;}
+  return it;
+ }
 public:
+ // Small capacities are useful for churn tests; production keeps at most 16K.
+ explicit Resources(size_t setCapacity=16384):setCapacity_(std::clamp<size_t>(setCapacity,1,16384)){}
+ Resources(const Resources&)=delete;
+ Resources& operator=(const Resources&)=delete;
  uint64_t revision()const{return revision_;}
  uint64_t dropped()const{return dropped_;}
+ auto counters()const{return counters_;}
+ size_t setCount()const{return sets_.size();}
+ size_t setCapacity()const{return setCapacity_;}
  void createImage(VkDevice d,VkImage i,const VkImageCreateInfo& info) {
   images_.erase({d,handle(i)});auto p=image(d,i);if(!p)return;
   p->width=info.extent.width;p->height=info.extent.height;p->format=info.format;p->usage=info.usage;
@@ -110,14 +145,14 @@ public:
  void destroyImage(VkDevice d,VkImage i){images_.erase({d,handle(i)});++revision_;}
  void createView(VkDevice d,VkImageView v,const VkImageViewCreateInfo& info) {
   Key k{d,handle(v)};views_.erase(k);
-  if(views_.size()>=65536){++dropped_;return;}
+  if(views_.size()>=65536){++dropped_;++counters_.viewDrops;return;}
   auto p=std::make_shared<View>();p->id=next_++;p->image=image(d,info.image);
   p->range=info.subresourceRange;p->format=info.format;p->type=info.viewType;p->partial=info.pNext!=nullptr;
   views_[k]=p;
  }
  void destroyView(VkDevice d,VkImageView v){views_.erase({d,handle(v)});++revision_;}
  template<class Info> void pass(VkDevice d,VkRenderPass p,const Info& info) {
-  Key k{d,handle(p)};passes_.erase(k);if(passes_.size()>=8192){++dropped_;return;}
+  Key k{d,handle(p)};passes_.erase(k);if(passes_.size()>=8192){++dropped_;++counters_.passDrops;return;}
   Pass value;value.partial=info.pNext || info.subpassCount!=1 || !info.pSubpasses;
   if(info.subpassCount && info.pSubpasses){const auto& s=info.pSubpasses[0];
    if(s.colorAttachmentCount && s.pColorAttachments)value.color=s.pColorAttachments[0].attachment;
@@ -129,7 +164,7 @@ public:
  void forgetPass(VkDevice d,VkRenderPass p){passes_.erase({d,handle(p)});}
  void framebuffer(VkDevice d,VkFramebuffer f,const VkFramebufferCreateInfo& info) {
   Key k{d,handle(f)};framebuffers_.erase(k);
-  if(framebuffers_.size()>=16384){++dropped_;return;}
+  if(framebuffers_.size()>=16384){++dropped_;++counters_.framebufferDrops;return;}
   Framebuffer value;value.partial=info.pNext || (info.flags&VK_FRAMEBUFFER_CREATE_IMAGELESS_BIT) || info.attachmentCount>16;
   if(!(info.flags&VK_FRAMEBUFFER_CREATE_IMAGELESS_BIT) && info.pAttachments)
    for(uint32_t n=0;n<std::min(16u,info.attachmentCount);++n)value.views.push_back(view(d,info.pAttachments[n]));
@@ -151,44 +186,55 @@ public:
  }
  void allocateSets(VkDevice d,const VkDescriptorSetAllocateInfo& info,const VkDescriptorSet* values) {
   ++revision_;if(!values)return;
-  for(uint32_t n=0;n<info.descriptorSetCount;++n){Key k{d,handle(values[n])};sets_.erase(k);
-   if(sets_.size()>=16384){++dropped_;continue;}
-   sets_[k]={handle(info.descriptorPool),info.pNext!=nullptr,{}};
+  for(uint32_t n=0;n<info.descriptorSetCount;++n){Key k{d,handle(values[n])};eraseSet(k);
+   auto it=ensureSet(k,false);it->second.pool=handle(info.descriptorPool);it->second.partial=info.pNext!=nullptr;
   }
  }
  void freeSets(VkDevice d,uint32_t count,const VkDescriptorSet* values) {
-  ++revision_;for(uint32_t n=0;values && n<count;++n)sets_.erase({d,handle(values[n])});
+  ++revision_;for(uint32_t n=0;values && n<count;++n)eraseSet({d,handle(values[n])});
  }
  void resetPool(VkDevice d,VkDescriptorPool pool) {
-  ++revision_;for(auto i=sets_.begin();i!=sets_.end();)if(i->first.first==d && i->second.pool==handle(pool))i=sets_.erase(i);else ++i;
+  // Recovered sets have unknown pool ownership. Discard them on ANY reset in
+  // that device; retaining them could confuse a later reused descriptor handle.
+  ++revision_;for(auto i=sets_.begin();i!=sets_.end();)if(i->first.first==d && (!i->second.pool || i->second.pool==handle(pool)))i=eraseSet(i);else ++i;
  }
  void unknown(VkDevice d,VkDescriptorSet value) {
-  ++revision_;auto p=sets_.find({d,handle(value)});if(p!=sets_.end()){p->second.partial=true;p->second.slots.clear();}
+  ++revision_;++counters_.unknownUpdates;auto p=ensureSet({d,handle(value)},true);p->second.partial=true;p->second.slots.clear();
  }
  void update(VkDevice d,uint32_t count,const VkWriteDescriptorSet* writes,uint32_t copies,const VkCopyDescriptorSet* copy) {
   ++revision_;
-  for(uint32_t n=0;writes && n<count;++n){const auto& w=writes[n];auto dst=sets_.find({d,handle(w.dstSet)});if(dst==sets_.end())continue;
+  for(uint32_t n=0;writes && n<count;++n){const auto& w=writes[n];
    if(w.pNext || w.descriptorType==VK_DESCRIPTOR_TYPE_MUTABLE_EXT){unknown(d,w.dstSet);continue;}
    if(!imageType(w.descriptorType))continue;
    // Multi-element writes can spill over layout bindings. Never invent edges.
    if(w.descriptorCount!=1 || !w.pImageInfo){unknown(d,w.dstSet);continue;}
    auto key=std::make_pair(w.dstBinding,w.dstArrayElement);
-   if(dst->second.slots.size()>=128 && !dst->second.slots.count(key)){dst->second.partial=true;++dropped_;continue;}
-   dst->second.slots[key]={view(d,w.pImageInfo[0].imageView),w.descriptorType};
+   auto v=view(d,w.pImageInfo[0].imageView);
+   // Ordinary material textures must not consume the 128 candidate-image slots.
+   // Erase a previous target at that slot if the descriptor is overwritten.
+   if(!candidate(v)){auto dst=sets_.find({d,handle(w.dstSet)});if(dst!=sets_.end()){dst->second.slots.erase(key);touch(dst);}continue;}
+   if(!v)++counters_.missingViews;
+   auto dst=ensureSet({d,handle(w.dstSet)},true);
+   if(dst->second.slots.size()>=128 && !dst->second.slots.count(key)){dst->second.partial=true;++dropped_;++counters_.slotDrops;continue;}
+   dst->second.slots[key]={v,w.descriptorType};
   }
-  for(uint32_t n=0;copy && n<copies;++n){const auto& c=copy[n];auto src=sets_.find({d,handle(c.srcSet)});auto dst=sets_.find({d,handle(c.dstSet)});
-   if(dst==sets_.end())continue;
-   if(c.pNext || c.descriptorCount!=1 || src==sets_.end() || src->second.partial){unknown(d,c.dstSet);continue;}
-   auto key=std::make_pair(c.dstBinding,c.dstArrayElement);auto from=src->second.slots.find({c.srcBinding,c.srcArrayElement});
-   if(from==src->second.slots.end()){dst->second.slots.erase(key);continue;}
-   if(dst->second.slots.size()>=128 && !dst->second.slots.count(key)){dst->second.partial=true;++dropped_;continue;}
-   dst->second.slots[key]=from->second;
+  for(uint32_t n=0;copy && n<copies;++n){const auto& c=copy[n];
+   if(c.pNext || c.descriptorCount!=1){unknown(d,c.dstSet);continue;}
+   // Snapshot BEFORE inserting the destination: at capacity that insertion may
+   // evict the source. A known slot remains useful even if other slots are lost.
+   Descriptor value{};bool found=false,partial=true;auto src=sets_.find({d,handle(c.srcSet)});
+   if(src!=sets_.end()){touch(src);partial=src->second.partial;auto from=src->second.slots.find({c.srcBinding,c.srcArrayElement});
+    if(from!=src->second.slots.end()){value=from->second;found=true;}}
+   auto dst=ensureSet({d,handle(c.dstSet)},true);auto key=std::make_pair(c.dstBinding,c.dstArrayElement);dst->second.partial|=partial;
+   if(!found){dst->second.slots.erase(key);continue;}
+   if(dst->second.slots.size()>=128 && !dst->second.slots.count(key)){dst->second.partial=true;++dropped_;++counters_.slotDrops;continue;}
+   dst->second.slots[key]=value;
   }
  }
- void collect(VkDevice d,const BoundSets& bound,Uses& out)const {
+ void collect(VkDevice d,const BoundSets& bound,Uses& out) {
   out.partial|=bound.partial;
   for(auto id:bound.sets)if(id){auto s=sets_.find({d,handle(id)});
-   if(s==sets_.end()){out.partial=true;continue;}out.partial|=s->second.partial;
+   if(s==sets_.end()){out.partial=true;++counters_.setMisses;continue;}touch(s);out.partial|=s->second.partial;
    for(const auto& [slot,entry]:s->second.slots)if(candidate(entry.view)){
     auto& list=entry.type==VK_DESCRIPTOR_TYPE_STORAGE_IMAGE?out.storage:out.reads;
     Uses::add(list,entry.view,out.partial);
@@ -205,7 +251,7 @@ public:
   constexpr uint32_t mask=VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT|VK_IMAGE_USAGE_STORAGE_BIT;
   if(s->described && t->described && !(s->usage&mask) && !(t->usage&mask))return;
   auto key=std::make_tuple(s->id,t->id,std::string(op),regions);
-  if(transfers_.size()>=256 && !transfers_.count(key)){++dropped_;return;}
+  if(transfers_.size()>=256 && !transfers_.count(key)){++dropped_;++counters_.transferDrops;return;}
   auto& edge=transfers_[key];edge.src=s;edge.dst=t;edge.op=op;edge.regions=regions;++edge.count;
  }
  template<class Emit> void reportTransfers(Emit emit) {
@@ -213,7 +259,9 @@ public:
   transfers_.clear();
  }
  void destroyDevice(VkDevice d) {
-  eraseDevice(images_,d);eraseDevice(views_,d);eraseDevice(sets_,d);eraseDevice(passes_,d);eraseDevice(framebuffers_,d);++revision_;
+  eraseDevice(images_,d);eraseDevice(views_,d);
+  for(auto i=sets_.begin();i!=sets_.end();)if(i->first.first==d)i=eraseSet(i);else ++i;
+  eraseDevice(passes_,d);eraseDevice(framebuffers_,d);++revision_;
  }
 };
 }

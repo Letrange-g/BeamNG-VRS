@@ -3,7 +3,53 @@
 #include <iostream>
 using namespace beamng_trace;
 template<class T>T h(uintptr_t n){return reinterpret_cast<T>(n);}
+void descriptorChurn(){
+ const auto device=h<VkDevice>(1);const auto image=h<VkImage>(2);const auto view=h<VkImageView>(3);
+ VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};ci.extent={100,80,1};ci.usage=VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+ VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};vi.image=image;
+ VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};ai.descriptorSetCount=1;ai.descriptorPool=h<VkDescriptorPool>(4);
+ VkDescriptorImageInfo ii{};ii.imageView=view;
+ VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};w.descriptorCount=1;w.descriptorType=VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;w.pImageInfo=&ii;
+ auto prepare=[&](Resources& r){r.createImage(device,image,ci);r.createView(device,view,vi);};
+ auto allocate=[&](Resources& r,VkDescriptorSet s){r.allocateSets(device,ai,&s);w.dstSet=s;w.dstBinding=0;r.update(device,1,&w,0,nullptr);};
+ auto observe=[&](Resources& r,VkDescriptorSet s){Uses u;BoundSets b;b.bind(h<VkPipelineLayout>(5),0,1,&s);r.collect(device,b,u);return u;};
+ // Reproduce the actual 16K stop-accepting-new-sets defect, not just a tiny cache.
+ Resources production;prepare(production);
+ for(unsigned n=0;n<20000;++n){auto s=h<VkDescriptorSet>(100+n);allocate(production,s);
+  if(n%1000==0 || n==19999){auto u=observe(production,s);assert(u.reads.size()==1 && !u.partial);}
+  assert(production.setCount()<=production.setCapacity());
+ }
+ assert(production.setCount()==16384 && production.counters().setEvictions==20000-16384);
+ production.resetPool(device,ai.descriptorPool);assert(production.setCount()==0);
+ // Sampling a long-lived set keeps it ahead of unused loading-time sets.
+ Resources small(3);prepare(small);auto hot=h<VkDescriptorSet>(10),cold=h<VkDescriptorSet>(11),third=h<VkDescriptorSet>(12),newest=h<VkDescriptorSet>(13);
+ allocate(small,hot);allocate(small,cold);allocate(small,third);assert(observe(small,hot).reads.size()==1);
+ allocate(small,newest);assert(observe(small,cold).partial && observe(small,hot).reads.size()==1);
+ // Recover known new writes to an evicted set. Other bindings and its owning
+ // pool are unknown, so the partial flag remains and any pool reset removes it.
+ w.dstSet=cold;small.update(device,1,&w,0,nullptr);auto recovered=observe(small,cold);
+ assert(recovered.reads.size()==1 && recovered.partial && small.counters().setRecoveries==1);
+ small.resetPool(device,h<VkDescriptorPool>(99));assert(observe(small,cold).reads.empty());assert(observe(small,hot).reads.size()==1);
+ small.freeSets(device,1,&hot);small.allocateSets(device,ai,&hot);auto reused=observe(small,hot);
+ assert(reused.reads.empty() && !reused.partial); // New handle generation never inherits old slots.
+ // Copy insertion can evict its source; the copied value must already be owned.
+ Resources one(1);prepare(one);allocate(one,hot);VkCopyDescriptorSet cp{VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET};cp.srcSet=hot;cp.dstSet=cold;cp.descriptorCount=1;
+ one.update(device,0,nullptr,1,&cp);auto copied=observe(one,cold);assert(copied.reads.size()==1 && copied.partial && one.setCount()==1);
+ // A known slot in a partial source is still useful; preserve it with the flag.
+ cp.srcSet=cold;cp.dstSet=third;one.update(device,0,nullptr,1,&cp);assert(observe(one,third).reads.size()==1 && observe(one,third).partial);
+ one.destroyDevice(device);assert(one.setCount()==0);prepare(one);allocate(one,hot);assert(observe(one,hot).reads.size()==1);
+ // Hundreds of material texture descriptors cannot starve one final-eye input.
+ Resources materials;prepare(materials);auto texture=ci;texture.usage=VK_IMAGE_USAGE_SAMPLED_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+ auto textureImage=h<VkImage>(14);auto textureView=h<VkImageView>(15);materials.createImage(device,textureImage,texture);vi.image=textureImage;materials.createView(device,textureView,vi);
+ materials.allocateSets(device,ai,&hot);w.dstSet=hot;ii.imageView=textureView;
+ for(unsigned n=0;n<300;++n){w.dstBinding=n;materials.update(device,1,&w,0,nullptr);}
+ w.dstBinding=999;ii.imageView=view;materials.update(device,1,&w,0,nullptr);auto target=observe(materials,hot);
+ assert(target.reads.size()==1 && !target.partial && materials.counters().slotDrops==0);
+ // Replacing that candidate with a material clears the previously recorded edge.
+ ii.imageView=textureView;materials.update(device,1,&w,0,nullptr);assert(observe(materials,hot).reads.empty());
+}
 int main(){
+ descriptorChurn();
  Resources r;auto d=h<VkDevice>(1),other=h<VkDevice>(2);
  auto image=h<VkImage>(3);auto view=h<VkImageView>(4);auto set=h<VkDescriptorSet>(5);auto pool=h<VkDescriptorPool>(6);
  VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};ci.extent={3892,3126,1};ci.format=VK_FORMAT_R16G16B16A16_UNORM;
@@ -62,5 +108,5 @@ int main(){
  r.reportTransfers([&](const auto&,const auto&,const auto&,auto,auto){assert(false);});
  r.destroyDevice(d);Uses gone;r.collect(d,bound,gone);assert(gone.partial);
  Uses retained;r.collect(other,bound,retained);assert(retained.reads.size()==1 && !retained.partial);
- std::cout<<"GPU resource generations, device isolation, descriptors, targets, caps and transfers passed\n";
+ std::cout<<"GPU resource generations, descriptor churn/recovery, device isolation, targets, caps and transfers passed\n";
 }

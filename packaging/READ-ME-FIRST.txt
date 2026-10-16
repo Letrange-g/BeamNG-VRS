@@ -1,4 +1,5 @@
-GPU PASS + RESOURCE LINKS TEST (0.1.1-profile.2)
+GPU PASS + RESOURCE LINKS TEST (0.1.1-profile.3)
+This build fixes the diagnostic descriptor-cache limit from profile.2.
 Back up DLLs, launcher and INI together. Extract this ZIP beside Bin64.
 In BeamNG-VRS.ini set:
 [Experimental]

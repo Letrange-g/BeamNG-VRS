@@ -8,7 +8,7 @@ normal-play performance upgrade. Public 0.1.0 is unchanged.
 ## Capture one stationary scene
 
 Back up your current DLLs, launcher and INI together. Download the test artifact,
-extract its outer ZIP, then install `BeamNG-VRS-0.1.1-profile.2-windows-x64.zip`.
+extract its outer ZIP, then install `BeamNG-VRS-0.1.1-profile.3-windows-x64.zip`.
 Use the matching launcher; older launchers reject the new setting.
 
 ```ini
@@ -105,6 +105,37 @@ sets/framebuffers, 128 image slots per set, 8 bound sets per bind point, 32 cand
 read and 32 storage views per sample/group, and 256 transfer groups per report.
 `GPU_LINKS` reports omitted groups and cumulative resource-table drops. A capped
 or unsupported path must not be interpreted as absence of an image dependency.
+
+## Descriptor cache fix in profile.3
+
+A profile.2 capture reached 551,892 resource-tracking drops while GPU timestamps
+continued working. Most final-eye groups had missing descriptor inputs. The
+aggregate counter did not identify which table was full, so this build adds
+separate capacity and coverage counters in `M8.36 GPU_TRACKER`.
+
+The previous 16,384-set table stopped accepting new allocations once full, then
+ignored updates for those missing sets. The table now evicts the least recently
+observed set and keeps accepting new ones at the same memory bound. New writes
+to an evicted set recover the known slots, with `partial=1` for missing history.
+Recovered sets have unknown pool ownership and are conservatively invalidated on
+any descriptor-pool reset/destruction in that device. Allocation, free and handle
+reuse never inherit a previous set's contents.
+
+Ordinary material textures are filtered before consuming the 128 candidate-image
+slots per set. Replacing a target descriptor with a material texture erases the
+old candidate edge. Unsupported array/template writes still remain partial.
+
+`GPU_TRACKER` reports current set count/capacity; cumulative set evictions,
+recoveries and sampled set misses; separate image/view/pass/framebuffer/slot/
+transfer capacity drops; and unknown updates/missing view definitions. Evictions
+count in `resourceDrops` but are **not dropped game frames or GPU commands**.
+Low current misses and actual recorded final-eye input links matter more than
+requiring the cumulative eviction count to stay zero.
+
+Tests cover 20,000 descriptor allocations with the production 16,384-set bound,
+retention of recently sampled sets, recovery and pool invalidation, single-entry
+cache copies, handle reuse, device cleanup, and material textures that previously
+could consume candidate slots. No additional rendering pass receives VRS.
 
 ## Measurement and lifetime limits
 
