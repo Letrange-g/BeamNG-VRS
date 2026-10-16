@@ -101,6 +101,10 @@ void exercise(bool baseline){
   VkImage image{};assert(vkCreateImage(device,&info,nullptr,&image)==VK_SUCCESS);return image;
  };
  const auto depth=makeImage(VK_FORMAT_D24_UNORM_S8_UINT,true);
+ // Final eye composition uses a different depth image in the captured game.
+ // Reusing the scene depth here would correctly invalidate the preceding
+ // UNORM/SFLOAT association when that unrelated eye pass writes depth.
+ const auto eyeDepth=makeImage(VK_FORMAT_D24_UNORM_S8_UINT,true);
  const auto unorm=makeImage(VK_FORMAT_R16G16B16A16_UNORM),scene=makeImage(VK_FORMAT_R16G16B16A16_SFLOAT);
  const VkImage outputs[]={makeImage(VK_FORMAT_R8G8B8A8_UNORM),makeImage(VK_FORMAT_R8G8B8A8_UNORM)};
  assert(m838UnormImages.count(unorm) && !m837SceneImages.count(unorm));
@@ -112,6 +116,7 @@ void exercise(bool baseline){
   VkImageView view{};assert(vkCreateImageView(device,&info,nullptr,&view)==VK_SUCCESS);return view;
  };
  const auto depthView=makeView(depth,VK_FORMAT_D24_UNORM_S8_UINT,true);
+ const auto eyeDepthView=makeView(eyeDepth,VK_FORMAT_D24_UNORM_S8_UINT,true);
  const auto unormView=makeView(unorm,VK_FORMAT_R16G16B16A16_UNORM),sceneView=makeView(scene,VK_FORMAT_R16G16B16A16_SFLOAT);
  const VkImageView outputViews[]={makeView(outputs[0],VK_FORMAT_R8G8B8A8_UNORM),makeView(outputs[1],VK_FORMAT_R8G8B8A8_UNORM)};
  auto makePass=[&](VkFormat format){
@@ -130,16 +135,16 @@ void exercise(bool baseline){
  const auto unormPass=makePass(VK_FORMAT_R16G16B16A16_UNORM),scenePass=makePass(VK_FORMAT_R16G16B16A16_SFLOAT),eyePass=makePass(VK_FORMAT_R8G8B8A8_UNORM);
  assert(m838UnormPasses.count(unormPass) && !m838UnormPasses.count(scenePass) && !m838UnormPasses.count(eyePass));
  assert(m838DepthSlots.at(unormPass)==1 && m838DepthSlots.at(scenePass)==1);
- auto makeFramebuffer=[&](VkRenderPass pass,VkImageView color){
-  const auto fb=handle<VkFramebuffer>(nextHandle++);framebuffers[fb]={100,80,1,2};m74dAttachments[fb]={{color,depthView},pass};
+ auto makeFramebuffer=[&](VkRenderPass pass,VkImageView color,VkImageView depthAttachment){
+  const auto fb=handle<VkFramebuffer>(nextHandle++);framebuffers[fb]={100,80,1,2};m74dAttachments[fb]={{color,depthAttachment},pass};
   // Even when all shadow alternatives exist, the UNORM stage must stay on the
   // original pass and framebuffer. SharedScene=false also keeps SFLOAT original.
   shadowFramebuffers[fb]={device,handle<VkFramebuffer>(nextHandle++)};
   m83EyeFramebuffers[fb]={device,{handle<VkFramebuffer>(nextHandle++),handle<VkFramebuffer>(nextHandle++),handle<VkFramebuffer>(nextHandle++)}};
   return fb;
  };
- const auto unormFb=makeFramebuffer(unormPass,unormView),sceneFb=makeFramebuffer(scenePass,sceneView);
- const VkFramebuffer eyeFbs[]={makeFramebuffer(eyePass,outputViews[0]),makeFramebuffer(eyePass,outputViews[1])};
+ const auto unormFb=makeFramebuffer(unormPass,unormView,depthView),sceneFb=makeFramebuffer(scenePass,sceneView,depthView);
+ const VkFramebuffer eyeFbs[]={makeFramebuffer(eyePass,outputViews[0],eyeDepthView),makeFramebuffer(eyePass,outputViews[1],eyeDepthView)};
  m75Sources[outputs[0]]=0;m75Sources[outputs[1]]=1;
 
  VkPipelineShaderStageCreateInfo stages[2]={{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO},{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO}};
