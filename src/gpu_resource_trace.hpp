@@ -143,6 +143,8 @@ public:
   auto get=[&](uint32_t slot)->ViewPtr{
    if(slot==VK_ATTACHMENT_UNUSED)return {};
    if(slot>=f->second.views.size() || !f->second.views[slot]){out.partial=true;return {};}
+   const auto& v=f->second.views[slot];
+   if(v->partial || !v->image || !v->image->described)out.partial=true;
    return f->second.views[slot];
   };
   out.color=get(p->second.color);out.depth=get(p->second.depth);return out;

@@ -49,6 +49,8 @@ int main(){
  VkRenderPassCreateInfo rp{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};rp.subpassCount=1;rp.pSubpasses=&sub;r.pass(d,pass,rp);
  std::array<VkImageView,2> attachments{depth,view};VkFramebufferCreateInfo fi{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};fi.attachmentCount=2;fi.pAttachments=attachments.data();r.framebuffer(d,fb,fi);
  auto targets=r.targets(d,pass,fb);assert(!targets.partial && targets.color->id==fresh.reads[0]->id && targets.depth->range.baseMipLevel==2 && targets.depth->range.baseArrayLayer==1);
+ VkImageViewUsageCreateInfo extra{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};vi.pNext=&extra;
+ r.createView(d,depth,vi);r.framebuffer(d,fb,fi);assert(r.targets(d,pass,fb).partial);vi.pNext=nullptr;
  r.forgetFramebuffer(d,fb);assert(r.targets(d,pass,fb).partial);assert(targets.depth->image); // Sample owns its lifetime snapshot.
  fi.flags=VK_FRAMEBUFFER_CREATE_IMAGELESS_BIT;r.framebuffer(d,fb,fi);assert(r.targets(d,pass,fb).partial);
  // Bound sizes produce explicit incompleteness, not unbounded per-draw data.

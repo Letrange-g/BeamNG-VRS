@@ -135,7 +135,7 @@ class Profiler {
      if(!e.complete || !data[2*i][1] || !data[2*i+1][1] || !elapsed(data[2*i][0],data[2*i+1][0],r.bits,dev.period,ms)){++unavailable_;continue;}
      if(summary_.size()>=512 && !summary_.count(e.meta)){++dropped_;continue;}
      auto& s=summary_[e.meta];s.total+=ms;s.maximum=std::max(s.maximum,ms);++s.count;s.draws+=e.draws;s.vrsDraws+=e.vrsDraws;
-     s.targets=e.targets;s.uses.merge(e.uses);++completed_;
+     s.targets=e.targets;s.uses.merge(e.uses);s.uses.partial|=e.targets.partial;++completed_;
     }
    }else ++failures_;
   }
