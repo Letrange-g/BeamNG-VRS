@@ -101,9 +101,13 @@ void depthWriteTests(){
   }
  }
  {
-  for(Id queue:{100u,999u}){
+  for(bool color:{false,true})for(Id queue:{999u,100u}){
    UnormFixture f;f.confirmUnorm();f.t.beginPass(1,40,-1,80,false,70,true);assert(f.t.prepareUnorm(1,103));f.t.pipeline(1,101);
-   f.t.resetCommand(2,true);for(unsigned n=0;n<257;++n)f.t.depthWrite(2,n==0?70:71);
+   f.t.resetCommand(2,true);
+   for(unsigned n=0;n<257;++n){
+    if(color){f.t.beginPass(2,20,-1,90,false,n==0?70:71);f.t.draw(2);f.t.endPass(2,103);}
+    else f.t.depthWrite(2,n==0?70:71);
+   }
    f.t.submitted(queue,{2},103);
    assert(f.t.stats.eventDrops==1 && !f.t.readyUnorm(40,80,70,103) && !f.t.allowUnormPipeline(1,101,103));
   }

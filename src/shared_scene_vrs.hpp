@@ -76,9 +76,12 @@ class Tracker {
  std::unordered_map<Id,UnormProducer> unormWriters_;
  std::unordered_map<Id,Id> pendingUnorm_;
  std::unordered_map<Id,Writer> writers_;
+ static bool depthWriteEvent(const Event& e){
+  return e.kind==Event::DepthWrite || (e.kind==Event::Write && e.depth && !e.unorm && !e.scenePass);
+ }
  void append(Command& c,Event event){
   if(event.heavy || event.kind==Event::Read)c.relevant=true;
-  if(event.kind==Event::DepthWrite)c.depthWrites=true;
+  if(depthWriteEvent(event))c.depthWrites=true;
   if(c.overflow)return;
   if(c.events.size()>=MaxEvents){c.events.clear();c.overflow=true;++stats.eventDrops;return;}
   c.events.push_back(std::move(event));
@@ -364,8 +367,7 @@ public:
    if(queue_ && queue!=queue_){
     if(c->second.overflow && c->second.depthWrites && hasUnormAssociation()){relevant=true;break;}
     for(const auto& e:c->second.events){
-     const bool depthOnly=e.kind==Event::DepthWrite || (e.kind==Event::Write && e.depth && !e.unorm && !e.scenePass);
-     if(depthOnly && liveDepth(e.depth,e.depthGeneration) && participatingDepth(e.depth)){relevant=true;break;}
+     if(depthWriteEvent(e) && liveDepth(e.depth,e.depthGeneration) && participatingDepth(e.depth)){relevant=true;break;}
     }
     if(relevant)break;
    }
