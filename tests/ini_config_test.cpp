@@ -8,6 +8,31 @@ int main() {
  using namespace beamng_config;
  assert(beamng_config::defaults().at("BEAMNG_VRS_EARLY_PASSES")=="off");
  assert(beamng_config::defaults().at("BEAMNG_VRS_PROFILE_GPU")=="0");
+ assert(beamng_config::defaults().at("BEAMNG_VRS_SHARED_SCENE")=="0");
+ for(const auto& [value,expected] : {std::pair{"true","1"}, {"TRUE","1"}, {"1","1"},
+                                    {"false","0"}, {"False","0"}, {"0","0"}}){
+  std::istringstream input(std::string("[eXperimental]\nSharedSceneVRS=")+value);
+  assert(parse(input).at("BEAMNG_VRS_SHARED_SCENE")==expected);
+ }
+ // Validate the final settings together, independent of section/key order.
+ for(const char* text : {
+     "[Experimental]\nSharedSceneVRS=true\nEarlyPasses=false\nProfileGPU=false\n[Foveation]\nEnabled=true",
+     "[Foveation]\nEnabled=1\n[Experimental]\nEarlyPasses=OFF\nSharedSceneVRS=1",
+     "[Experimental]\nSharedSceneVRS=true\nEarlyPasses=0"}) {
+  std::istringstream input(text);
+  assert(parse(input).at("BEAMNG_VRS_SHARED_SCENE")=="1");
+ }
+ for(const auto& [text,message] : {
+     std::pair{"[Experimental]\nSharedSceneVRS=true\nEarlyPasses=true", "SharedSceneVRS=true requires EarlyPasses=false"},
+     {"[Experimental]\nEarlyPasses=on\nSharedSceneVRS=true", "SharedSceneVRS=true requires EarlyPasses=false"},
+     {"[Experimental]\nEarlyPasses=trace\nSharedSceneVRS=true", "SharedSceneVRS=true requires EarlyPasses=false"},
+     {"[Experimental]\nSharedSceneVRS=true\n[Foveation]\nEnabled=false", "SharedSceneVRS=true requires [Foveation] Enabled=true"},
+     {"[Foveation]\nEnabled=0\n[Experimental]\nSharedSceneVRS=true", "SharedSceneVRS=true requires [Foveation] Enabled=true"}}) {
+  bool rejected=false;
+  try { std::istringstream input(text); (void)parse(input); }
+  catch(const std::runtime_error& error) { rejected=true; assert(error.what()==std::string(message)); }
+  assert(rejected);
+ }
  std::istringstream profile("[Experimental]\nProfileGPU=TRUE\nEarlyPasses=false");
  assert(parse(profile).at("BEAMNG_VRS_PROFILE_GPU")=="1");
  for(const char* mode:{"off","trace","on"}){
@@ -23,6 +48,9 @@ int main() {
  std::ifstream shipped("packaging/BeamNG-VRS.ini", std::ios::binary);
  assert(shipped);
  const auto defaults = parse(shipped);
+ assert(defaults.at("BEAMNG_VRS_SHARED_SCENE")=="0");
+ assert(defaults.at("BEAMNG_VRS_PROFILE_GPU")=="0");
+ assert(defaults.at("BEAMNG_VRS_EARLY_PASSES")=="off");
  assert(defaults.at("BEAMNG_VRS_ENABLE_FEATURES") == "1");
  assert(defaults.at("BEAMNG_VRS_M89_STATIC_TEST") == "1");
  assert(defaults.at("BEAMNG_VRS_M812_LIVE_GAZE") == "1");
@@ -111,7 +139,8 @@ int main() {
  assert(values.at("BEAMNG_VRS_SCISSOR_BOTTOM") == "0.3");
  assert(values.at("BEAMNG_VRS_SHAPE") == "square");
  assert(values.at("BEAMNG_VRS_GAZE_GRACE_MS") == "30");
- for(const char* bad : {"[Experimental]\nProfileGPU=trace", "[Experimental]\nEarlyPasses=yes", "[Experimental]\nEarlyPasses=on\nearlypasses=off","[Logging]\nLevel=verbose", "[Logging]\nLevel=off\nlevel=info", "[Performance]\nTurboMode=yes", "[Performance]\nTurboMode=true\nturbomode=false",
+ for(const char* bad : {"[Experimental]\nSharedSceneVRS=on", "[Experimental]\nSharedSceneVRS=2", "[Experimental]\nSharedSceneVRS=true\nsharedscenevrs=false",
+     "[Experimental]\nProfileGPU=trace", "[Experimental]\nEarlyPasses=yes", "[Experimental]\nEarlyPasses=on\nearlypasses=off","[Logging]\nLevel=verbose", "[Logging]\nLevel=off\nlevel=info", "[Performance]\nTurboMode=yes", "[Performance]\nTurboMode=true\nturbomode=false",
      "[Foveation]\nEnabled=2", "[Foveation]\nEnabled=true\nenabled=false", "[Foveation]\nTypo=1", "[other]\nEnabled=1", "[Debug]\nDrawOutline=1\ndrawoutline=0",
      "[Foveation]\nSize1x1=nan", "[Foveation]\nSize1x1=1.2", "[Foveation]\nSize1x1=-1",
      "[Foveation]\nSize1x1=0.7\nSize2x2=0.5", "[Foveation]\nSize1x1=0,25",
