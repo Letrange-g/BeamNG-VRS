@@ -59,6 +59,24 @@ try {
     $cases += @{ Text = "[Experimental]`nEarlyPasses=on`nearlypasses=off"; Valid = $false }
     $cases += @{ Text = "[Experimental]`nProfileGPU=TRUE`nEarlyPasses=false"; Valid = $true }
     $cases += @{ Text = "[Experimental]`nProfileGPU=trace"; Valid = $false }
+    foreach ($mode in @('false', 'true', 'FALSE', 'True', '0', '1')) {
+        $cases += @{ Text = "[ExPeRiMeNtAl]`nShArEdScEnEvRs=$mode"; Valid = $true }
+    }
+    foreach ($mode in @('false', '0', 'OFF')) {
+        $cases += @{ Text = "[Experimental]`nSharedSceneVRS=true`nEarlyPasses=$mode`nProfileGPU=false`n[Foveation]`nEnabled=true"; Valid = $true }
+    }
+    foreach ($mode in @('true', '1', 'ON', 'trace')) {
+        $cases += @{ Text = "[Experimental]`nSharedSceneVRS=true`nEarlyPasses=$mode"; Valid = $false }
+        $cases += @{ Text = "[Experimental]`nEarlyPasses=$mode`nSharedSceneVRS=true"; Valid = $false }
+    }
+    foreach ($mode in @('false', '0')) {
+        $cases += @{ Text = "[Experimental]`nSharedSceneVRS=true`n[Foveation]`nEnabled=$mode"; Valid = $false }
+        $cases += @{ Text = "[Foveation]`nEnabled=$mode`n[Experimental]`nSharedSceneVRS=true"; Valid = $false }
+    }
+    $cases += @{ Text = "[Experimental]`nSharedSceneVRS=false`nEarlyPasses=true"; Valid = $true }
+    $cases += @{ Text = "[Foveation]`nEnabled=false`n[Experimental]`nSharedSceneVRS=false"; Valid = $true }
+    $cases += @{ Text = "[Experimental]`nSharedSceneVRS=on"; Valid = $false }
+    $cases += @{ Text = "[Experimental]`nSharedSceneVRS=true`nsharedscenevrs=false"; Valid = $false }
     $caseNumber = 0
     foreach ($case in $cases) {
         ++$caseNumber

@@ -1,28 +1,35 @@
-GPU PASS + RESOURCE LINKS TEST (0.1.1-profile.3)
-This build fixes the diagnostic descriptor-cache limit from profile.2.
+SHARED SCENE VRS TEST (0.1.1-shared.1)
+This experiment applies a fixed, centered VRS pattern to learned earlier scene
+color targets that can be reused by both eyes. Final-eye VRS still follows gaze.
+There is no promised performance gain. Test both headset views for artifacts.
 Back up DLLs, launcher and INI together. Extract this ZIP beside Bin64.
+
+COMPARE OFF / ON
+Use your usual VRS, scissor and Turbo settings in both runs. Keep outlines off.
 In BeamNG-VRS.ini set:
+[Foveation]
+Enabled=true
 [Experimental]
 EarlyPasses=false
-ProfileGPU=true
+SharedSceneVRS=false
+ProfileGPU=false
 [Logging]
 Level=info
 
-Rename the previous %TEMP%\BeamNG_VRS_layer.log before starting for a clean capture.
-Start Launch-BeamNG-VRS.cmd (not Diagnose). Load your usual scene, wait until
-loading settles, then stay in the same view for 60 seconds. Exit normally and
-compress the full %TEMP%\BeamNG_VRS_layer.log as ZIP or 7z. Keep normal VRS enabled and
-debug outlines off. GPU profiling adds overhead: this is not an FPS benchmark.
-Set ProfileGPU=false and restart for normal play.
+Start Launch-BeamNG-VRS.cmd (not Diagnose), load the same scene and stationary
+view, then wait at least 10 seconds after loading before observing GPU frame
+time for 60 seconds. Exit, change only SharedSceneVRS=true, restart and repeat.
+Compare headset appearance and GPU frame time, not just FPS at the headset cap.
+Try a second off run to check whether loading or background work changed results.
 
-Graphics passes and compute dispatches are sampled. Query results are read
-without waiting, when the game resets/frees command buffers. Dynamic rendering,
-protected/simultaneous-use recording and some newer draw APIs are not covered.
-M8.36 entries connect sampled passes to color/depth targets and bound image
-descriptors, including compute storage images. These are candidate connections,
-not proof of shader access or left/right eye identity. No rendering quality or
-pass-selection change is made by ProfileGPU itself.
-See docs/GPU-PROFILING.md in the repository for interpretation and limitations.
+The experiment learns targets during play. In %TEMP%\BeamNG_VRS_layer.log,
+M8.37 reports selected targets and binds: binds above zero show the test reached
+an earlier pass. Missing coverage is not evidence that earlier VRS cannot help.
+Keep both logs for comparison; rename the previous log before starting each run.
+ProfileGPU stays false for these performance comparisons.
+If either eye flickers, loses detail in the center or looks wrong, restore
+SharedSceneVRS=false and restart. EarlyPasses cannot be combined with this test.
+See docs/SHARED-SCENE-VRS.md in the repository for details and limitations.
 
 INSTALL
 1. Close BeamNG.
@@ -36,6 +43,7 @@ INSTALL
 SETTINGS
 Open BeamNG-VRS/VRS-SETTINGS.png for a visual explanation.
 [Foveation] Enabled=false disables VRS while leaving scissor/turbo available.
+Set SharedSceneVRS=false first if you enabled the shared-scene experiment.
 The default Shape=circle uses diameters relative to eye-image height.
 Size1x1=0.25 sets the sharp circle's diameter to 25% of eye height.
 Size2x2=0.60 sets the medium-quality region's outer diameter to 60%.

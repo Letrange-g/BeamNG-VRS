@@ -24,6 +24,7 @@ function Test-BeamNGIni {
     if ($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) { $text = $text.Substring(1) }
     $whitespace = [char[]]" `t`r`n"
     $section = ''; $lineNumber = 0; $seen = @{}
+    $foveationEnabled = $true; $sharedSceneVrs = $false; $earlyPasses = 'off'
     $sizes = @{'foveation.size1x1' = 0.25; 'foveation.size2x2' = 0.60}
     $ranges = @{
         'foveation.size1x1' = @(0, 1, $false)
@@ -65,14 +66,21 @@ function Test-BeamNGIni {
                 if (@('circle', 'square', 'ellipse') -cnotcontains $value.ToLowerInvariant()) { throw 'unsupported setting value' }
             } elseif ($id -eq 'experimental.earlypasses') {
                 if (@('false', 'true', '0', '1', 'off', 'trace', 'on') -cnotcontains $value.ToLowerInvariant()) { throw 'expected true or false (advanced: trace; legacy: on/off)' }
+                $earlyPasses = $value.ToLowerInvariant()
             } elseif ($id -eq 'logging.level') {
                 if (@('off', 'errors', 'info', 'debug') -cnotcontains $value.ToLowerInvariant()) { throw 'unsupported setting value' }
-            } elseif ($id -eq 'debug.drawoutline' -or $id -eq 'scissor.enabled' -or $id -eq 'foveation.enabled' -or $id -eq 'performance.turbomode' -or $id -eq 'experimental.profilegpu') {
+            } elseif ($id -eq 'debug.drawoutline' -or $id -eq 'scissor.enabled' -or $id -eq 'foveation.enabled' -or $id -eq 'performance.turbomode' -or $id -eq 'experimental.profilegpu' -or $id -eq 'experimental.sharedscenevrs') {
                 if (@('0', '1', 'false', 'true') -cnotcontains $value.ToLowerInvariant()) { throw 'expected 0, 1, false or true' }
+                if ($id -eq 'foveation.enabled') { $foveationEnabled = @('1', 'true') -ccontains $value.ToLowerInvariant() }
+                if ($id -eq 'experimental.sharedscenevrs') { $sharedSceneVrs = @('1', 'true') -ccontains $value.ToLowerInvariant() }
             } else { throw 'unknown section or setting' }
         } catch { throw "INI line ${lineNumber}: $($_.Exception.Message)" }
     }
     if ($seen.Count -eq 0) { throw 'INI contains no settings' }
+    if ($sharedSceneVrs) {
+        if (@('false', '0', 'off') -cnotcontains $earlyPasses) { throw 'SharedSceneVRS=true requires EarlyPasses=false' }
+        if (-not $foveationEnabled) { throw 'SharedSceneVRS=true requires [Foveation] Enabled=true' }
+    }
     if ($sizes['foveation.size1x1'] -gt $sizes['foveation.size2x2']) { throw 'Size1x1 must not exceed Size2x2' }
     Write-Output 'BeamNG-VRS.ini is valid.'
 }

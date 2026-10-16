@@ -99,6 +99,16 @@ try {
     Test-LaunchLayout -Layers $layers
     Set-Content -LiteralPath $ini -Value "[Foveation]`nEnabled=false`n[Scissor]`nEnabled=true`n[Performance]`nTurboMode=true`n[Logging]`nLevel=off" -Encoding UTF8
     Test-LaunchLayout -Layers $layers
+    Set-Content -LiteralPath $ini -Value "[Foveation]`nEnabled=true`n[Experimental]`nSharedSceneVRS=true`nEarlyPasses=false`nProfileGPU=false" -Encoding UTF8
+    Test-LaunchLayout -Layers $layers
+    foreach ($invalid in @(
+        "[Experimental]`nSharedSceneVRS=true`nEarlyPasses=true",
+        "[Experimental]`nSharedSceneVRS=true`n[Foveation]`nEnabled=false")) {
+        Set-Content -LiteralPath $ini -Value $invalid -Encoding UTF8
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher
+        if ($LASTEXITCODE -eq 0 -or (Test-Path -LiteralPath $result)) { throw 'Conflicting shared-scene options started the game.' }
+    }
+    Copy-Item -LiteralPath (Join-Path $source 'packaging/BeamNG-VRS.ini') -Destination $ini -Force
     # The public launcher must not silently edit/use an obsolete nested INI.
     Move-Item -LiteralPath $ini -Destination $layers
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -CheckOnly
