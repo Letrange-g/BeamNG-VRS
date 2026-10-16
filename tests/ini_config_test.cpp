@@ -9,6 +9,8 @@ int main() {
  assert(beamng_config::defaults().at("BEAMNG_VRS_EARLY_PASSES")=="off");
  assert(beamng_config::defaults().at("BEAMNG_VRS_PROFILE_GPU")=="0");
  assert(beamng_config::defaults().at("BEAMNG_VRS_SHARED_SCENE")=="0");
+ assert(beamng_config::defaults().at("BEAMNG_VRS_UNORM_SCENE")=="0");
+ assert(beamng_config::defaults().at("BEAMNG_VRS_COMPARE_UNORM")=="0");
  for(const auto& [value,expected] : {std::pair{"true","1"}, {"TRUE","1"}, {"1","1"},
                                     {"false","0"}, {"False","0"}, {"0","0"}}){
   std::istringstream input(std::string("[eXperimental]\nSharedSceneVRS=")+value);
@@ -33,6 +35,39 @@ int main() {
   catch(const std::runtime_error& error) { rejected=true; assert(error.what()==std::string(message)); }
   assert(rejected);
  }
+ for(const auto& [name,flag] : {std::pair{"UnormSceneVRS", "BEAMNG_VRS_UNORM_SCENE"},
+                                {"CompareUnormVRS", "BEAMNG_VRS_COMPARE_UNORM"}}) {
+  for(const auto& [value,expected] : {std::pair{"true","1"}, {"TRUE","1"}, {"1","1"},
+                                     {"false","0"}, {"False","0"}, {"0","0"}}) {
+   const auto required = std::string_view(name)=="CompareUnormVRS" ? "\nUnormSceneVRS=true" : "";
+   std::istringstream input(std::string("[eXperimental]\n")+name+"="+value+required);
+   const auto values=parse(input);
+   assert(values.at(flag)==expected);
+   assert(values.at("BEAMNG_VRS_PROFILE_GPU")=="0"); // Runtime owns focused comparison timing.
+   assert(values.at("BEAMNG_VRS_SHARED_SCENE")=="0"); // UNORM does not enable SFLOAT shading.
+  }
+ }
+ for(const char* text : {
+     "[Experimental]\nUnormSceneVRS=true\nSharedSceneVRS=false\nEarlyPasses=false\nProfileGPU=false",
+     "[Foveation]\nEnabled=1\n[Experimental]\nEarlyPasses=OFF\nUnormSceneVRS=1\nCompareUnormVRS=true",
+     "[Experimental]\nCompareUnormVRS=true\nSharedSceneVRS=true\nUnormSceneVRS=true\nEarlyPasses=0"}) {
+  std::istringstream input(text);
+  assert(parse(input).at("BEAMNG_VRS_UNORM_SCENE")=="1");
+ }
+ for(const auto& [text,message] : {
+     std::pair{"[Experimental]\nUnormSceneVRS=true\nEarlyPasses=true", "UnormSceneVRS=true requires EarlyPasses=false"},
+     {"[Experimental]\nEarlyPasses=on\nUnormSceneVRS=true", "UnormSceneVRS=true requires EarlyPasses=false"},
+     {"[Experimental]\nEarlyPasses=trace\nUnormSceneVRS=true", "UnormSceneVRS=true requires EarlyPasses=false"},
+     {"[Experimental]\nUnormSceneVRS=true\n[Foveation]\nEnabled=false", "UnormSceneVRS=true requires [Foveation] Enabled=true"},
+     {"[Foveation]\nEnabled=0\n[Experimental]\nUnormSceneVRS=true", "UnormSceneVRS=true requires [Foveation] Enabled=true"},
+     {"[Experimental]\nCompareUnormVRS=true", "CompareUnormVRS=true requires UnormSceneVRS=true"},
+     {"[Experimental]\nCompareUnormVRS=true\nSharedSceneVRS=true\nUnormSceneVRS=false", "CompareUnormVRS=true requires UnormSceneVRS=true"},
+     {"[Experimental]\nUnormSceneVRS=false\nCompareUnormVRS=true", "CompareUnormVRS=true requires UnormSceneVRS=true"}}) {
+  bool rejected=false;
+  try { std::istringstream input(text); (void)parse(input); }
+  catch(const std::runtime_error& error) { rejected=true; assert(error.what()==std::string(message)); }
+  assert(rejected);
+ }
  std::istringstream profile("[Experimental]\nProfileGPU=TRUE\nEarlyPasses=false");
  assert(parse(profile).at("BEAMNG_VRS_PROFILE_GPU")=="1");
  for(const char* mode:{"off","trace","on"}){
@@ -49,6 +84,8 @@ int main() {
  assert(shipped);
  const auto defaults = parse(shipped);
  assert(defaults.at("BEAMNG_VRS_SHARED_SCENE")=="0");
+ assert(defaults.at("BEAMNG_VRS_UNORM_SCENE")=="0");
+ assert(defaults.at("BEAMNG_VRS_COMPARE_UNORM")=="0");
  assert(defaults.at("BEAMNG_VRS_PROFILE_GPU")=="0");
  assert(defaults.at("BEAMNG_VRS_EARLY_PASSES")=="off");
  assert(defaults.at("BEAMNG_VRS_ENABLE_FEATURES") == "1");
@@ -139,7 +176,9 @@ int main() {
  assert(values.at("BEAMNG_VRS_SCISSOR_BOTTOM") == "0.3");
  assert(values.at("BEAMNG_VRS_SHAPE") == "square");
  assert(values.at("BEAMNG_VRS_GAZE_GRACE_MS") == "30");
- for(const char* bad : {"[Experimental]\nSharedSceneVRS=on", "[Experimental]\nSharedSceneVRS=2", "[Experimental]\nSharedSceneVRS=true\nsharedscenevrs=false",
+ for(const char* bad : {"[Experimental]\nUnormSceneVRS=on", "[Experimental]\nUnormSceneVRS=2", "[Experimental]\nUnormSceneVRS=true\nunormscenevrs=false",
+     "[Experimental]\nCompareUnormVRS=on", "[Experimental]\nCompareUnormVRS=2", "[Experimental]\nCompareUnormVRS=false\ncompareunormvrs=false",
+     "[Experimental]\nSharedSceneVRS=on", "[Experimental]\nSharedSceneVRS=2", "[Experimental]\nSharedSceneVRS=true\nsharedscenevrs=false",
      "[Experimental]\nProfileGPU=trace", "[Experimental]\nEarlyPasses=yes", "[Experimental]\nEarlyPasses=on\nearlypasses=off","[Logging]\nLevel=verbose", "[Logging]\nLevel=off\nlevel=info", "[Performance]\nTurboMode=yes", "[Performance]\nTurboMode=true\nturbomode=false",
      "[Foveation]\nEnabled=2", "[Foveation]\nEnabled=true\nenabled=false", "[Foveation]\nTypo=1", "[other]\nEnabled=1", "[Debug]\nDrawOutline=1\ndrawoutline=0",
      "[Foveation]\nSize1x1=nan", "[Foveation]\nSize1x1=1.2", "[Foveation]\nSize1x1=-1",

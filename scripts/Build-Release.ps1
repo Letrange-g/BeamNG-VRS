@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Version = '0.1.1-shared.1',
+    [string]$Version = '0.1.1-unorm.2',
     [string]$BuildDirectory,
     [string]$OutputDirectory
 )
@@ -13,8 +13,19 @@ $BuildDirectory = [IO.Path]::GetFullPath($BuildDirectory)
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 function Run-Native {
     param([string]$Command, [string[]]$CommandArguments)
-    & $Command @CommandArguments
-    if ($LASTEXITCODE -ne 0) { throw "$Command failed with exit code $LASTEXITCODE." }
+    & $Command @CommandArguments 2>&1 | Tee-Object -Variable nativeOutput
+    $nativeExitCode = $LASTEXITCODE
+    if ($nativeExitCode -ne 0) {
+        # Keep actionable compiler/assertion output in the GitHub check itself,
+        # instead of showing only the wrapper's final "exit code 1" annotation.
+        if ($env:GITHUB_ACTIONS -eq 'true') {
+            $detail = (@($nativeOutput | Select-Object -Last 35) | ForEach-Object { "$_" }) -join "`n"
+            if ($detail.Length -gt 12000) { $detail = $detail.Substring($detail.Length - 12000) }
+            $detail = $detail.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error title=$Command failed::$detail"
+        }
+        throw "$Command failed with exit code $nativeExitCode."
+    }
 }
 Run-Native -Command cmake -CommandArguments @('-S', $root, '-B', $BuildDirectory, '-G', 'Visual Studio 17 2022', '-A', 'x64',
     '-DBEAMNG_FETCH_HEADERS=ON', '-DBUILD_TESTING=ON', '-DBEAMNG_BUILD_BENCHMARKS=ON')

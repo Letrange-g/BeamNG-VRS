@@ -101,12 +101,17 @@ try {
     Test-LaunchLayout -Layers $layers
     Set-Content -LiteralPath $ini -Value "[Foveation]`nEnabled=true`n[Experimental]`nSharedSceneVRS=true`nEarlyPasses=false`nProfileGPU=false" -Encoding UTF8
     Test-LaunchLayout -Layers $layers
+    Set-Content -LiteralPath $ini -Value "[Foveation]`nEnabled=true`n[Experimental]`nSharedSceneVRS=false`nUnormSceneVRS=true`nCompareUnormVRS=true`nEarlyPasses=false`nProfileGPU=false" -Encoding UTF8
+    Test-LaunchLayout -Layers $layers
     foreach ($invalid in @(
         "[Experimental]`nSharedSceneVRS=true`nEarlyPasses=true",
-        "[Experimental]`nSharedSceneVRS=true`n[Foveation]`nEnabled=false")) {
+        "[Experimental]`nSharedSceneVRS=true`n[Foveation]`nEnabled=false",
+        "[Experimental]`nUnormSceneVRS=true`nEarlyPasses=true",
+        "[Experimental]`nUnormSceneVRS=true`n[Foveation]`nEnabled=false",
+        "[Experimental]`nUnormSceneVRS=false`nCompareUnormVRS=true")) {
         Set-Content -LiteralPath $ini -Value $invalid -Encoding UTF8
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher
-        if ($LASTEXITCODE -eq 0 -or (Test-Path -LiteralPath $result)) { throw 'Conflicting shared-scene options started the game.' }
+        if ($LASTEXITCODE -eq 0 -or (Test-Path -LiteralPath $result)) { throw 'Conflicting scene VRS options started the game.' }
     }
     Copy-Item -LiteralPath (Join-Path $source 'packaging/BeamNG-VRS.ini') -Destination $ini -Force
     # The public launcher must not silently edit/use an obsolete nested INI.

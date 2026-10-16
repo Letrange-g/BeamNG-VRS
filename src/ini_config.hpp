@@ -60,6 +60,8 @@ inline Values defaults() {
  out["BEAMNG_VRS_TURBO_MODE"] = "1";
  out["BEAMNG_VRS_EARLY_PASSES"] = "off";
  out["BEAMNG_VRS_SHARED_SCENE"] = "0";
+ out["BEAMNG_VRS_UNORM_SCENE"] = "0";
+ out["BEAMNG_VRS_COMPARE_UNORM"] = "0";
  out["BEAMNG_VRS_PROFILE_GPU"] = "0";
  out["BEAMNG_VRS_SHAPE"] = "circle";
  out["BEAMNG_VRS_FOVEATION_MODE"] = "eye";
@@ -95,6 +97,8 @@ inline void setting(Values& out, const std::string& section, const std::string& 
  else if(id == "performance.turbomode") out["BEAMNG_VRS_TURBO_MODE"]=boolean(value);
  else if(id == "experimental.profilegpu") out["BEAMNG_VRS_PROFILE_GPU"]=boolean(value);
  else if(id == "experimental.sharedscenevrs") out["BEAMNG_VRS_SHARED_SCENE"]=boolean(value);
+ else if(id == "experimental.unormscenevrs") out["BEAMNG_VRS_UNORM_SCENE"]=boolean(value);
+ else if(id == "experimental.compareunormvrs") out["BEAMNG_VRS_COMPARE_UNORM"]=boolean(value);
  else if(id == "experimental.earlypasses") {
   // Public booleans match the other switches; preserve the first test builds'
   // on/off spellings and the diagnostic-only trace mode. Internal modes stay stable.
@@ -166,14 +170,18 @@ inline Values parse(std::istream& input) {
  }
  if(input.bad()) throw std::runtime_error("could not read INI file");
  if(seen.empty()) throw std::runtime_error("INI contains no settings");
- // The shared-scene experiment has its own target learning and fixed pattern.
- // Do not run the older per-eye inference alongside it or enable it without VRS.
- if(out.at("BEAMNG_VRS_SHARED_SCENE") == "1") {
+ // Scene experiments have their own target learning and fixed patterns.
+ // Do not run the older per-eye inference alongside them or enable them without VRS.
+ for(const auto& [name,flag] : {std::pair{"SharedSceneVRS", "BEAMNG_VRS_SHARED_SCENE"},
+                                {"UnormSceneVRS", "BEAMNG_VRS_UNORM_SCENE"}}) {
+  if(out.at(flag) != "1") continue;
   if(out.at("BEAMNG_VRS_EARLY_PASSES") != "off")
-   throw std::runtime_error("SharedSceneVRS=true requires EarlyPasses=false");
+   throw std::runtime_error(std::string(name) + "=true requires EarlyPasses=false");
   if(out.at("BEAMNG_VRS_ENABLE_FEATURES") != "1")
-   throw std::runtime_error("SharedSceneVRS=true requires [Foveation] Enabled=true");
+   throw std::runtime_error(std::string(name) + "=true requires [Foveation] Enabled=true");
  }
+ if(out.at("BEAMNG_VRS_COMPARE_UNORM") == "1" && out.at("BEAMNG_VRS_UNORM_SCENE") != "1")
+  throw std::runtime_error("CompareUnormVRS=true requires UnormSceneVRS=true");
  const auto center = out.find("BEAMNG_VRS_CENTER_RADIUS"), middle = out.find("BEAMNG_VRS_MID_RADIUS");
  if(center != out.end() && middle != out.end()) {
   std::istringstream c(center->second), m(middle->second);

@@ -16,6 +16,24 @@ VkImage m833Output(const VkRenderPassBeginInfo* info){
  auto view=views->second.views[slot->second];if(!m833ColorViews.count(view))return VK_NULL_HANDLE;
  auto image=m74gViews.find(view);return image==m74gViews.end()?VK_NULL_HANDLE:image->second.image;
 }
+VkImage m838Depth(const VkRenderPassBeginInfo* info){
+ if(!info || info->pNext)return VK_NULL_HANDLE;
+ const auto slot=m838DepthSlots.find(info->renderPass);const auto views=m74dAttachments.find(info->framebuffer);
+ if(slot==m838DepthSlots.end() || views==m74dAttachments.end() || slot->second>=views->second.views.size())return VK_NULL_HANDLE;
+ const auto view=views->second.views[slot->second];if(!m838DepthViews.count(view))return VK_NULL_HANDLE;
+ const auto image=m74gViews.find(view);if(image==m74gViews.end())return VK_NULL_HANDLE;
+ const auto depth=m838DepthImages.find(image->second.image);
+ return depth!=m838DepthImages.end() && depth->second.width==m813Width() && depth->second.height==m813Height()?image->second.image:VK_NULL_HANDLE;
+}
+void m838Restore(VkCommandBuffer cmd,const DeviceDispatch& d){
+ if(!m838Enabled())return;VkPipeline original=VK_NULL_HANDLE;
+ {std::lock_guard<std::mutex> guard(mu);m838Scopes.erase(cmd);
+  if(m838BoundCopies.erase(cmd)){auto p=m838OriginalBindings.find(cmd);if(p!=m838OriginalBindings.end())original=p->second;}
+ }
+ if(original && d.cmdBindPipeline){d.cmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,original);
+  if(m835Enabled())m835Profiler.bind(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,original,false);
+ }
+}
 void m833Begin(VkCommandBuffer cmd,const VkRenderPassBeginInfo* info,bool inlinePass){
  beamng_cpu::Sample timing(beamng_cpu::Pass,m837Tracking() && m817LogLevel()>=1);
  if(!m837Tracking())return;std::lock_guard<std::mutex> guard(mu);
@@ -26,7 +44,17 @@ void m833Begin(VkCommandBuffer cmd,const VkRenderPassBeginInfo* info,bool inline
  if(m833Enabled()){auto t=m833Command(cmd);if(t){t->extent(m813Width(),m813Height());t->beginPass(m833Id(cmd),m833Id(image),eye,pass);}}
  if(m837Enabled()){
   auto& t=m837Trackers[device->second];t.extent(m813Width(),m813Height());
-  t.beginPass(m833Id(cmd),m833Id(image),eye,pass,image && m837SceneImages.count(image) && info && m837ScenePasses.count(info->renderPass));
+  const auto depth=m838Enabled()?m838Depth(info):VK_NULL_HANDLE;
+  if(m838Enabled())m838Scopes.erase(cmd);
+  if(m838Enabled() && (!inlinePass || (info && info->pNext)))t.invalidate(m833Id(cmd));
+  t.beginPass(m833Id(cmd),m833Id(image),eye,pass,image && m837SceneImages.count(image) && info && m837ScenePasses.count(info->renderPass),
+    m833Id(depth),m838Enabled() && image && info && m838UnormPasses.count(info->renderPass) && m838UnormImages.count(image));
+  if(m838Enabled() && inlinePass && image && depth && info && m838UnormPasses.count(info->renderPass) &&
+     t.prepareUnorm(m833Id(cmd),GetTickCount64())){
+   M838Scope scope;scope.candidate=true;scope.on=true;scope.target=t.images.at(m833Id(image)).generation;
+   if(m838Compare()){auto phase=m838Clocks[device->second].phase(GetTickCount64());scope.on=phase.on;scope.phase=phase.measure;}
+   m838Scopes[cmd]=scope;
+  }
  }
 }
 void m833End(VkCommandBuffer cmd){
@@ -43,7 +71,7 @@ void m833Invalidate(VkCommandBuffer cmd){
  auto d=commandDevices.find(cmd);if(d!=commandDevices.end())m837Each(d->second,[&](auto& t){t.invalidate(m833Id(cmd));});
 }
 bool m837Select(VkDevice device,VkCommandBuffer cmd,const VkRenderPassBeginInfo* info){
- if(!m837Enabled() || !info || !m837ScenePasses.count(info->renderPass))return false;
+ if(!m837ApplyShared() || !info || !m837ScenePasses.count(info->renderPass))return false;
  auto t=m837Trackers.find(device);if(t==m837Trackers.end())return false;
  const auto image=m833Output(info);const auto c=t->second.commands.find(m833Id(cmd));
  return image && m837SceneImages.count(image) && c!=t->second.commands.end() &&
@@ -109,6 +137,16 @@ void m833Report(VkDevice device){
     s=t->second.stats;learned=t->second.evidence.size();sets=t->second.sets.size();
     for(const auto& [image,e]:t->second.evidence)if(t->second.ready(image,e.pass,now))++ready;
    }
+   if(m838Enabled()){
+    size_t unormLearned=0;unsigned unormReady=0;
+    {std::lock_guard<std::mutex> guard(mu);auto& tracker=m837Trackers[device];unormLearned=tracker.unormEvidence.size();
+     for(const auto& [image,e]:tracker.unormEvidence)if(tracker.readyUnorm(image,e.source.pass,e.source.depth,now))++unormReady;
+    }
+    char u[660]{};sprintf_s(u,"M8.38 UNORM_SCENE rate=4x4 mode=%s learned=%zu ready=%u producers=%llu observations=%llu selected=%llu binds=%llu pipelineDrops=%llu depthWrites=%llu staleDepthWrites=%llu variants=%llu skipped=%llu failed=%llu (ordered stage association; recorded counts, not GPU savings)",
+      m838Compare()?"compare":"on",unormLearned,unormReady,s.unormProducerPasses,s.unormObserved,s.unormSelected,s.unormBinds,s.pipelineDrops,
+      s.scopedDepthWrites,s.staleDepthWrites,
+      m838VariantCreated.load(),m838VariantSkipped.load(),m838VariantFailed.load());log(u);
+   }
    char b[900]{};sprintf_s(b,"M8.37 SHARED_SCENE pattern=fixed_center submissions=%llu observations=%llu learned=%zu ready=%u selected=%llu binds=%llu producers=%llu missingInputs=%llu ambiguous=%llu noProducer=%llu sets=%zu setMisses=%llu setDrops=%llu eventDrops=%llu barriers=%llu staleDescriptors=%llu multipleQueues=%llu (candidate participation, not shader dataflow; recorded counts, not GPU timings)",
     s.submissions,s.observed,learned,ready,s.selected,s.binds,s.producerPasses,s.missingInputs,s.ambiguous,s.noProducer,sets,s.setMisses,s.setDrops,s.eventDrops,s.barriers,s.staleDescriptors,s.multipleQueues);log(b);
   }
@@ -132,7 +170,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkBeginCommandBuffer(VkCommandBuffer c
  auto d=lookupCommand(c);if(!d.early_vkBeginCommandBuffer)return VK_ERROR_INITIALIZATION_FAILED;
  auto r=d.early_vkBeginCommandBuffer(c,i);
  if(m835Enabled() && r==VK_SUCCESS)m835Profiler.begin(c,i);
- if(m837Tracking()){std::lock_guard<std::mutex> g(mu);m833ActiveEarlier.erase(c);m837ActiveShared.erase(c);
+ if(m837Tracking()){std::lock_guard<std::mutex> g(mu);m838Scopes.erase(c);m838OriginalBindings.erase(c);m838BoundCopies.erase(c);m833ActiveEarlier.erase(c);m837ActiveShared.erase(c);
   auto d=commandDevices.find(c);if(d!=commandDevices.end()){
    if(m833Enabled())m833Trackers[d->second].resetCommand(m833Id(c),r==VK_SUCCESS);
    if(m837Enabled())m837Trackers[d->second].resetCommand(m833Id(c),r==VK_SUCCESS && i && !i->pNext && !(i->flags&VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT));
@@ -143,20 +181,22 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkResetCommandBuffer(VkCommandBuffer c
  auto d=lookupCommand(c);if(!d.early_vkResetCommandBuffer)return VK_ERROR_INITIALIZATION_FAILED;
  auto r=d.early_vkResetCommandBuffer(c,f);
  if(m835Enabled() && r==VK_SUCCESS)m835Profiler.reset(c);
- if(m837Tracking() && r==VK_SUCCESS){std::lock_guard<std::mutex> g(mu);m833ActiveEarlier.erase(c);m837ActiveShared.erase(c);
+ if(m837Tracking() && r==VK_SUCCESS){std::lock_guard<std::mutex> g(mu);m838Scopes.erase(c);m838OriginalBindings.erase(c);m838BoundCopies.erase(c);m833ActiveEarlier.erase(c);m837ActiveShared.erase(c);
   auto d=commandDevices.find(c);if(d!=commandDevices.end())m837Each(d->second,[&](auto& t){t.resetCommand(m833Id(c));});}return r;
 }
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkResetCommandPool(VkDevice device,VkCommandPool p,VkCommandPoolResetFlags f){
  auto d=lookupDevice(device);if(!d.early_vkResetCommandPool)return VK_ERROR_INITIALIZATION_FAILED;
  auto r=d.early_vkResetCommandPool(device,p,f);
  if(m835Enabled() && r==VK_SUCCESS)m835Profiler.resetPool(device,p);
- if(m837Tracking() && r==VK_SUCCESS){std::lock_guard<std::mutex> g(mu);m837Each(device,[&](auto& t){t.resetCommands(m833Id(p));});}return r;
+ if(m837Tracking() && r==VK_SUCCESS){std::lock_guard<std::mutex> g(mu);m837Each(device,[&](auto& t){
+  for(const auto& [id,cmd]:t.commands)if(cmd.pool==m833Id(p)){auto c=reinterpret_cast<VkCommandBuffer>(uintptr_t(id));m838Scopes.erase(c);m838OriginalBindings.erase(c);m838BoundCopies.erase(c);}
+  t.resetCommands(m833Id(p));});}return r;
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyCommandPool(VkDevice device,VkCommandPool p,const VkAllocationCallbacks* a){
- if(m835Enabled()){auto removed=m835Profiler.resetPool(device,p,true);std::lock_guard<std::mutex> g(mu);for(auto c:removed)commandDevices.erase(c);}
+ if(m835Enabled()){auto removed=m835Profiler.resetPool(device,p,true);std::lock_guard<std::mutex> g(mu);for(auto c:removed){commandDevices.erase(c);m838Scopes.erase(c);m838OriginalBindings.erase(c);m838BoundCopies.erase(c);}}
  auto d=lookupDevice(device);
  if(m837Tracking()){std::lock_guard<std::mutex> g(mu);m837Each(device,[&](auto& t){
-  for(const auto& [id,c]:t.commands)if(c.pool==m833Id(p))commandDevices.erase(reinterpret_cast<VkCommandBuffer>(uintptr_t(id)));
+  for(const auto& [id,c]:t.commands)if(c.pool==m833Id(p)){auto command=reinterpret_cast<VkCommandBuffer>(uintptr_t(id));commandDevices.erase(command);m838Scopes.erase(command);m838OriginalBindings.erase(command);m838BoundCopies.erase(command);}
   t.resetCommands(m833Id(p),true);
  });}if(d.early_vkDestroyCommandPool)d.early_vkDestroyCommandPool(device,p,a);
 }
@@ -248,13 +288,17 @@ EARLY_COUNT(vkCmdDrawIndexedIndirectCount)
 EARLY_COUNT(vkCmdDrawIndirectCountKHR)
 EARLY_COUNT(vkCmdDrawIndexedIndirectCountKHR)
 #undef EARLY_COUNT
-EARLY_FORWARD(vkCmdClearColorImage,(VkCommandBuffer c,VkImage i,VkImageLayout l,const VkClearColorValue* v,uint32_t n,const VkImageSubresourceRange* r),(c,i,l,v,n,r),if constexpr(std::is_same_v<std::decay_t<decltype(t)>,beamng_shared::Tracker>){if(t.candidate(m833Id(i)))t.invalidate(m833Id(c));}else t.invalidate(m833Id(c)))
-EARLY_FORWARD(vkCmdClearDepthStencilImage,(VkCommandBuffer c,VkImage i,VkImageLayout l,const VkClearDepthStencilValue* v,uint32_t n,const VkImageSubresourceRange* r),(c,i,l,v,n,r),if constexpr(std::is_same_v<std::decay_t<decltype(t)>,beamng_shared::Tracker>){if(t.candidate(m833Id(i)))t.invalidate(m833Id(c));}else t.invalidate(m833Id(c)))
+// Unknown color replacement retains the existing conservative barrier. UNORM
+// clears must receive the same protection as already tracked SFLOAT clears.
+EARLY_FORWARD(vkCmdClearColorImage,(VkCommandBuffer c,VkImage i,VkImageLayout l,const VkClearColorValue* v,uint32_t n,const VkImageSubresourceRange* r),(c,i,l,v,n,r),if constexpr(std::is_same_v<std::decay_t<decltype(t)>,beamng_shared::Tracker>){if(t.candidate(m833Id(i)) || (m838Enabled() && t.unormCandidate(m833Id(i))))t.invalidate(m833Id(c));}else t.invalidate(m833Id(c)))
+// Depth clear changes only this image. In particular, clearing scratch depth
+// must not discard the live scene-depth association used by another pass.
+EARLY_FORWARD(vkCmdClearDepthStencilImage,(VkCommandBuffer c,VkImage i,VkImageLayout l,const VkClearDepthStencilValue* v,uint32_t n,const VkImageSubresourceRange* r),(c,i,l,v,n,r),if constexpr(std::is_same_v<std::decay_t<decltype(t)>,beamng_shared::Tracker>){if(m838Enabled() && m838DepthImages.count(i))t.depthWrite(m833Id(c),m833Id(i));}else t.invalidate(m833Id(c)))
 #undef EARLY_FORWARD
 extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyImage(VkDevice device,VkImage i,const VkAllocationCallbacks* a){
  auto d=lookupDevice(device);
  if(m835Enabled())m835Profiler.resources([&](auto& t){t.destroyImage(device,i);});
- if(m837Tracking()){std::lock_guard<std::mutex> g(mu);m837Each(device,[&](auto& t){t.eraseImage(m833Id(i));});m837SceneImages.erase(i);m833ForgetImage(i);}
+ if(m837Tracking()){std::lock_guard<std::mutex> g(mu);m837Each(device,[&](auto& t){t.eraseImage(m833Id(i));});m837SceneImages.erase(i);m838UnormImages.erase(i);m838DepthImages.erase(i);m833ForgetImage(i);}
  if(d.early_vkDestroyImage)d.early_vkDestroyImage(device,i,a);
 }
 
@@ -266,7 +310,15 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateCommandPool(VkDevice device,co
 }
 namespace {
 void m835BeginPass(VkCommandBuffer cmd,const VkRenderPassBeginInfo* info,bool secondary,bool shadow){
- if(!info)return;int eye=-1;uint32_t reject=~0u;
+ if(!info)return;
+ if(m838Compare()){
+  M838Scope scope;
+  {std::lock_guard<std::mutex> guard(mu);auto s=m838Scopes.find(cmd);if(s!=m838Scopes.end())scope=s->second;}
+  if(scope.candidate && !secondary)m835Profiler.targetLegacy(cmd,info,scope.phase,shadow,scope.target);
+  else m835Profiler.legacy(cmd,info,-1,~0u,secondary,shadow);
+  return;
+ }
+ int eye=-1;uint32_t reject=~0u;
  {std::lock_guard<std::mutex> guard(mu);
   const auto a=m74dAttachments.find(info->framebuffer);
   if(a!=m74dAttachments.end())for(auto view:a->second.views){auto v=m74gViews.find(view);if(v!=m74gViews.end()){

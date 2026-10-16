@@ -100,6 +100,67 @@ int main(){
   p.compute(otherCmd,true);p.endCompute(otherCmd);assert(creates==before+1);
   p.destroyDevice(other);p.destroyDevice(device); // Same pool handle on two devices is independent.
  }
+ lines.clear();{
+  // Focused UNORM comparison uses the original render pass and records actual
+  // pipeline VRS coverage. It shares timestamp ownership with the broad trace,
+  // but never runs resource callbacks or samples unrelated graphics/compute.
+  Profiler p(logger);p.focusUnorm(true);
+  p.device(device,api,1,{family});p.pool(device,pool,0,0);p.allocate(device,pool,cmd,true);
+  VkAttachmentDescription attachments[2]{};
+  attachments[0].format=VK_FORMAT_R16G16B16A16_UNORM;attachments[0].samples=VK_SAMPLE_COUNT_1_BIT;
+  attachments[1].format=VK_FORMAT_D24_UNORM_S8_UINT;attachments[1].samples=VK_SAMPLE_COUNT_1_BIT;
+  const VkAttachmentReference depth{1,VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+  auto targetSub=sub;targetSub.pDepthStencilAttachment=&depth;
+  auto targetPass=rp;targetPass.attachmentCount=2;targetPass.pAttachments=attachments;targetPass.pSubpasses=&targetSub;
+  p.pass(device,pass,targetPass);
+  bool resourceCalled=false;p.resources([&](auto&){resourceCalled=true;});assert(!resourceCalled);
+  p.begin(cmd,&cb,true);
+  const auto before=creates;
+  p.descriptors(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,h<VkPipelineLayout>(90),0,1,nullptr);
+  p.unknownDescriptors(cmd);p.compute(cmd,true);p.endCompute(cmd);
+  p.legacy(cmd,&begin,0,0,false,true,true);p.draw(cmd);p.end(cmd);
+  p.targetLegacy(cmd,&begin,-1,false,99);p.draw(cmd);p.end(cmd);
+  p.targetLegacy(cmd,&begin,2,false,99);p.draw(cmd);p.end(cmd);
+  assert(creates==before); // Broad scopes and cooldown phases never allocate queries.
+  const auto unsupportedPass=h<VkRenderPass>(95);p.pass(device,unsupportedPass,rp);
+  auto unsupportedBegin=begin;unsupportedBegin.renderPass=unsupportedPass;
+  p.targetLegacy(cmd,&unsupportedBegin,0,false,99);p.draw(cmd);p.end(cmd);
+  assert(creates==before); // SFLOAT is not this experiment's target.
+
+  auto target=[&](int phase,unsigned drawCount,bool vrs,bool partial=false){
+   p.targetLegacy(cmd,&begin,phase,false,99); // No shading-rate attachment.
+   p.bind(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,h<VkPipeline>(5),vrs);
+   for(unsigned n=0;n<drawCount;++n){
+    if(partial && n==drawCount/2)p.bind(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,h<VkPipeline>(5),false);
+    p.draw(cmd);
+   }
+   p.end(cmd);
+  };
+  auto finish=[&]{const auto readBefore=reads;p.submitted(cmd);for(auto& [id,q]:queries)q.pending=true;
+   assert(reads==readBefore);
+   for(auto& [id,q]:queries)q.pending=false;p.reset(cmd);
+  };
+  target(0,128,false);const auto readBefore=reads;
+  p.submitted(cmd);for(auto& [id,q]:queries)q.pending=true;
+  assert(reads==readBefore); // Even focused mode never reads at submission.
+  for(auto& [id,q]:queries)q.pending=false;p.reset(cmd);
+  p.begin(cmd,&cb,true);target(1,128,true);finish();
+  p.begin(cmd,&cb,true);target(1,128,false);finish(); // Replacement failed: no claimed VRS result.
+  p.begin(cmd,&cb,true);target(1,128,true,true);finish();
+  p.begin(cmd,&cb,true);target(1,127,true);finish(); // Exclude lightweight reuse of the same pass.
+  p.begin(cmd,&cb,true);target(0,128,true);finish(); // Contaminated baseline is unusable.
+  p.begin(cmd,&cb,true);target(1,128,true);const auto beforeDiscard=reads;p.reset(cmd);
+  assert(reads==beforeDiscard); // Unsubmitted recordings do not produce samples.
+  p.begin(cmd,&cb,true);target(1,128,true);p.submitted(cmd);p.submitted(cmd);p.reset(cmd);
+  assert(reads==beforeDiscard); // Replayed recordings remain excluded.
+  p.destroyDevice(device);
+  assert(contains("M8.38 GPU_UNORM_SUMMARY") && contains("skippedLight=1 skippedFallback=1 skippedContaminated=1 partialSamples=1 groups=3"));
+  assert(contains("mode=baseline phase=0 coverage=off") && contains("mode=vrs phase=1 coverage=full") && contains("mode=vrs phase=1 coverage=partial"));
+  assert(contains("target=99 size=100x80 firstColorFormat=91 count=1 avgMs=1.0000"));
+  assert(contains("drawCalls=128 vrsDrawCalls=128") && contains("drawCalls=128 vrsDrawCalls=64"));
+  for(const auto& line:lines)if(line.find("M8.38 GPU_UNORM mode=vrs")!=std::string::npos)assert(line.find("vrsDrawCalls=0")==std::string::npos);
+  assert(!contains("M8.35 GPU_PASS") && !contains("M8.36 GPU_") && !resourceCalled);
+ }
  assert(queries.empty() && creates==destroys);
- std::cout<<"GPU profiler timestamps, nonblocking readback, replay exclusion, coverage and lifetime passed\n";
+ std::cout<<"GPU profiler timestamps, nonblocking readback, replay exclusion, focused UNORM coverage and lifetime passed\n";
 }
