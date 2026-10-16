@@ -9,6 +9,7 @@
 #include <mutex>
 #include <tuple>
 #include <vector>
+#include "gpu_resource_trace.hpp"
 
 // Diagnostic only. Never wait for a query, fence, queue or device. Query pools
 // belong to ONE primary command-buffer recording. Read/destroy them
@@ -31,15 +32,22 @@ struct Api {
  bool complete()const{return create && destroy && results && reset && stamp;}
 };
 struct Meta {
- uint64_t pass=0,pipeline=0;
+ uint64_t pass=0,pipeline=0,colorView=0,depthView=0,storageView=0;
  uint32_t width=0,height=0,colors=0,samples=0,format=0,subpasses=0,reject=~0u;
  bool depth=false,compute=false,secondary=false,rateAttachment=false;
  int eye=-1;
- auto key()const{return std::tie(compute,pass,pipeline,width,height,colors,samples,format,subpasses,depth,secondary,rateAttachment,eye,reject);}
+ auto key()const{return std::tie(compute,pass,pipeline,width,height,colors,samples,format,subpasses,depth,secondary,rateAttachment,eye,reject,colorView,depthView,storageView);}
  bool operator<(const Meta& b)const{return key()<b.key();}
 };
-struct Event { Meta meta;uint64_t draws=0,vrsDraws=0;bool complete=false; };
-struct Summary { double total=0,maximum=0;uint64_t count=0,draws=0,vrsDraws=0; };
+struct Event {
+ Meta meta;uint64_t draws=0,vrsDraws=0;bool complete=false;
+ beamng_trace::Targets targets;beamng_trace::Uses uses;
+ uint64_t descriptors=0,bindings=0;
+};
+struct Summary {
+ double total=0,maximum=0;uint64_t count=0,draws=0,vrsDraws=0;
+ beamng_trace::Targets targets;beamng_trace::Uses uses;
+};
 class Profiler {
  static constexpr unsigned maxEvents=128,maxLive=16;
  struct Pool { VkDevice device{};unsigned bits=0;bool usable=false; };
@@ -48,6 +56,7 @@ class Profiler {
   bool primary=false,selected=false,submitted=false,invalid=false,inside=false,vrs=false;
   unsigned bits=0;int active=-1;
   uint64_t graphicsPipeline=0,computePipeline=0;
+  beamng_trace::BoundSets graphicsSets,computeSets;
   std::vector<Event> events;
  };
  struct Device {
@@ -61,6 +70,7 @@ class Profiler {
  std::map<std::pair<VkDevice,VkRenderPass>,Meta> passes_;
  std::map<std::pair<VkDevice,VkPipeline>,uint64_t> pipelines_;
  std::map<Meta,Summary> summary_;
+ beamng_trace::Resources resources_;
  uint64_t nextId_=1,recordings_=0,selected_=0,completed_=0,unavailable_=0,dropped_=0,unsupported_=0,failures_=0;
  uint32_t random_=0x83a52e19;
  std::chrono::steady_clock::time_point lastReport_{};
@@ -76,11 +86,42 @@ class Profiler {
   std::vector<std::pair<Meta,Summary>> ranked(summary_.begin(),summary_.end());
   std::sort(ranked.begin(),ranked.end(),[](const auto& a,const auto& b){return a.second.total>b.second.total;});
   for(size_t i=0;i<std::min<size_t>(20,ranked.size());++i){const auto& m=ranked[i].first;const auto& s=ranked[i].second;
-   std::snprintf(b,sizeof(b),"M8.35 GPU_PASS rank=%zu kind=%s pass=%llu firstPipeline=%llu size=%ux%u colors=%u firstColorFormat=%u samplesMask=%u depth=%u subpasses=%u eye=%d secondary=%u rateAttachment=%u shadowReject=0x%X count=%llu avgMs=%.4f maxMs=%.4f sampledTotalMs=%.3f drawCalls=%llu vrsDrawCalls=%llu",
+   std::snprintf(b,sizeof(b),"M8.35 GPU_PASS rank=%zu kind=%s pass=%llu firstPipeline=%llu size=%ux%u colors=%u firstColorFormat=%u samplesMask=%u depth=%u subpasses=%u eye=%d secondary=%u rateAttachment=%u shadowReject=0x%X count=%llu avgMs=%.4f maxMs=%.4f sampledTotalMs=%.3f drawCalls=%llu vrsDrawCalls=%llu colorView=%llu depthView=%llu storageView=%llu",
     i+1,m.compute?"compute":"graphics",(unsigned long long)m.pass,(unsigned long long)m.pipeline,m.width,m.height,m.colors,m.format,m.samples,unsigned(m.depth),m.subpasses,m.eye,unsigned(m.secondary),unsigned(m.rateAttachment),m.reject,
-    (unsigned long long)s.count,s.total/double(s.count),s.maximum,s.total,(unsigned long long)s.draws,(unsigned long long)s.vrsDraws);log_(b);
+    (unsigned long long)s.count,s.total/double(s.count),s.maximum,s.total,(unsigned long long)s.draws,(unsigned long long)s.vrsDraws,(unsigned long long)m.colorView,(unsigned long long)m.depthView,(unsigned long long)m.storageView);log_(b);
   }
+  reportResources(ranked);
   summary_.clear(); // Startup/loading passes must not dominate later stationary-scene windows.
+ }
+ // Definitions and candidate links are emitted at report time, never per draw.
+ // Shared targets and storage descriptors can have multiple roles; these records
+ // deliberately do not turn a connection into a left/right-eye classification.
+ void reportResources(const std::vector<std::pair<Meta,Summary>>& ranked){
+  char b[2048]{};std::set<uint64_t> images,views;
+  auto image=[&](const beamng_trace::ImagePtr& p){
+   if(!p || !images.insert(p->id).second)return;
+   std::snprintf(b,sizeof(b),"M8.36 GPU_IMAGE image=%llu size=%ux%u format=%u usage=0x%X samples=%u layers=%u mips=%u described=%u eyeMask=%u",
+    (unsigned long long)p->id,p->width,p->height,p->format,p->usage,p->samples,p->layers,p->mips,unsigned(p->described),p->eyeMask);log_(b);
+  };
+  auto view=[&](const beamng_trace::ViewPtr& p){
+   if(!p || !views.insert(p->id).second)return;image(p->image);
+   std::snprintf(b,sizeof(b),"M8.36 GPU_VIEW view=%llu image=%llu format=%u type=%u aspects=0x%X mip=%u mipCount=%u layer=%u layerCount=%u partial=%u",
+    (unsigned long long)p->id,(unsigned long long)(p->image?p->image->id:0),p->format,p->type,p->range.aspectMask,p->range.baseMipLevel,p->range.levelCount,p->range.baseArrayLayer,p->range.layerCount,unsigned(p->partial));log_(b);
+  };
+  auto list=[&](const std::vector<beamng_trace::ViewPtr>& refs){std::string ids;
+   for(const auto& v:refs){view(v);if(!ids.empty())ids+=',';ids+=std::to_string(v->id);}return ids.empty()?std::string("none"):ids;
+  };
+  for(size_t n=0;n<std::min<size_t>(128,ranked.size());++n){const auto& m=ranked[n].first;const auto& s=ranked[n].second;
+   view(s.targets.color);view(s.targets.depth);auto reads=list(s.uses.reads),storage=list(s.uses.storage);
+   std::snprintf(b,sizeof(b),"M8.36 GPU_LINK kind=%s pass=%llu firstPipeline=%llu colorView=%llu depthView=%llu storageView=%llu eye=%d count=%llu readViews=%s storageViews=%s partial=%u",
+    m.compute?"compute":"graphics",(unsigned long long)m.pass,(unsigned long long)m.pipeline,(unsigned long long)m.colorView,(unsigned long long)m.depthView,(unsigned long long)m.storageView,m.eye,(unsigned long long)s.count,reads.c_str(),storage.c_str(),unsigned(s.uses.partial || s.targets.partial || m.secondary));log_(b);
+  }
+  resources_.reportTransfers([&](const auto& src,const auto& dst,const std::string& op,uint32_t regions,uint64_t count){
+   image(src);image(dst);std::snprintf(b,sizeof(b),"M8.36 GPU_TRANSFER op=%s srcImage=%llu dstImage=%llu regions=%u recordedCount=%llu",
+    op.c_str(),(unsigned long long)src->id,(unsigned long long)dst->id,regions,(unsigned long long)count);log_(b);
+  });
+  std::snprintf(b,sizeof(b),"M8.36 GPU_LINKS groups=%zu omittedGroups=%zu resourceDrops=%llu (recording-time candidates; storage read/write unknown; not execution order or shader usage)",
+   std::min<size_t>(128,ranked.size()),ranked.size()>128?ranked.size()-128:0,(unsigned long long)resources_.dropped());log_(b);
  }
  void retire(Record& r){
   auto d=devices_.find(r.device);if(!r.queries || d==devices_.end())return;
@@ -93,7 +134,8 @@ class Profiler {
     for(size_t i=0;i<r.events.size();++i){const auto& e=r.events[i];double ms=0;
      if(!e.complete || !data[2*i][1] || !data[2*i+1][1] || !elapsed(data[2*i][0],data[2*i+1][0],r.bits,dev.period,ms)){++unavailable_;continue;}
      if(summary_.size()>=512 && !summary_.count(e.meta)){++dropped_;continue;}
-     auto& s=summary_[e.meta];s.total+=ms;s.maximum=std::max(s.maximum,ms);++s.count;s.draws+=e.draws;s.vrsDraws+=e.vrsDraws;++completed_;
+     auto& s=summary_[e.meta];s.total+=ms;s.maximum=std::max(s.maximum,ms);++s.count;s.draws+=e.draws;s.vrsDraws+=e.vrsDraws;
+     s.targets=e.targets;s.uses.merge(e.uses);++completed_;
     }
    }else ++failures_;
   }
@@ -122,6 +164,17 @@ class Profiler {
  }
 public:
  explicit Profiler(void(*logger)(const char*)=nullptr):log_(logger){}
+ template<class Work> void resources(Work work){std::lock_guard<std::mutex> g(mutex_);work(resources_);}
+ void descriptors(VkCommandBuffer c,VkPipelineBindPoint point,VkPipelineLayout layout,uint32_t first,uint32_t count,const VkDescriptorSet* sets){
+  std::lock_guard<std::mutex> g(mutex_);auto i=commands_.find(c);if(i==commands_.end() || !i->second.selected)return;
+  if(point==VK_PIPELINE_BIND_POINT_GRAPHICS)i->second.graphicsSets.bind(layout,first,count,sets);
+  if(point==VK_PIPELINE_BIND_POINT_COMPUTE)i->second.computeSets.bind(layout,first,count,sets);
+ }
+ void unknownDescriptors(VkCommandBuffer c){
+  std::lock_guard<std::mutex> g(mutex_);auto i=commands_.find(c);if(i==commands_.end())return;
+  i->second.graphicsSets.unknown();i->second.computeSets.unknown();
+  if(i->second.active>=0)i->second.events[size_t(i->second.active)].uses.partial=true;
+ }
  void device(VkDevice device,Api api,double period,std::vector<VkQueueFamilyProperties> families){
   std::lock_guard<std::mutex> g(mutex_);
   if(devices_.size()<32 && api.complete() && std::isfinite(period) && period>0)devices_[device]={api,period,std::move(families),0};
@@ -172,8 +225,9 @@ public:
    }
   }
   passes_[{d,p}]=m;
+  resources_.pass(d,p,info);
  }
- void forgetPass(VkDevice d,VkRenderPass p){std::lock_guard<std::mutex> g(mutex_);passes_.erase({d,p});}
+ void forgetPass(VkDevice d,VkRenderPass p){std::lock_guard<std::mutex> g(mutex_);passes_.erase({d,p});resources_.forgetPass(d,p);}
  void forgetPipeline(VkDevice d,VkPipeline p){std::lock_guard<std::mutex> g(mutex_);pipelines_.erase({d,p});}
  void legacy(VkCommandBuffer c,const VkRenderPassBeginInfo* info,int eye,uint32_t reject,bool secondary,bool shadow,bool force=false){
   std::lock_guard<std::mutex> g(mutex_);auto i=commands_.find(c);if(i==commands_.end() || !info)return;
@@ -181,6 +235,11 @@ public:
   if(p!=passes_.end()){
    auto m=p->second;m.width=info->renderArea.extent.width;m.height=info->renderArea.extent.height;m.eye=eye;m.reject=reject;m.secondary=secondary;m.rateAttachment=shadow;
    start(c,r,m,force);
+   if(r.active>=0){auto& event=r.events[size_t(r.active)];event.targets=resources_.targets(r.device,info->renderPass,info->framebuffer);
+    event.targets.partial|=info->pNext!=nullptr;
+    event.meta.colorView=event.targets.color?event.targets.color->id:0;
+    event.meta.depthView=event.targets.depth?event.targets.depth->id:0;
+   }
   }else ++unsupported_;
   r.inside=true;
  }
@@ -201,12 +260,20 @@ public:
  void draw(VkCommandBuffer c){
   std::lock_guard<std::mutex> g(mutex_);auto i=commands_.find(c);if(i==commands_.end() || i->second.active<0)return;
   auto& r=i->second;auto& e=r.events[size_t(r.active)];if(e.meta.compute)return;
+  if(!e.draws || e.descriptors!=resources_.revision() || e.bindings!=r.graphicsSets.revision){
+   resources_.collect(r.device,r.graphicsSets,e.uses);e.descriptors=resources_.revision();e.bindings=r.graphicsSets.revision;
+  }
   if(!e.draws)e.meta.pipeline=r.graphicsPipeline;
   ++e.draws;if(r.vrs && e.meta.rateAttachment)++e.vrsDraws;
  }
  void compute(VkCommandBuffer c,bool force=false){
   std::lock_guard<std::mutex> g(mutex_);auto i=commands_.find(c);if(i==commands_.end())return;
   Meta m;m.compute=true;m.pipeline=i->second.computePipeline;start(c,i->second,m,force);
+  auto& r=i->second;if(r.active>=0 && !r.inside){auto& e=r.events[size_t(r.active)];resources_.collect(r.device,r.computeSets,e.uses);
+   // Split the common one-storage-target case by resource, so dispatches of
+   // one pipeline into different eye buffers do not collapse into one group.
+   if(!e.uses.storage.empty())e.meta.storageView=e.uses.storage[0]->id;
+  }
  }
  void endCompute(VkCommandBuffer c){std::lock_guard<std::mutex> g(mutex_);auto i=commands_.find(c);if(i!=commands_.end() && !i->second.inside)finish(c,i->second);}
  void destroyDevice(VkDevice d){
@@ -215,7 +282,7 @@ public:
   for(auto i=pools_.begin();i!=pools_.end();)if(i->second.device==d)i=pools_.erase(i);else ++i;
   for(auto i=passes_.begin();i!=passes_.end();)if(i->first.first==d)i=passes_.erase(i);else ++i;
   for(auto i=pipelines_.begin();i!=pipelines_.end();)if(i->first.first==d)i=pipelines_.erase(i);else ++i;
-  devices_.erase(d);report(true);
+  devices_.erase(d);report(true);resources_.destroyDevice(d);
  }
 };
 }
