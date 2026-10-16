@@ -122,6 +122,11 @@ class Profiler {
   });
   std::snprintf(b,sizeof(b),"M8.36 GPU_LINKS groups=%zu omittedGroups=%zu resourceDrops=%llu (recording-time candidates; storage read/write unknown; not execution order or shader usage)",
    std::min<size_t>(128,ranked.size()),ranked.size()>128?ranked.size()-128:0,(unsigned long long)resources_.dropped());log_(b);
+  const auto c=resources_.counters();
+  std::snprintf(b,sizeof(b),"M8.36 GPU_TRACKER sets=%zu setCapacity=%zu setEvictions=%llu setRecoveries=%llu setMisses=%llu slotDrops=%llu imageDrops=%llu viewDrops=%llu passDrops=%llu framebufferDrops=%llu transferDrops=%llu unknownUpdates=%llu missingViews=%llu (cumulative diagnostic counters; evictions are not dropped game work)",
+   resources_.setCount(),resources_.setCapacity(),(unsigned long long)c.setEvictions,(unsigned long long)c.setRecoveries,(unsigned long long)c.setMisses,
+   (unsigned long long)c.slotDrops,(unsigned long long)c.imageDrops,(unsigned long long)c.viewDrops,(unsigned long long)c.passDrops,
+   (unsigned long long)c.framebufferDrops,(unsigned long long)c.transferDrops,(unsigned long long)c.unknownUpdates,(unsigned long long)c.missingViews);log_(b);
  }
  void retire(Record& r){
   auto d=devices_.find(r.device);if(!r.queries || d==devices_.end())return;
