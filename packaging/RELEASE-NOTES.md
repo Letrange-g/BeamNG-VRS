@@ -2,22 +2,13 @@ BeamNG-VRS 0.2 — portable Windows x64.
 
 ## What's new
 
-- **VRS now covers the whole scene.** 0.1 only foveated each eye's final
-  image. 0.2 also foveates the game's internal eye-sized passes (scene,
-  lighting, post effects), which is where most GPU time goes. Those passes use
-  the finer rate of both eyes per tile. `[Foveation] AllPasses=false` restores
-  the old behaviour for comparison.
-- **Lens-corner mask.** `[LensMask]` skips rendering the corners outside an
-  ellipse that the headset lenses hide (`Size=1.15` by default; increase it if
-  you see black corners, lower it toward 1.05 to skip more).
-- **New defaults:** `Size2x2=0.55`, scissor enabled, lens mask enabled, Turbo
-  off (it showed no gain when the GPU is the limit).
-- **Diagnostics:** the info log now reports which passes receive VRS
-  (`M8.32`, `M8.33`) and lens-mask activity (`M8.34`).
-
-In testing on a Pimax Dream Air and RTX 5090, BeamNG at VR resolution 0.75
-reached 90 FPS with VRS alone, without scissor. Results depend on headset,
-GPU, scene and settings.
+- **VRS now works on the whole picture.** Before, only the very last step of
+  drawing each eye's image was made lighter around the edges. Now every
+  step the game uses to draw the scene does it, so the GPU saves a lot more work.
+- **New lens-border mask.** The corners of each eye's image are hidden by the
+  headset lenses anyway, so the mod now skips drawing them. You never see that
+  area, but the GPU no longer wastes time on it. Raise `[LensMask] Size` if you
+  ever see black corners.
 
 ## Install
 
