@@ -23,9 +23,10 @@ int main() {
  assert(defaults.at("BEAMNG_VRS_SCISSOR_BOTTOM") == "0.30");
  assert(defaults.at("BEAMNG_VRS_SCISSOR_LEFT") == "0");
  assert(defaults.at("BEAMNG_VRS_SCISSOR_RIGHT") == "0");
- assert(defaults.at("BEAMNG_VRS_TURBO_MODE")=="1");
+ assert(defaults.at("BEAMNG_VRS_TURBO_MODE")=="0");
+ assert(defaults.at("BEAMNG_VRS_MID_RADIUS")=="0.55" && defaults.at("BEAMNG_VRS_SCISSOR_ENABLE")=="1");
  assert(defaults.at("BEAMNG_VRS_ALL_PASSES")=="1");
- assert(defaults.at("BEAMNG_VRS_LENS_MASK")=="0" && defaults.at("BEAMNG_VRS_LENS_MASK_SIZE")=="1.15");
+ assert(defaults.at("BEAMNG_VRS_LENS_MASK")=="1" && defaults.at("BEAMNG_VRS_LENS_MASK_SIZE")=="1.15");
  std::istringstream mask("[LensMask]\nEnabled=true\nSize=1.05\n");
  const auto masked=parse(mask);
  assert(masked.at("BEAMNG_VRS_LENS_MASK")=="1" && masked.at("BEAMNG_VRS_LENS_MASK_SIZE")=="1.05");
@@ -44,7 +45,8 @@ int main() {
  }
  std::istringstream omitted("[Debug]\nDrawOutline=false\n");
  const auto fallback = parse(omitted);
- assert(fallback.at("BEAMNG_VRS_TURBO_MODE")=="1");
+ assert(fallback.at("BEAMNG_VRS_TURBO_MODE")=="0");
+ assert(fallback.at("BEAMNG_VRS_MID_RADIUS")=="0.55" && fallback.at("BEAMNG_VRS_SCISSOR_ENABLE")=="1" && fallback.at("BEAMNG_VRS_LENS_MASK")=="1");
  assert(fallback.at("BEAMNG_VRS_SHAPE") == "circle");
  assert(fallback.at("BEAMNG_VRS_SCISSOR_TOP") == "0.30");
  assert(fallback.at("BEAMNG_VRS_SCISSOR_BOTTOM") == "0.30");

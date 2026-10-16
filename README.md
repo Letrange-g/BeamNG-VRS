@@ -4,11 +4,11 @@ Foveated rendering and optional edge cropping for **BeamNG.drive in Vulkan VR**.
 Keep more detail where you look and reduce rendering work around the edges.
 Works with a fixed center or supported eye tracking.
 
-**Windows x64 · Release 0.1.0.** Performance varies by headset, GPU and scene.
+**Windows x64 · Release 0.2.0.** Performance varies by headset, GPU and scene.
 
 ## Install
 
-1. [Download the Windows ZIP](https://github.com/Letrange-g/BeamNG-VRS/releases/download/v0.1.0/BeamNG-VRS-0.1.0-windows-x64.zip) (not the source-code ZIP).
+1. [Download the Windows ZIP](https://github.com/Letrange-g/BeamNG-VRS/releases/download/v0.2.0/BeamNG-VRS-0.2.0-windows-x64.zip) (not the source-code ZIP).
 2. Close BeamNG and extract the whole ZIP into the game folder, beside `Bin64`.
 3. Double-click `Launch-BeamNG-VRS.cmd`, then enable VR in the game.
 
@@ -20,10 +20,11 @@ Windows PowerShell is included in Windows 10/11; the package adds no EXE.
 
 - **Foveation Enabled:** set `false` to use scissor or turbo without VRS. Default `true`.
 - **Size1x1:** size of the sharp, full-quality center. Default `0.25`.
-- **Size2x2:** size of the medium-quality region around it. Default `0.60`.
+- **Size2x2:** size of the medium-quality region around it. Default `0.55`.
 - **Shape:** `circle` (default), `ellipse`, or `square`.
 - **DrawOutline:** shows the quality-region borders for checking settings. Leave `false` for gameplay.
-- **Scissor:** crops image edges to save rendering work. Enable only after checking the edges in your headset.
+- **Scissor:** crops image edges to save rendering work. Enabled by default; check the edges in your headset.
+- **LensMask:** skips the image corners hidden by the lenses. Enabled by default (`Size=1.15`); increase `Size` if you see black corners.
 
 If fine detail shimmers with VRS, try BeamNG's MSAA setting, or disable foveation
 and use scissor alone. MSAA's performance cost varies by setup.
@@ -41,11 +42,11 @@ Scissor top/bottom apply to both eyes. Horizontal edges are independent:
 | `RightEyeRight` | Right eye, outside | `0.10` |
 
 `0.05` crops 5% from that edge. Start small; keep the nose-side values at `0`
-if you can see those borders. Scissor is **disabled by default**.
+if you can see those borders. Scissor is **enabled by default**; set `Enabled=false` to turn it off.
 [All settings and examples →](docs/CONFIGURATION.md)
 
-**Turbo:** enabled by default to overlap CPU work with the headset runtime wait.
-Set `[Performance] TurboMode=false` to restore normal timing. Check smoothness as well as FPS.
+**Turbo:** off by default. `[Performance] TurboMode=true` overlaps CPU work with the headset runtime wait;
+it only helps when the CPU is the limit. Check smoothness as well as FPS.
 It may interfere with motion reprojection. `[Logging] Level=off` disables layer
 logs; other choices are `errors`, `info` (default), and `debug`.
 

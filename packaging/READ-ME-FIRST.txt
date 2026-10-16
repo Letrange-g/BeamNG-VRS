@@ -1,4 +1,4 @@
-BeamNG-VRS 0.1.0 - portable Windows x64
+BeamNG-VRS 0.2.0 - portable Windows x64
 
 INSTALL
 1. Close BeamNG.
@@ -14,7 +14,7 @@ Open BeamNG-VRS/VRS-SETTINGS.png for a visual explanation.
 [Foveation] Enabled=false disables VRS while leaving scissor/turbo available.
 The default Shape=circle uses diameters relative to eye-image height.
 Size1x1=0.25 sets the sharp circle's diameter to 25% of eye height.
-Size2x2=0.60 sets the medium-quality region's outer diameter to 60%.
+Size2x2=0.55 sets the medium-quality region's outer diameter to 55%.
 Size2x2 must be at least Size1x1. Larger sizes preserve more detail.
 Shape can be circle, square or ellipse. Circle uses height-relative diameter;
 square uses height-relative side length.
@@ -34,9 +34,11 @@ For outside-only cropping, try LeftEyeLeft=0.05 and RightEyeRight=0.05;
 keep LeftEyeRight=0 and RightEyeLeft=0 to leave the nose-side edges untouched.
 Old shared Left/Right settings remain accepted. Explicit per-eye keys override
 those edges independently. Update the launcher and both DLLs together.
-Leave scissor disabled unless you have tested visible edges and performance.
+Scissor is enabled by default; check the visible edges in the headset.
+[LensMask] Enabled=true (default) skips the corners hidden by the lenses.
+Size=1.15 is the kept ellipse; increase it if you see black corners.
 [Performance] TurboMode=true enables experimental frame-wait overlap; default
-true. Restart after changes. It can interfere with motion reprojection. Compare
+false. Restart after changes. It can interfere with motion reprojection. Compare
 headset smoothness and frame times; set false if it worsens pacing or appearance.
 [Logging] Level accepts off, errors, info (default) or debug. Use off to stop
 layer log output; Diagnose-BeamNG-VRS.cmd overrides it with debug logging.

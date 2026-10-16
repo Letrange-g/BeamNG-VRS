@@ -57,12 +57,12 @@ inline void activation(Values& out, bool enabled) {
 inline Values defaults() {
  Values out;
  activation(out, true);
- out["BEAMNG_VRS_TURBO_MODE"] = "1";
+ out["BEAMNG_VRS_TURBO_MODE"] = "0";
  out["BEAMNG_VRS_ALL_PASSES"] = "1";
  out["BEAMNG_VRS_SHAPE"] = "circle";
  out["BEAMNG_VRS_FOVEATION_MODE"] = "eye";
  out["BEAMNG_VRS_CENTER_RADIUS"] = "0.25";
- out["BEAMNG_VRS_MID_RADIUS"] = "0.60";
+ out["BEAMNG_VRS_MID_RADIUS"] = "0.55";
  out["BEAMNG_VRS_MID_RATE"] = "2x2";
  out["BEAMNG_VRS_OUTER_RATE"] = "4x4";
  out["BEAMNG_VRS_GAZE_UPDATE_MS"] = "8";
@@ -70,7 +70,7 @@ inline Values defaults() {
  out["BEAMNG_VRS_M823_LAZY_FB"] = "1";
  out["BEAMNG_VRS_DEBUG_OUTLINE"] = "0";
  out["BEAMNG_VRS_OUTLINE_RESIZE_PAUSE_MS"] = "350";
- out["BEAMNG_VRS_SCISSOR_ENABLE"] = "0";
+ out["BEAMNG_VRS_SCISSOR_ENABLE"] = "1";
  out["BEAMNG_VRS_SCISSOR_TOP"] = "0.30";
  out["BEAMNG_VRS_SCISSOR_BOTTOM"] = "0.30";
  out["BEAMNG_VRS_SCISSOR_LEFT"] = "0";
@@ -80,7 +80,7 @@ inline Values defaults() {
  out["BEAMNG_VRS_SCISSOR_LEFT_EYE_LEFT"] = "0.10";
  out["BEAMNG_VRS_SCISSOR_RIGHT_EYE_RIGHT"] = "0.10";
  out["BEAMNG_VRS_M818_STENCIL"] = "0";
- out["BEAMNG_VRS_LENS_MASK"] = "0";
+ out["BEAMNG_VRS_LENS_MASK"] = "1";
  out["BEAMNG_VRS_LENS_MASK_SIZE"] = "1.15";
  out["BEAMNG_VRS_LOG_LEVEL"] = "1";
  return out;

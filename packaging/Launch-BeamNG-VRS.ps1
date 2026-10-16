@@ -24,7 +24,7 @@ function Test-BeamNGIni {
     if ($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) { $text = $text.Substring(1) }
     $whitespace = [char[]]" `t`r`n"
     $section = ''; $lineNumber = 0; $seen = @{}
-    $sizes = @{'foveation.size1x1' = 0.25; 'foveation.size2x2' = 0.60}
+    $sizes = @{'foveation.size1x1' = 0.25; 'foveation.size2x2' = 0.55}
     $ranges = @{
         'foveation.size1x1' = @(0, 1, $false)
         'foveation.size2x2' = @(0, 1, $false)
