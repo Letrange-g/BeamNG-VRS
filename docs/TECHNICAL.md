@@ -48,6 +48,9 @@ it does not cull scene objects, avoid vertex processing, or cap render distance.
 Dynamic rendering, layered/multiview targets and secondary-only subpasses are
 outside the supported crop path. VRS substitution also targets eligible single-sample
 passes; enabling MSAA can change which passes receive VRS and its benefit.
+With `AllPasses=true` (default) eye-sized passes that are not directly copied to
+the headset use a combined pattern (finer rate of both eyes per tile). VRS does
+not apply to compute-shader passes.
 Unknown eye targets retain the horizontal
 area either eye needs, rather than guessing which eye is being rendered.
 

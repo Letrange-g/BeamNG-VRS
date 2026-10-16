@@ -5,6 +5,73 @@ shape, 30 ms gaze grace and 8 ms refresh interval. GPU/FPS improvements must be
 measured in BeamNG; there is no game, headset or rendering GPU in the cloud test
 environment.
 
+## All eye-sized passes (M8.32)
+
+Up to 0.1.0, VRS was applied only to render passes whose image is later copied
+into an OpenXR swapchain image. A pass is classified as left or right only
+through that copy, so in practice only the last passes of each eye (tonemap,
+UI, final composition) were foveated. The expensive scene, lighting and most
+post-processing passes write intermediate eye-sized images that never reach
+OpenXR directly, so they kept full-rate shading. Scissor has no such
+requirement and crops every eye-sized pass, which explains why it saved much
+more than VRS, even with near-uniform 4x4 shading.
+
+`[Foveation] AllPasses=true` (default) also gives those unclassified eye-sized
+passes a shading-rate attachment. Because their eye is unknown, they use a
+third, combined image: each tile takes the finer rate of the left and right
+patterns, so neither eye loses detail it would otherwise keep. With fixed
+center foveation both eyes match and the combined image is identical. With eye
+tracking the combined sharp region is the union of both eyes' regions, which
+are close together when both eyes look at the same point.
+
+The combined payload is rebuilt when either eye's pattern changes and uses the
+same staging, pinning and asynchronous upload path as the eye images. The
+existing VRS copies of render passes and pipelines already covered these passes;
+only the framebuffer and shading-rate image selection change. Passes that are
+multisampled, multi-subpass, use input/resolve attachments, dynamic rendering or
+compute shaders are still not foveated.
+
+To measure, compare `AllPasses=true` and `false` with scissor off, outlines off
+and normal logging. The info log reports
+`M8.32 PASS_SELECT left=… right=… combined=… eyeSizedWithoutVrsCopy=…` at the
+first selection and every 4,096 selections. `combined` counts the newly
+foveated passes; `eyeSizedWithoutVrsCopy` counts eye-sized pass begins that had
+no compatible VRS copy (for example MSAA or multi-subpass passes). Watch for
+shimmering on fine detail in intermediate passes, and use `AllPasses=false` if
+it is unacceptable.
+
+`M8.33 PASS_COVERAGE` lines (after 2,048 render-pass begins, then every 65,536)
+group pass begins by render-target size. For each size they report how many got
+VRS and, for the rest, the reason: `msaa`, `depthOnly`, `multiSubpass`,
+`layered`, `otherReject` (input/resolve attachments, extension structures),
+`untracked` (passes created with `vkCreateRenderPass2`) or `dynamicRendering`.
+Sizes that are not the eye size (for example half-resolution effects) are never
+foveated yet; their begin counts show whether that would be worth adding.
+
+## Lens-corner mask (M8.34)
+
+`[LensMask] Enabled=true` skips the image corners outside an ellipse centered
+in each eye image (`Size` = ellipse diameter relative to image width/height).
+Pimax runtimes returned no OpenXR visibility mask, so the ellipse is a manual
+approximation. At `Size=1.0` it skips about 21% of each eye's pixels.
+
+At the start of every eye-sized, single-subpass pass that clears its depth
+attachment, the layer clears the outside rectangles of depth to the nearest
+value (1 for reversed depth that clears to 0, 0 for standard depth that clears
+to 1; other clear values are left alone and counted). Depth-tested geometry
+there then fails before shading, colour writes and blending. Passes without
+depth testing, such as full-screen lighting and post-processing, still run in
+the corners, but VRS already shades those areas at 4x4. The eye's final pass,
+the one copied to OpenXR, clears the same rectangles to black, so the headset
+never shows leftover corner content. Effects that sample neighbouring depth
+(ambient occlusion, reflections) can darken a thin band at the mask edge; it
+sits at the lens edge, so increase `Size` if it is visible.
+
+The info log reports `M8.34 LENS_MASK size=… depthStamped=… finalBlackened=…
+unknownDepthClear=…`. `depthStamped` should grow by several per frame; if it
+stays at zero the game's scene passes do not clear depth at pass begin and the
+mask only blackens the final image.
+
 ## Implemented changes
 
 - **Pattern generation:** each row intersects a circle, square or ellipse in a
@@ -218,8 +285,8 @@ lifecycle, thread safety, frame call order, prediction, swapchain lifetime and
 runtime failure handling. Upstream explicitly warns about motion reprojection,
 ASW and motion smoothing, and documents a possible one-second transition freeze.
 
-**Introduced in beta.10 / M8.31.** Turbo is enabled by default in the public
-0.1.0 package; set `TurboMode=false` to restore normal timing. The independent
+**Introduced in beta.10 / M8.31.** Turbo was enabled by default in the public
+0.1.0 package and is off by default since 0.2.0; set `TurboMode=true` to try it. The independent
 scheduler uses a persistent session worker, one outstanding runtime wait and
 short extrapolation only while the previous state was renderable. Ready states
 retain runtime `shouldRender`. Hitches, extension chains and an already-pipelined

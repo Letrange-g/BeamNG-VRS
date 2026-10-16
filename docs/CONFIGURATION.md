@@ -5,18 +5,21 @@ The release ZIP puts `BeamNG-VRS.ini` beside `Launch-BeamNG-VRS.cmd` at the extr
 | Section | Setting | Default | Meaning |
 | --- | --- | --- | --- |
 | Foveation | `Enabled` | `true` | Apply VRS. Set `false` for scissor-only or turbo-only use; those settings remain independent. Beta.10+. |
+| Foveation | `AllPasses` | `true` | Also apply VRS to the game's internal eye-sized passes (scene, lighting, post effects) that are not directly copied to the headset. Those passes use the finer rate of both eyes per tile. Set `false` to foveate only the final eye image, as in 0.1.0. |
 | Foveation | `Size1x1` | `0.25` | Inner full-quality region size (0 to 1); ellipse uses width/height-relative diameters, circle uses height, square uses height-relative side length. |
-| Foveation | `Size2x2` | `0.60` | Outer size of the medium-quality region (0 to 1); must be at least `Size1x1`. Outside it, shading uses 4x4. |
+| Foveation | `Size2x2` | `0.55` | Outer size of the medium-quality region (0 to 1); must be at least `Size1x1`. Outside it, shading uses 4x4. |
 | Foveation | `Shape` | `circle` | `circle`, `square`, or `ellipse`. Square uses side length; ellipse uses eye-width-relative horizontal diameter and eye-height-relative vertical diameter. |
 | Debug | `DrawOutline` | `false` | Draw the red 1x1 boundary and orange 2x2-to-4x4 boundary. |
-| Scissor | `Enabled` | `false` | Experimental four-edge crop. Test visible edges and frame times before enabling. |
+| Scissor | `Enabled` | `true` | Four-edge crop. Check the visible edges in the headset and reduce the edge values if content is cut off. |
 | Scissor | `Top` | `0.30` | Fraction of eye-image height cropped from the top when scissor is enabled (0 to 0.49). |
 | Scissor | `Bottom` | `0.30` | Fraction cropped from the bottom (0 to 0.49). |
 | Scissor | `LeftEyeLeft` | `0.10` | Left eye's outer/left edge, fraction of that eye's image width (0 to 0.49). Beta.9+. |
 | Scissor | `LeftEyeRight` | `0` | Left eye's nose-side/right edge (0 to 0.49). Beta.9+. |
 | Scissor | `RightEyeLeft` | `0` | Right eye's nose-side/left edge (0 to 0.49). Beta.9+. |
 | Scissor | `RightEyeRight` | `0.10` | Right eye's outer/right edge (0 to 0.49). Beta.9+. |
-| Performance | `TurboMode` | `true` | Experimental one-frame OpenXR wait overlap. Enabled by default in 0.1.0. Restart to change. |
+| LensMask | `Enabled` | `true` | Skip rendering the image corners outside an ellipse, which the headset lenses hide. Experimental; check the edges in the headset. |
+| LensMask | `Size` | `1.15` | Kept ellipse diameter relative to eye-image width/height (0.5 to 1.5). `1.0` touches all four edges and skips about 21% of pixels; `1.41` skips none. Increase it if black corners are visible. |
+| Performance | `TurboMode` | `false` | Experimental one-frame OpenXR wait overlap. Enabled by default in 0.1.0; off by default since it showed no gain in GPU-limited tests. Restart to change. |
 | Logging | `Level` | `info` | `off`, `errors`, `info`, or `debug`. Default is brief status/errors, not verbose diagnostics. |
 | Tracking | `GracePeriodMs` | `30` | Hold the last valid gaze for this many milliseconds during temporary tracking loss (0 to 1000). |
 | Tracking | `GazeRefreshMs` | `8` | Minimum CPU gaze polling interval (2 to 50 ms). This does not measure eye-to-display latency. |
@@ -25,7 +28,7 @@ Use a dot for decimals. Boolean values accept `true`/`false` or `1`/`0`; section
 
 The launcher loads both layers; `[Foveation] Enabled=true` activates the per-eye VRS pipeline and eye sampling. It keeps lazy framebuffer creation and asynchronous updates enabled, stencil disabled, the selected logging level, and a 350 ms debug-outline pause after resolution changes. Legacy feature gates are internal details; users do not need to configure them. Eye-following foveation falls back to fixed center when valid gaze is unavailable after the grace period.
 
-With the default `Shape=circle`, `Size1x1=0.25` makes the sharp circle's diameter 25% of eye-image height; `Size2x2=0.60` sets the medium-quality outer diameter to 60%. Shading uses 4x4 outside it. Ellipse instead scales each diameter to the corresponding eye-image width or height. Sizes do not resize the render targets. GPU savings depend on shaders and GPU bottlenecks; no measured FPS increase is claimed.
+With the default `Shape=circle`, `Size1x1=0.25` makes the sharp circle's diameter 25% of eye-image height; `Size2x2=0.55` sets the medium-quality outer diameter to 55%. Shading uses 4x4 outside it. Ellipse instead scales each diameter to the corresponding eye-image width or height. Sizes do not resize the render targets. GPU savings depend on shaders and GPU bottlenecks; no measured FPS increase is claimed.
 
 ## Scissor crop
 
@@ -90,7 +93,7 @@ TurboMode=true
 
 Requires the complete beta.10 package. Turbo starts the next runtime frame wait
 in the background and can let CPU/render work overlap that wait. It does not
-reduce CPU simulation work or GPU shading cost. It is on by default in 0.1.0 and can be
+reduce CPU simulation work or GPU shading cost. It was on by default in 0.1.0 and is off by default since 0.2.0. It can be
 used with or without VRS/scissor. Restart after changing it. Compare the same
 scene with turbo off/on; check head movement, stutter and frame times, not just FPS.
 It may interfere with motion reprojection. Set it back to `false` if pacing or

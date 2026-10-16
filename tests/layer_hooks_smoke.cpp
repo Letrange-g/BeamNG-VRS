@@ -78,6 +78,7 @@ int main(int argc,char** argv){
  SetEnvironmentVariableA("BEAMNG_VRS_M8_EXPERIMENTAL",cropOnly?"0":"1");
  SetEnvironmentVariableA("BEAMNG_VRS_M89_STATIC_TEST",cropOnly?"0":"1");
  SetEnvironmentVariableA("BEAMNG_VRS_M84_CPU_GAZE",cropOnly?"0":"1");
+ SetEnvironmentVariableA("BEAMNG_VRS_ALL_PASSES",cropOnly?"0":"1");
  SetEnvironmentVariableA("BEAMNG_VRS_GAZE_GRACE_MS","0");
  SetEnvironmentVariableA("BEAMNG_VRS_CENTER_RADIUS","0.25");
  SetEnvironmentVariableA("BEAMNG_VRS_MID_RADIUS","0.60");
@@ -273,9 +274,10 @@ int main(int argc,char** argv){
  // Stage through the real producer. A newer sample with identical payload
  // must not create a new upload, even while the latest source slot is pinned.
  m814ActiveWidth=64;m814ActiveHeight=64;
- std::array<std::array<std::array<uint8_t,64>,3>,2> memory{};
+ // Left, right and the M8.32 combined image for unclassified passes.
+ std::array<std::array<std::array<uint8_t,64>,3>,3> memory{};
  auto& staging=m812Staging[device];
- for(int eye=0;eye<2;++eye)for(int slot=0;slot<3;++slot){
+ for(int eye=0;eye<3;++eye)for(int slot=0;slot<3;++slot){
   staging.slots[eye][slot].mapped=memory[eye][slot].data();staging.slots[eye][slot].capacity=64;
  }
  HANDLE mapping=CreateFileMappingA(INVALID_HANDLE_VALUE,nullptr,PAGE_READWRITE,0,sizeof(beamng_projected_gaze::Data),beamng_projected_gaze::mappingName);assert(mapping);
@@ -290,6 +292,8 @@ int main(int argc,char** argv){
  auto prepare=[&](){Sleep(12);m84PrepareEyePatterns();};
  sample(.43f,.66f);prepare();assert(m812bPreparedCount[0]==1 && m812bPreparedCount[1]==1);
  auto& state=m815SlotStates[device][m814Key(64,64)];
+ // Both eyes share this gaze, so the finer-of-both combined payload equals them.
+ assert(m812bPreparedCount[2]==1 && memory[2][state.latestSlot[2]]==memory[0][state.latestSlot[0]]);
  for(int eye=0;eye<2;++eye)state.busy[eye][state.latestSlot[eye]]=true;
  sample(.43f,.66f);prepare();assert(m812bPreparedCount[0]==1 && m821GazeStats.identicalPattern==2);
  sample(.9f,.1f);prepare();assert(m812bPreparedCount[0]==2 && m812bPreparedCount[1]==2);
@@ -297,12 +301,13 @@ int main(int argc,char** argv){
  for(auto& eye:state.busy)eye.fill(true);
  const auto saved=memory;sample(.1f,.9f);prepare();assert(memory==saved && m812bPreparedCount[0]==2);
  for(auto& eye:state.busy)eye.fill(false);
- prepare();assert(m812bPreparedCount[0]==3 && m812bPreparedCount[1]==3);
+ // The combined payload missed its busy slot and is retried with the eyes.
+ prepare();assert(m812bPreparedCount[0]==3 && m812bPreparedCount[1]==3 && m812bPreparedCount[2]==3);
  // The same source sequence must be restaged after a resolution switch.
  m814ActiveWidth=80;prepare();assert(m812bPreparedCount[0]==4 && m812bPreparedCount[1]==4);
  sample(.1f,.9f,0);prepare();assert(m812bPreparedCount[0]==5 && m825StagedCenters[0].u==.5f);
  // Returning to a cached resolution during dropout still restores center.
- m814ActiveWidth=64;state.latestSlot={{-1,-1}};prepare();assert(m812bPreparedCount[0]==6 && m812bPreparedCount[1]==6);
+ m814ActiveWidth=64;state.latestSlot={{-1,-1,-1}};prepare();assert(m812bPreparedCount[0]==6 && m812bPreparedCount[1]==6);
  // Zero sizes are a valid diagnostic: every eligible tile becomes 4x4.
  // Exercise the actual layer's numeric reader and fixed/live pattern paths.
  SetEnvironmentVariableA("BEAMNG_VRS_CENTER_RADIUS","0");
@@ -311,7 +316,7 @@ int main(int argc,char** argv){
  assert(coarse.texels.size()==16);
  for(const auto value:coarse.texels)assert(value==beamng_ffr::rate(4,4));
  sample(.4f,.7f);prepare();assert(m812bPreparedCount[0]==7 && m812bPreparedCount[1]==7);
- for(int eye=0;eye<2;++eye){
+ for(int eye=0;eye<3;++eye){
   const auto latest=state.latestSlot[eye];assert(latest>=0);
   for(size_t i=0;i<coarse.texels.size();++i)assert(memory[eye][latest][i]==beamng_ffr::rate(4,4));
  }

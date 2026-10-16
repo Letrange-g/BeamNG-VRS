@@ -23,7 +23,15 @@ int main() {
  assert(defaults.at("BEAMNG_VRS_SCISSOR_BOTTOM") == "0.30");
  assert(defaults.at("BEAMNG_VRS_SCISSOR_LEFT") == "0");
  assert(defaults.at("BEAMNG_VRS_SCISSOR_RIGHT") == "0");
- assert(defaults.at("BEAMNG_VRS_TURBO_MODE")=="1");
+ assert(defaults.at("BEAMNG_VRS_TURBO_MODE")=="0");
+ assert(defaults.at("BEAMNG_VRS_MID_RADIUS")=="0.55" && defaults.at("BEAMNG_VRS_SCISSOR_ENABLE")=="1");
+ assert(defaults.at("BEAMNG_VRS_ALL_PASSES")=="1");
+ assert(defaults.at("BEAMNG_VRS_LENS_MASK")=="1" && defaults.at("BEAMNG_VRS_LENS_MASK_SIZE")=="1.15");
+ std::istringstream mask("[LensMask]\nEnabled=true\nSize=1.05\n");
+ const auto masked=parse(mask);
+ assert(masked.at("BEAMNG_VRS_LENS_MASK")=="1" && masked.at("BEAMNG_VRS_LENS_MASK_SIZE")=="1.05");
+ std::istringstream finalOnly("[Foveation]\nAllPasses=false\n");
+ assert(parse(finalOnly).at("BEAMNG_VRS_ALL_PASSES")=="0");
  std::istringstream independent("[Foveation]\nEnabled=false\n[Scissor]\nEnabled=true\n[Performance]\nTurboMode=true\n");
  const auto options=parse(independent);
  for(const auto* gate:{"BEAMNG_VRS_ENABLE_FEATURES","BEAMNG_VRS_ATTACHMENT_PIPELINES","BEAMNG_VRS_M84_CPU_GAZE","BEAMNG_VRS_M815_ASYNC","BEAMNG_EYE_SAMPLE","BEAMNG_EYE_FORCE_EXTENSION"})
@@ -37,7 +45,8 @@ int main() {
  }
  std::istringstream omitted("[Debug]\nDrawOutline=false\n");
  const auto fallback = parse(omitted);
- assert(fallback.at("BEAMNG_VRS_TURBO_MODE")=="1");
+ assert(fallback.at("BEAMNG_VRS_TURBO_MODE")=="0");
+ assert(fallback.at("BEAMNG_VRS_MID_RADIUS")=="0.55" && fallback.at("BEAMNG_VRS_SCISSOR_ENABLE")=="1" && fallback.at("BEAMNG_VRS_LENS_MASK")=="1");
  assert(fallback.at("BEAMNG_VRS_SHAPE") == "circle");
  assert(fallback.at("BEAMNG_VRS_SCISSOR_TOP") == "0.30");
  assert(fallback.at("BEAMNG_VRS_SCISSOR_BOTTOM") == "0.30");
@@ -98,7 +107,7 @@ int main() {
  assert(values.at("BEAMNG_VRS_SHAPE") == "square");
  assert(values.at("BEAMNG_VRS_GAZE_GRACE_MS") == "30");
  for(const char* bad : {"[Logging]\nLevel=verbose", "[Logging]\nLevel=off\nlevel=info", "[Performance]\nTurboMode=yes", "[Performance]\nTurboMode=true\nturbomode=false",
-     "[Foveation]\nEnabled=2", "[Foveation]\nEnabled=true\nenabled=false", "[Foveation]\nTypo=1", "[other]\nEnabled=1", "[Debug]\nDrawOutline=1\ndrawoutline=0",
+     "[Foveation]\nAllPasses=yes", "[LensMask]\nSize=1.6", "[LensMask]\nSize=0.4", "[LensMask]\nEnabled=on", "[Foveation]\nEnabled=2", "[Foveation]\nEnabled=true\nenabled=false", "[Foveation]\nTypo=1", "[other]\nEnabled=1", "[Debug]\nDrawOutline=1\ndrawoutline=0",
      "[Foveation]\nSize1x1=nan", "[Foveation]\nSize1x1=1.2", "[Foveation]\nSize1x1=-1",
      "[Foveation]\nSize1x1=0.7\nSize2x2=0.5", "[Foveation]\nSize1x1=0,25",
      "[Scissor]\nTop=0.5", "[Scissor]\nBottom=-0.1", "[Scissor]\nEnabled=yes",
