@@ -47,7 +47,7 @@ struct Event {
 };
 struct Command {
  Id pool=0,layout=0,output=0,input=0,pass=0;
- bool primary=false,recording=false,ambiguous=false,scenePass=false,overflow=false,relevant=false;
+ bool primary=false,recording=false,ambiguous=false,scenePass=false,overflow=false,relevant=false,depthWrites=false;
  int eye=-1;
  uint64_t draws=0,checkedRevision=0;
  std::array<BoundSet,8> sets{};
@@ -63,7 +63,7 @@ struct Stats {
   ambiguous=0,noProducer=0,unsupported=0,barriers=0,descriptorScans=0,
   scanSkips=0,setMisses=0,setDrops=0,slotDrops=0,imageDrops=0,
   commandDrops=0,eventDrops=0,staleEvents=0,staleDescriptors=0,multipleQueues=0,
-  unormProducerPasses=0,unormObserved=0,unormSelected=0,unormBinds=0,pipelineDrops=0;
+  unormProducerPasses=0,unormObserved=0,unormSelected=0,unormBinds=0,pipelineDrops=0,scopedDepthWrites=0,staleDepthWrites=0;
 };
 class Tracker {
  static constexpr size_t MaxImages=8192,MaxCommands=8192,MaxSets=131072,MaxSlots=128,MaxEvents=256,MaxReadSets=64,MaxPipelines=65536,MaxPassPipelines=256;
@@ -78,6 +78,7 @@ class Tracker {
  std::unordered_map<Id,Writer> writers_;
  void append(Command& c,Event event){
   if(event.heavy || event.kind==Event::Read)c.relevant=true;
+  if(event.kind==Event::DepthWrite)c.depthWrites=true;
   if(c.overflow)return;
   if(c.events.size()>=MaxEvents){c.events.clear();c.overflow=true;++stats.eventDrops;return;}
   c.events.push_back(std::move(event));
@@ -95,6 +96,19 @@ class Tracker {
   for(auto i=unormEvidence.begin();i!=unormEvidence.end();)if(i->second.source.depth==depth)i=unormEvidence.erase(i);else ++i;
   for(auto& [id,w]:writers_)if(w.unorm && w.unorm->depth==depth)w.unorm.reset();
   for(auto& [id,c]:commands)if(c.depth==depth)clearAuthorization(c);
+ }
+ bool participatingDepth(Id depth)const{
+  if(pendingUnorm_.count(depth))return true;
+  for(const auto& [id,w]:unormWriters_)if(w.depth==depth)return true;
+  for(const auto& [id,e]:unormEvidence)if(e.source.depth==depth)return true;
+  for(const auto& [id,w]:writers_)if(w.unorm && w.unorm->depth==depth)return true;
+  for(const auto& [id,c]:commands)if(c.unormAuthorized && c.depth==depth)return true;
+  return false;
+ }
+ bool hasUnormAssociation()const{
+  if(!pendingUnorm_.empty() || !unormWriters_.empty() || !unormEvidence.empty())return true;
+  for(const auto& [id,c]:commands)if(c.unormAuthorized)return true;
+  return false;
  }
  void clearPending(){writers_.clear();unormWriters_.clear();pendingUnorm_.clear();}
  void clearHistory(){clearAuthorizations();clearPending();evidence.clear();unormEvidence.clear();}
@@ -134,7 +148,7 @@ public:
   if(w==width_ && h==height_)return;
   width_=w;height_=h;++descriptorRevision_;clearHistory();
   // Events recorded against an old resolution cannot authorize a new one.
-  for(auto& [id,c]:commands){c.events.clear();c.overflow=c.relevant=false;clearPass(c);c.bound={};}
+  for(auto& [id,c]:commands){c.events.clear();c.overflow=c.relevant=c.depthWrites=false;clearPass(c);c.bound={};}
  }
  bool unormCandidate(Id id)const{const auto i=images.find(id);return eligible(id) && i->second.unormCandidate;}
  void depthImage(Id id){
@@ -217,7 +231,7 @@ public:
  }
  void resetCommand(Id id,bool begin=false){
   const auto i=commands.find(id);if(i==commands.end())return;
-  auto& c=i->second;clearPass(c);c.events.clear();c.overflow=c.relevant=false;c.recording=begin && c.primary;c.bound={};
+  auto& c=i->second;clearPass(c);c.events.clear();c.overflow=c.relevant=c.depthWrites=false;c.recording=begin && c.primary;c.bound={};
  }
  void resetCommands(Id pool,bool destroy=false){
   for(auto i=commands.begin();i!=commands.end();){
@@ -228,6 +242,15 @@ public:
  void invalidate(Id cmd){
   const auto i=commands.find(cmd);if(i==commands.end() || !i->second.recording)return;
   append(i->second,{});clearPass(i->second);i->second.bound={};++stats.unsupported;
+ }
+ // Copies and clears modify their destination only. Recording the affected
+ // depth preserves source/scratch separation and defers invalidation until the
+ // command buffer is actually submitted in order; abandoned recordings vanish.
+ void depthWrite(Id cmd,Id destination){
+  const auto c=commands.find(cmd);const auto d=depths_.find(destination);
+  if(c==commands.end() || !c->second.recording || d==depths_.end())return;
+  Event event{};event.kind=Event::DepthWrite;event.depth=destination;event.depthGeneration=d->second;
+  append(c->second,std::move(event));
  }
  void beginPass(Id cmd,Id output,int eye,Id pass,bool scenePass=false,Id depth=0,bool unormPass=false){
   const auto i=commands.find(cmd);if(i==commands.end() || !i->second.recording)return;
@@ -333,7 +356,20 @@ public:
   if(!queue || submittedCommands.empty())return;
   bool relevant=false;
   for(const auto cmd:submittedCommands){const auto c=commands.find(cmd);
-   if(c!=commands.end() && c->second.relevant){relevant=true;break;}}
+   if(c==commands.end())continue;
+   if(c->second.relevant){relevant=true;break;}
+   // A depth-only transfer queue must not hijack initial discovery, but its
+   // overwrite of a participating depth cannot disappear from established
+   // evidence. No cross-queue ordering model is available, so fail closed.
+   if(queue_ && queue!=queue_){
+    if(c->second.overflow && c->second.depthWrites && hasUnormAssociation()){relevant=true;break;}
+    for(const auto& e:c->second.events){
+     const bool depthOnly=e.kind==Event::DepthWrite || (e.kind==Event::Write && e.depth && !e.unorm && !e.scenePass);
+     if(depthOnly && liveDepth(e.depth,e.depthGeneration) && participatingDepth(e.depth)){relevant=true;break;}
+    }
+    if(relevant)break;
+   }
+  }
   // Startup upload/transfer queues with no candidate scene or eye observations
   // must not lock discovery to the wrong queue.
   if(!relevant && queue!=queue_)return;
@@ -344,6 +380,7 @@ public:
   for(const auto cmd:submittedCommands){
    const auto c=commands.find(cmd);
    if(c==commands.end() || !c->second.primary || !c->second.recording || c->second.overflow){
+    if(c!=commands.end() && c->second.overflow && c->second.depthWrites)clearUnormHistory();
     clearPending();++stats.barriers;continue;
    }
    for(const auto& e:c->second.events){
@@ -353,13 +390,19 @@ public:
     // ready() also needs a newly established, recent heavy producer. Otherwise
     // one unrelated unsupported command per frame would erase all training.
     if(e.kind==Event::Barrier){clearPending();++stats.barriers;continue;}
-    if(e.kind==Event::DepthWrite){clearUnormDepth(e.depth);continue;}
+    if(e.kind==Event::DepthWrite){
+     if(liveDepth(e.depth,e.depthGeneration)){clearUnormDepth(e.depth);++stats.scopedDepthWrites;}
+     else ++stats.staleDepthWrites;
+     continue;
+    }
     const auto image=images.find(e.image);
     if(image==images.end() || image->second.generation!=e.generation || !eligible(e.image)){
      clearPending();++stats.staleEvents;continue;
     }
     if(e.kind==Event::Write){
-     if(e.depth && !e.unorm && !e.scenePass)clearUnormDepth(e.depth);
+     if(e.depth && !e.unorm && !e.scenePass){
+      if(liveDepth(e.depth,e.depthGeneration))clearUnormDepth(e.depth);else ++stats.staleDepthWrites;
+     }
      if(e.unorm || unormCandidate(e.image)){
       if(!e.heavy || !liveDepth(e.depth,e.depthGeneration)){
        pendingUnorm_.erase(e.depth);unormWriters_.erase(e.image);unormEvidence.erase(e.image);continue;

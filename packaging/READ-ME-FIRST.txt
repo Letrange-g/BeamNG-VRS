@@ -1,10 +1,13 @@
-UNORM SCENE VRS TEST (0.1.1-unorm.1)
+UNORM SCENE VRS TEST (0.1.1-unorm.2)
 This temporary performance-ceiling test uses uniform 4x4 shading on selected
 pipelines in an earlier scene-color pass. UnormSceneVRS is independent of
 SharedSceneVRS and starts disabled. Expect coarse shading even in the center;
 Size1x1/Size2x2/Shape do not change this test's UNORM pattern. Final-eye VRS still
 follows gaze but cannot restore detail lost earlier. No gain is promised.
 Back up DLLs, launcher and INI together. Extract this ZIP beside Bin64.
+This revision fixes depth-copy tracking that prevented the earlier-stage test
+from activating in the first capture. Copies into unrelated scratch depth
+images now preserve scene associations. Performance remains to be measured.
 
 RECOMMENDED: ONE FOCUSED CAPTURE
 This mode switches the selected stage's VRS off/on automatically, so one

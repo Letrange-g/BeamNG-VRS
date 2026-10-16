@@ -142,8 +142,9 @@ void m833Report(VkDevice device){
     {std::lock_guard<std::mutex> guard(mu);auto& tracker=m837Trackers[device];unormLearned=tracker.unormEvidence.size();
      for(const auto& [image,e]:tracker.unormEvidence)if(tracker.readyUnorm(image,e.source.pass,e.source.depth,now))++unormReady;
     }
-    char u[600]{};sprintf_s(u,"M8.38 UNORM_SCENE rate=4x4 mode=%s learned=%zu ready=%u producers=%llu observations=%llu selected=%llu binds=%llu pipelineDrops=%llu variants=%llu skipped=%llu failed=%llu (ordered stage association; recorded counts, not GPU savings)",
+    char u[660]{};sprintf_s(u,"M8.38 UNORM_SCENE rate=4x4 mode=%s learned=%zu ready=%u producers=%llu observations=%llu selected=%llu binds=%llu pipelineDrops=%llu depthWrites=%llu staleDepthWrites=%llu variants=%llu skipped=%llu failed=%llu (ordered stage association; recorded counts, not GPU savings)",
       m838Compare()?"compare":"on",unormLearned,unormReady,s.unormProducerPasses,s.unormObserved,s.unormSelected,s.unormBinds,s.pipelineDrops,
+      s.scopedDepthWrites,s.staleDepthWrites,
       m838VariantCreated.load(),m838VariantSkipped.load(),m838VariantFailed.load());log(u);
    }
    char b[900]{};sprintf_s(b,"M8.37 SHARED_SCENE pattern=fixed_center submissions=%llu observations=%llu learned=%zu ready=%u selected=%llu binds=%llu producers=%llu missingInputs=%llu ambiguous=%llu noProducer=%llu sets=%zu setMisses=%llu setDrops=%llu eventDrops=%llu barriers=%llu staleDescriptors=%llu multipleQueues=%llu (candidate participation, not shader dataflow; recorded counts, not GPU timings)",
@@ -287,8 +288,12 @@ EARLY_COUNT(vkCmdDrawIndexedIndirectCount)
 EARLY_COUNT(vkCmdDrawIndirectCountKHR)
 EARLY_COUNT(vkCmdDrawIndexedIndirectCountKHR)
 #undef EARLY_COUNT
-EARLY_FORWARD(vkCmdClearColorImage,(VkCommandBuffer c,VkImage i,VkImageLayout l,const VkClearColorValue* v,uint32_t n,const VkImageSubresourceRange* r),(c,i,l,v,n,r),if constexpr(std::is_same_v<std::decay_t<decltype(t)>,beamng_shared::Tracker>){if(t.candidate(m833Id(i)) || (m838Enabled() && m838DepthImages.count(i)))t.invalidate(m833Id(c));}else t.invalidate(m833Id(c)))
-EARLY_FORWARD(vkCmdClearDepthStencilImage,(VkCommandBuffer c,VkImage i,VkImageLayout l,const VkClearDepthStencilValue* v,uint32_t n,const VkImageSubresourceRange* r),(c,i,l,v,n,r),if constexpr(std::is_same_v<std::decay_t<decltype(t)>,beamng_shared::Tracker>){if(t.candidate(m833Id(i)) || (m838Enabled() && m838DepthImages.count(i)))t.invalidate(m833Id(c));}else t.invalidate(m833Id(c)))
+// Unknown color replacement retains the existing conservative barrier. UNORM
+// clears must receive the same protection as already tracked SFLOAT clears.
+EARLY_FORWARD(vkCmdClearColorImage,(VkCommandBuffer c,VkImage i,VkImageLayout l,const VkClearColorValue* v,uint32_t n,const VkImageSubresourceRange* r),(c,i,l,v,n,r),if constexpr(std::is_same_v<std::decay_t<decltype(t)>,beamng_shared::Tracker>){if(t.candidate(m833Id(i)) || (m838Enabled() && t.unormCandidate(m833Id(i))))t.invalidate(m833Id(c));}else t.invalidate(m833Id(c)))
+// Depth clear changes only this image. In particular, clearing scratch depth
+// must not discard the live scene-depth association used by another pass.
+EARLY_FORWARD(vkCmdClearDepthStencilImage,(VkCommandBuffer c,VkImage i,VkImageLayout l,const VkClearDepthStencilValue* v,uint32_t n,const VkImageSubresourceRange* r),(c,i,l,v,n,r),if constexpr(std::is_same_v<std::decay_t<decltype(t)>,beamng_shared::Tracker>){if(m838Enabled() && m838DepthImages.count(i))t.depthWrite(m833Id(c),m833Id(i));}else t.invalidate(m833Id(c)))
 #undef EARLY_FORWARD
 extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyImage(VkDevice device,VkImage i,const VkAllocationCallbacks* a){
  auto d=lookupDevice(device);

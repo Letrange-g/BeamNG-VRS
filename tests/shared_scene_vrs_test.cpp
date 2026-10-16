@@ -35,6 +35,80 @@ struct UnormFixture:Fixture {
  void chain(int eye=0){t.resetCommand(1,true);unorm();scene();consumer(1,eye);}
  void confirmUnorm(){for(unsigned i=0;i<3;++i){chain(i%2);t.submitted(100,{1},100+i);}}
 };
+void depthWriteTests(){
+ {
+  UnormFixture copied;
+  for(unsigned i=0;i<3;++i){
+   copied.t.resetCommand(1,true);copied.unorm();
+   copied.t.depthWrite(1,71); // Copy source depth 70 into scratch 71.
+   copied.t.depthWrite(1,71); // Clearing scratch also leaves source intact.
+   copied.scene();copied.consumer(1,i%2);copied.t.submitted(100,{1},100+i);
+  }
+  assert(copied.t.readyUnorm(40,80,70,102) && copied.t.ready(10,50,102));
+  assert(copied.t.stats.scopedDepthWrites==6 && !copied.t.stats.barriers);
+ }
+ {
+  for(unsigned position=0;position<3;++position){
+   UnormFixture overwritten;
+   for(unsigned i=0;i<3;++i){
+    overwritten.t.resetCommand(1,true);overwritten.unorm();
+    if(position==0)overwritten.t.depthWrite(1,70);
+    overwritten.scene();if(position==1)overwritten.t.depthWrite(1,70);
+    overwritten.consumer(1,i%2);if(position==2)overwritten.t.depthWrite(1,70);
+    overwritten.t.submitted(100,{1},100+i);
+   }
+   assert(!overwritten.t.readyUnorm(40,80,70,102) && overwritten.t.unormEvidence.empty());
+   overwritten.confirmUnorm();assert(overwritten.t.readyUnorm(40,80,70,102));
+  }
+ }
+ {
+  UnormFixture f;f.confirmUnorm();f.t.resetCommand(2,true);f.t.depthWrite(2,70);
+  assert(f.t.readyUnorm(40,80,70,103)); // Recording has no submitted effect.
+  f.t.resetCommand(2,true);f.t.submitted(100,{2},103);
+  assert(f.t.readyUnorm(40,80,70,103)); // Abandoned recording cannot revoke it.
+  f.t.beginPass(1,40,-1,80,false,70,true);assert(f.t.prepareUnorm(1,103));f.t.pipeline(1,101);
+  f.t.depthWrite(2,70);f.t.submitted(100,{2},103);
+  assert(!f.t.allowUnormPipeline(1,101,103) && !f.t.readyUnorm(40,80,70,103));
+  // Same queue: a new complete chain AFTER the write may train normally.
+  for(unsigned i=0;i<3;++i){f.chain(i%2);f.t.submitted(100,{2,1},104+i);}
+  assert(!f.t.readyUnorm(40,80,70,106)); // Each repeated overwrite discards prior proof.
+  f.confirmUnorm();assert(f.t.readyUnorm(40,80,70,102));
+ }
+ {
+  UnormFixture f;f.t.resetCommand(2,true);f.t.depthWrite(2,70);
+  f.t.eraseImage(70);f.t.depthImage(70);f.confirmUnorm();
+  f.t.submitted(100,{2},103);assert(f.t.readyUnorm(40,80,70,103) && f.t.stats.staleDepthWrites==1);
+  f.t.submitted(999,{2},103);assert(f.t.readyUnorm(40,80,70,103) && !f.t.stats.multipleQueues);
+ }
+ {
+  UnormFixture f;f.t.resetCommand(2,true);f.t.depthWrite(2,70);f.t.depthWrite(2,71);
+  f.t.submitted(999,{2},90); // Startup transfers do not select the learner queue.
+  f.confirmUnorm();assert(f.t.readyUnorm(40,80,70,102) && !f.t.stats.multipleQueues);
+  f.t.resetCommand(2,true);f.t.depthWrite(2,71);f.t.submitted(999,{2},103);
+  assert(f.t.readyUnorm(40,80,70,103) && !f.t.stats.multipleQueues);
+  f.t.beginPass(1,40,-1,80,false,70,true);assert(f.t.prepareUnorm(1,103));f.t.pipeline(1,101);
+  f.t.resetCommand(2,true);f.t.depthWrite(2,70);f.t.submitted(999,{2},103);
+  assert(f.t.stats.multipleQueues==1 && !f.t.readyUnorm(40,80,70,103) && !f.t.allowUnormPipeline(1,101,103));
+ }
+ {
+  // Even without full learned proof, another queue touching a pending producer
+  // matters. An unknown supported-color depth write follows the same rule.
+  for(bool color:{false,true}){
+   UnormFixture f;f.t.resetCommand(1,true);f.unorm();f.t.submitted(100,{1},100);
+   f.t.resetCommand(2,true);
+   if(color){f.t.beginPass(2,20,-1,90,false,70);f.t.draw(2);f.t.endPass(2,101);}else f.t.depthWrite(2,70);
+   f.t.submitted(999,{2},101);assert(f.t.stats.multipleQueues==1);
+  }
+ }
+ {
+  for(Id queue:{100u,999u}){
+   UnormFixture f;f.confirmUnorm();f.t.beginPass(1,40,-1,80,false,70,true);assert(f.t.prepareUnorm(1,103));f.t.pipeline(1,101);
+   f.t.resetCommand(2,true);for(unsigned n=0;n<257;++n)f.t.depthWrite(2,n==0?70:71);
+   f.t.submitted(queue,{2},103);
+   assert(f.t.stats.eventDrops==1 && !f.t.readyUnorm(40,80,70,103) && !f.t.allowUnormPipeline(1,101,103));
+  }
+ }
+}
 void unormTests(){
  {
   UnormFixture f;f.t.resetCommand(1,true);f.t.beginPass(1,40,-1,80,false,70,true);
@@ -165,6 +239,7 @@ void unormTests(){
  }
 }
 int main(){
+ depthWriteTests();
  unormTests();
  {
   Fixture f;f.record();assert(!f.t.ready(10,50,100));

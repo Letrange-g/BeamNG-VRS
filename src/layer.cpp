@@ -4089,7 +4089,10 @@ void m74hTrace(const char* op, VkCommandBuffer cmd, VkImage src, VkImage dst, ui
  if(m838Enabled()){
   std::lock_guard<std::mutex> guard(mu);
   if(m838DepthImages.count(dst)){
-   auto c=commandDevices.find(cmd);if(c!=commandDevices.end())m837Trackers[c->second].invalidate(m833Id(cmd));
+   // Copying scene depth into a scratch image reads the scene depth; it does
+   // not overwrite every pending producer. Break only the destination's
+   // association, in successful submission order and for its live generation.
+   auto c=commandDevices.find(cmd);if(c!=commandDevices.end())m837Trackers[c->second].depthWrite(m833Id(cmd),m833Id(dst));
   }
  }
  const int copyEye=m75TraceTransfer(src,dst);

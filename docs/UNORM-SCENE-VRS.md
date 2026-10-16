@@ -1,6 +1,6 @@
 # UNORM scene VRS experiment
 
-`0.1.1-unorm.1` tests the performance ceiling of **uniform 4x4 shading** on
+`0.1.1-unorm.2` tests the performance ceiling of **uniform 4x4 shading** on
 selected pipelines in an earlier scene-color pass. The new `UnormSceneVRS`
 switch starts disabled and can run independently of `SharedSceneVRS`.
 
@@ -10,6 +10,12 @@ Final-eye VRS continues to follow gaze, and per-eye scissor stays on the final
 eye outputs, but neither can restore detail lost earlier. Expect visible
 pixelation; check both headset views. This test does not promise a performance
 gain or represent a finished foveated-quality option.
+
+This revision fixes depth-copy tracking: writing a separate scratch depth image
+no longer discards associations for unrelated scene targets. Writes to a depth
+image participating in an association still invalidate that association. The
+first capture of `unorm.1` produced zero UNORM VRS binds and zero GPU samples,
+so it did not measure the performance of this earlier-stage experiment.
 
 ## Recommended: one focused capture
 
@@ -50,7 +56,9 @@ complete log matters. This mode adds measurement overhead and deliberately
 changes shading during play.
 
 At `[Logging] Level=info`, `M8.38 UNORM_SCENE` reports `learned`, `ready`,
-`selected`, and `binds` counts. `M8.38 GPU_UNORM` records focused timings for
+`selected`, and `binds` counts. `depthWrites` counts submitted, live depth writes
+handled by destination; `staleDepthWrites` counts rejected old generations.
+`M8.38 GPU_UNORM` records focused timings for
 `mode=baseline` and `mode=vrs`, together with draw coverage. Both modes need
 measured coverage for a useful comparison. `coverage=full` means all recorded
 draws in that measured scope used the replacement pipeline; the hardware may
@@ -82,6 +90,11 @@ pipelines keep their normal shading; stale objects or broken associations
 invalidate the relevant evidence. This is a candidate association from
 submission order and bound textures, not proof of shader reads, matching
 texture coordinates, or GPU dependencies.
+
+Learning follows one observed queue. Depth-only startup transfers do not choose
+that queue. A later foreign-queue write to a participating depth disables
+learning, but transfers before discovery are not used to prove cross-queue
+synchronization.
 
 ## Settings and limits
 

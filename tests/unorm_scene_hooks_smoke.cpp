@@ -10,7 +10,7 @@ template<class T> T handle(uintptr_t id){return reinterpret_cast<T>(id);}
 uintptr_t nextHandle=100;
 VkResult submitResult=VK_SUCCESS;
 bool failUniform=false;
-unsigned draws=0,submits=0,uniformCreates=0;
+unsigned draws=0,submits=0,uniformCreates=0,depthCopies=0,depthCopies2=0,depthClears=0,colorClears=0;
 struct PipelineDescription { VkRenderPass pass{}; uint32_t rate=1; VkRect2D scissor{}; };
 std::unordered_map<VkPipeline,PipelineDescription> pipelineDescriptions;
 std::unordered_map<VkRenderPass,VkFormat> passFormats;
@@ -73,6 +73,18 @@ VKAPI_ATTR void VKAPI_CALL beginPass(VkCommandBuffer cmd,const VkRenderPassBegin
 VKAPI_ATTR void VKAPI_CALL endPass(VkCommandBuffer){}
 VKAPI_ATTR void VKAPI_CALL draw(VkCommandBuffer,uint32_t,uint32_t,uint32_t,uint32_t){++draws;}
 VKAPI_ATTR void VKAPI_CALL clear(VkCommandBuffer,uint32_t,const VkClearAttachment*,uint32_t,const VkClearRect*){}
+VKAPI_ATTR void VKAPI_CALL copyImage(VkCommandBuffer,VkImage,VkImageLayout,VkImage,VkImageLayout,uint32_t count,const VkImageCopy* regions){
+ assert(count==1 && regions && regions[0].dstSubresource.aspectMask==VK_IMAGE_ASPECT_DEPTH_BIT);++depthCopies;
+}
+VKAPI_ATTR void VKAPI_CALL copyImage2(VkCommandBuffer,const VkCopyImageInfo2* info){
+ assert(info && info->regionCount==1 && info->pRegions && info->pRegions[0].dstSubresource.aspectMask==VK_IMAGE_ASPECT_DEPTH_BIT);++depthCopies2;
+}
+VKAPI_ATTR void VKAPI_CALL clearDepth(VkCommandBuffer,VkImage,VkImageLayout,const VkClearDepthStencilValue*,uint32_t count,const VkImageSubresourceRange* ranges){
+ assert(count==1 && ranges && ranges[0].aspectMask==VK_IMAGE_ASPECT_DEPTH_BIT);++depthClears;
+}
+VKAPI_ATTR void VKAPI_CALL clearColor(VkCommandBuffer,VkImage,VkImageLayout,const VkClearColorValue*,uint32_t count,const VkImageSubresourceRange* ranges){
+ assert(count==1 && ranges && ranges[0].aspectMask==VK_IMAGE_ASPECT_COLOR_BIT);++colorClears;
+}
 VKAPI_ATTR VkResult VKAPI_CALL submit(VkQueue,uint32_t,const VkSubmitInfo*,VkFence){++submits;return submitResult;}
 
 void exercise(bool baseline){
@@ -87,6 +99,8 @@ void exercise(bool baseline){
  d.early_vkCmdBindDescriptorSets=bindDescriptors;d.early_vkCmdDraw=draw;
  d.cmdBeginRenderPass=beginPass;d.cmdEndRenderPass=endPass;d.cmdBindPipeline=bindPipeline;
  d.cmdClearAttachments=clear;d.m812gQueueSubmit=submit;
+ d.cmdCopyImage=copyImage;d.cmdCopyImage2=copyImage2;
+ d.early_vkCmdClearDepthStencilImage=clearDepth;d.early_vkCmdClearColorImage=clearColor;
  devices[device]=d;m812gQueueDevices[queue]=device;
  VkCommandBufferAllocateInfo allocation{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
  allocation.commandPool=handle<VkCommandPool>(3);allocation.commandBufferCount=3;
@@ -98,6 +112,7 @@ void exercise(bool baseline){
   info.format=format;info.extent={100,80,1};info.mipLevels=info.arrayLayers=1;info.samples=VK_SAMPLE_COUNT_1_BIT;
   info.usage=depth?VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT:
    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_SAMPLED_BIT;
+  info.usage|=VK_IMAGE_USAGE_TRANSFER_SRC_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT;
   VkImage image{};assert(vkCreateImage(device,&info,nullptr,&image)==VK_SUCCESS);return image;
  };
  const auto depth=makeImage(VK_FORMAT_D24_UNORM_S8_UINT,true);
@@ -105,6 +120,7 @@ void exercise(bool baseline){
  // Reusing the scene depth here would correctly invalidate the preceding
  // UNORM/SFLOAT association when that unrelated eye pass writes depth.
  const auto eyeDepth=makeImage(VK_FORMAT_D24_UNORM_S8_UINT,true);
+ const auto scratchDepth=makeImage(VK_FORMAT_D24_UNORM_S8_UINT,true);
  const auto unorm=makeImage(VK_FORMAT_R16G16B16A16_UNORM),scene=makeImage(VK_FORMAT_R16G16B16A16_SFLOAT);
  const VkImage outputs[]={makeImage(VK_FORMAT_R8G8B8A8_UNORM),makeImage(VK_FORMAT_R8G8B8A8_UNORM)};
  assert(m838UnormImages.count(unorm) && !m837SceneImages.count(unorm));
@@ -185,7 +201,26 @@ void exercise(bool baseline){
   vkCmdBeginRenderPass(cmd,&info,VK_SUBPASS_CONTENTS_INLINE);
   if(pass==unormPass || pass==scenePass){assert(activePass[cmd]==pass && activeFramebuffer[cmd]==fb);assert(!m89ActiveShadows.count(cmd));}
  };
- auto record=[&](bool selected,unsigned eye=0){
+ enum class InterveningWrite { ScratchDepth,SceneDepthCopy,SceneDepthClear,UnormColorClear };
+ auto writeBetweenStages=[&](VkCommandBuffer cmd,InterveningWrite mode){
+  VkImageCopy copy{};copy.srcSubresource=copy.dstSubresource={VK_IMAGE_ASPECT_DEPTH_BIT,0,0,1};copy.extent={100,80,1};
+  const auto destination=mode==InterveningWrite::SceneDepthCopy?depth:scratchDepth;
+  const auto source=mode==InterveningWrite::SceneDepthCopy?scratchDepth:depth;
+  vkCmdCopyImage(cmd,source,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,destination,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&copy);
+  VkImageCopy2 copy2{VK_STRUCTURE_TYPE_IMAGE_COPY_2};copy2.srcSubresource=copy.srcSubresource;copy2.dstSubresource=copy.dstSubresource;copy2.extent=copy.extent;
+  VkCopyImageInfo2 info{VK_STRUCTURE_TYPE_COPY_IMAGE_INFO_2};info.srcImage=depth;info.dstImage=scratchDepth;
+  info.srcImageLayout=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;info.dstImageLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  info.regionCount=1;info.pRegions=&copy2;vkCmdCopyImage2(cmd,&info);
+  const VkImageSubresourceRange depthRange{VK_IMAGE_ASPECT_DEPTH_BIT,0,1,0,1};
+  const VkClearDepthStencilValue depthValue{1.f,0};
+  vkCmdClearDepthStencilImage(cmd,mode==InterveningWrite::SceneDepthClear?depth:scratchDepth,
+   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&depthValue,1,&depthRange);
+  if(mode==InterveningWrite::UnormColorClear){
+   const VkImageSubresourceRange colorRange{VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};const VkClearColorValue color{};
+   vkCmdClearColorImage(cmd,unorm,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&color,1,&colorRange);
+  }
+ };
+ auto record=[&](bool selected,unsigned eye=0,InterveningWrite mode=InterveningWrite::ScratchDepth){
   for(const auto cmd:cmds)assert(vkBeginCommandBuffer(cmd,&commandInfo)==VK_SUCCESS);
   start(cmds[0],unormPass,unormFb);
   vkCmdBindPipeline(cmds[0],VK_PIPELINE_BIND_POINT_GRAPHICS,pipeline);assert(bound[cmds[0]]==(selected?coarse:pipeline));
@@ -196,6 +231,10 @@ void exercise(bool baseline){
   // failed. It must still remain original after the stage is fully trained.
   vkCmdBindPipeline(cmds[0],VK_PIPELINE_BIND_POINT_GRAPHICS,failed);assert(bound[cmds[0]]==failed);
   vkCmdDraw(cmds[0],3,1,0,0);vkCmdEndRenderPass(cmds[0]);
+  // Captured BeamNG frames copy the scene depth into separate scratch depth
+  // between the heavy stages. A source read cannot erase its own association.
+  // Exercise both copy APIs and a scratch clear through the actual hooks.
+  writeBetweenStages(cmds[0],mode);
   start(cmds[1],scenePass,sceneFb);vkCmdBindPipeline(cmds[1],VK_PIPELINE_BIND_POINT_GRAPHICS,scenePipeline);
   assert(bound[cmds[1]]==scenePipeline);
   for(unsigned i=0;i<128;++i)vkCmdDraw(cmds[1],3,1,0,0);vkCmdEndRenderPass(cmds[1]);
@@ -208,6 +247,7 @@ void exercise(bool baseline){
  submitResult=VK_ERROR_DEVICE_LOST;assert(send()==VK_ERROR_DEVICE_LOST);submitResult=VK_SUCCESS;
  for(unsigned i=0;i<3;++i){record(false,i%2);assert(send()==VK_SUCCESS);}
  assert(m837Trackers.at(device).readyUnorm(m833Id(unorm),m833Id(unormPass),m833Id(depth),GetTickCount64()));
+ assert(m837Trackers.at(device).stats.barriers==0 && m837Trackers.at(device).stats.scopedDepthWrites==9);
  record(!baseline);
 
  // An unlearned first pipeline, or any missing compatible variant, must use
@@ -231,11 +271,26 @@ void exercise(bool baseline){
  vkCmdBindPipeline(cmds[0],VK_PIPELINE_BIND_POINT_GRAPHICS,pipeline);assert(bound[cmds[0]]==(baseline?pipeline:coarse));
  vkCmdDraw(cmds[0],3,1,0,0);vkCmdEndRenderPass(cmds[0]);
  start(cmds[0],scenePass,sceneFb);assert(bound[cmds[0]]==pipeline);vkCmdEndRenderPass(cmds[0]);
+
+ // Writing the participating depth is different from reading it into scratch:
+ // either copy or clear must revoke the chain. An intervening UNORM color
+ // clear also fails closed. None may create a new positive observation.
+ const auto ready=[&]{return m837Trackers.at(device).readyUnorm(m833Id(unorm),m833Id(unormPass),m833Id(depth),GetTickCount64());};
+ for(const auto mode:{InterveningWrite::SceneDepthCopy,InterveningWrite::SceneDepthClear,InterveningWrite::UnormColorClear}){
+  const auto observations=m837Trackers.at(device).stats.unormObserved;
+  for(unsigned i=0;i<3;++i){record(!baseline && ready(),i%2,mode);assert(send()==VK_SUCCESS);assert(!ready());}
+  assert(m837Trackers.at(device).stats.unormObserved==observations);
+  // Repeated valid chains can recover after a genuine overwrite. Old valid
+  // evidence may remain after a generic barrier, so consult readiness at bind.
+  for(unsigned i=0;i<3;++i){record(!baseline && ready(),i%2);assert(send()==VK_SUCCESS);}
+  assert(ready());
+ }
  vkDestroyImage(device,depth,nullptr);
  assert(!m837Trackers.at(device).readyUnorm(m833Id(unorm),m833Id(unormPass),m833Id(depth),GetTickCount64()));
  vkDestroyPipeline(device,pipeline,nullptr);assert(!m838Variants.count(pipeline) && destroyedPipelines.count(coarse));
  vkDestroyRenderPass(device,unormPass,nullptr);assert(!m838UnormPasses.count(unormPass) && !m838DepthSlots.count(unormPass));
- assert(draws>0 && submits==4 && uniformCreates>=2);
+ assert(draws>0 && submits==22 && uniformCreates>=2);
+ assert(depthCopies>0 && depthCopies2>0 && depthClears>0 && colorClears==3);
 }
 }
 
