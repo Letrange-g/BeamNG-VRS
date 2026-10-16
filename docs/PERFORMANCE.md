@@ -40,6 +40,14 @@ no compatible VRS copy (for example MSAA or multi-subpass passes). Watch for
 shimmering on fine detail in intermediate passes, and use `AllPasses=false` if
 it is unacceptable.
 
+`M8.33 PASS_COVERAGE` lines (after 2,048 render-pass begins, then every 65,536)
+group pass begins by render-target size. For each size they report how many got
+VRS and, for the rest, the reason: `msaa`, `depthOnly`, `multiSubpass`,
+`layered`, `otherReject` (input/resolve attachments, extension structures),
+`untracked` (passes created with `vkCreateRenderPass2`) or `dynamicRendering`.
+Sizes that are not the eye size (for example half-resolution effects) are never
+foveated yet; their begin counts show whether that would be worth adding.
+
 ## Implemented changes
 
 - **Pattern generation:** each row intersects a circle, square or ellipse in a

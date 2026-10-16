@@ -552,7 +552,8 @@ bool m817Verbose() { return m817LogLevel()>=2; }
 int m817MessageLevel(const char* msg) {
  if(strstr(msg,"FAILED") || strstr(msg,"ERROR") || strstr(msg,"WARNING") ||
     strstr(msg,"FATAL") || strstr(msg,"VkResult=-") || strstr(msg,"result=-")) return 0;
- if(strstr(msg,"M8.17") || strstr(msg,"M8.18") || strstr(msg,"M8.21 ") || strstr(msg,"M8.23 ") || strstr(msg,"M8.24 ") || strstr(msg,"M8.25 ") || strstr(msg,"M8.27 ") || strstr(msg,"M8.28 ") || strstr(msg,"M8.14 AUTO_RESOLUTION") ||
+ if(strstr(msg,"M8.17") || strstr(msg,"M8.18") || strstr(msg,"M8.21 ") || strstr(msg,"M8.23 ") || strstr(msg,"M8.24 ") || strstr(msg,"M8.25 ") || strstr(msg,"M8.27 ") || strstr(msg,"M8.28 ") ||
+    strstr(msg,"M8.32 ") || strstr(msg,"M8.33 ") || strstr(msg,"M8.14 AUTO_RESOLUTION") ||
     strstr(msg,"M8.14 RESOURCE_") || strstr(msg,"M8.16 EYE_FB_STATS") ||
     strstr(msg,"M8.16 UNUSED_VRS") || strstr(msg,"M8.15 STATS") ||
     strstr(msg,"M3 VRS enabled") || strstr(msg,"M4.2 GPU:") ||
@@ -2629,13 +2630,14 @@ static void logDynamic(const VkRenderingInfo* info, const char* label) {
   info->viewMask, info->colorAttachmentCount);
  diagnosticLog(b);
 }
-namespace { void m74iTraceDynamic(VkCommandBuffer, const VkRenderingInfo*, const char*); }
+namespace { void m74iTraceDynamic(VkCommandBuffer, const VkRenderingInfo*, const char*); void m833RecordDynamic(const VkRenderingInfo*); }
 // M5.1: actual shading-rate attachment binding for Vulkan dynamic rendering.
 // Only exact-size, single-layer VR render areas are eligible; legacy renderpasses
 // remain untouched. The texture is persistent and uploaded before use.
 static void beginDynamicWithFFR(VkCommandBuffer cmd, const VkRenderingInfo* info,
                                 PFN_vkCmdBeginRendering next) {
  if (!next) return;
+ m833RecordDynamic(info);
  if (!info || !attachmentCombinerOptIn() || uniformVrsEnabled() ||
      info->renderArea.offset.x != 0 || info->renderArea.offset.y != 0 ||
      info->renderArea.extent.width != m813Width() || info->renderArea.extent.height != m813Height() ||
@@ -2739,6 +2741,68 @@ void m832Report(){
    (unsigned long long)m832Stats.noShadowCopy.load(std::memory_order_relaxed),
    m832AllPassesEnabled()?1u:0u);
  log(msg);
+}
+// M8.33: render-pass coverage by target size. Shows which passes still run
+// without VRS and why, so the next optimization can target the costly ones.
+struct M833Bucket {
+ uint32_t width=0,height=0;
+ uint64_t begins=0,vrs=0,msaa=0,depthOnly=0,multiSubpass=0,layered=0,otherReject=0,untracked=0,dynamic=0;
+};
+std::array<M833Bucket,16> m833Buckets{}; // guarded by mu; last bucket collects other sizes
+uint64_t m833Begins=0;                   // guarded by mu
+// Caller holds mu.
+M833Bucket& m833BucketLocked(uint32_t w,uint32_t h){
+ for(size_t i=0;i+1<m833Buckets.size();++i){
+  auto& b=m833Buckets[i];
+  if(b.begins && b.width==w && b.height==h)return b;
+  if(!b.begins){b.width=w;b.height=h;return b;}
+ }
+ return m833Buckets.back();
+}
+void m833ReportLocked(){
+ ++m833Begins;
+ if(m833Begins!=2048 && m833Begins%65536)return;
+ std::array<const M833Bucket*,16> order{};
+ for(size_t i=0;i<order.size();++i)order[i]=&m833Buckets[i];
+ std::sort(order.begin(),order.end(),[](auto a,auto b){return a->begins>b->begins;});
+ for(const auto* b:order){
+  if(!b->begins)break;
+  char msg[320]{};
+  sprintf_s(msg,"M8.33 PASS_COVERAGE size=%ux%u eyeSize=%u begins=%llu vrs=%llu msaa=%llu depthOnly=%llu multiSubpass=%llu layered=%llu otherReject=%llu untracked=%llu dynamicRendering=%llu",
+   b->width,b->height,(b->width==m813Width() && b->height==m813Height())?1u:0u,
+   (unsigned long long)b->begins,(unsigned long long)b->vrs,(unsigned long long)b->msaa,
+   (unsigned long long)b->depthOnly,(unsigned long long)b->multiSubpass,(unsigned long long)b->layered,
+   (unsigned long long)b->otherReject,(unsigned long long)b->untracked,(unsigned long long)b->dynamic);
+  log(msg);
+ }
+}
+void m833RecordLegacy(const VkRenderPassBeginInfo* info,bool vrs){
+ if(!info || m817LogLevel()<1)return;
+ std::lock_guard<std::mutex> guard(mu);
+ const auto f=framebuffers.find(info->framebuffer);
+ if(f==framebuffers.end())return;
+ auto& b=m833BucketLocked(f->second.width,f->second.height);
+ ++b.begins;
+ if(vrs)++b.vrs;
+ else if(f->second.layers!=1)++b.layered;
+ else{
+  const auto p=passInfos.find(info->renderPass);
+  const auto r=shadowRejectFlags.find(info->renderPass);
+  // Untracked: created through vkCreateRenderPass2, which gets no VRS copy.
+  if(p==passInfos.end())++b.untracked;
+  else if(p->second.subpasses!=1)++b.multiSubpass;
+  else if(!p->second.colors)++b.depthOnly;
+  else if(!p->second.samples)++b.msaa;
+  else if(r!=shadowRejectFlags.end() && r->second)++b.otherReject;
+ }
+ m833ReportLocked();
+}
+void m833RecordDynamic(const VkRenderingInfo* info){
+ if(!info || m817LogLevel()<1)return;
+ std::lock_guard<std::mutex> guard(mu);
+ auto& b=m833BucketLocked(info->renderArea.extent.width,info->renderArea.extent.height);
+ ++b.begins;++b.dynamic;
+ m833ReportLocked();
 }
 }
 namespace { int m8ClassifiedEye(VkImage image); }
@@ -3090,6 +3154,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdBeginRenderPass(
  // submission lifetime tracking is available; do NOT consume staged buffers on GPU.
  m84PrepareEyePatterns();
  const bool useShadow = m57SelectShadow(cmd, info, modified);
+ m833RecordLegacy(info,useShadow);
  if (d.cmdBeginRenderPass) d.cmdBeginRenderPass(cmd, useShadow ? &modified : info, contents);
  if(contents==VK_SUBPASS_CONTENTS_INLINE)m818BeginStencil(cmd,info,useShadow,d);
  m81StartOutline(cmd, info);
@@ -3114,6 +3179,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdBeginRenderPass2(
  // submission lifetime tracking is available; do NOT consume staged buffers on GPU.
  m84PrepareEyePatterns();
  const bool useShadow = m57SelectShadow(cmd, info, modified);
+ m833RecordLegacy(info,useShadow);
  if (d.cmdBeginRenderPass2) d.cmdBeginRenderPass2(cmd, useShadow ? &modified : info, begin);
  if(begin && begin->contents==VK_SUBPASS_CONTENTS_INLINE)
   m818BeginStencil(cmd,info,useShadow,d);
