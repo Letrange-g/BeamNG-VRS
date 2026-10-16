@@ -2,6 +2,7 @@
 #include <vulkan/vulkan.h>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -33,10 +34,12 @@ struct Api {
 };
 struct Meta {
  uint64_t pass=0,pipeline=0,colorView=0,depthView=0,storageView=0;
+ uint64_t target=0;
  uint32_t width=0,height=0,colors=0,samples=0,format=0,subpasses=0,reject=~0u;
  bool depth=false,compute=false,secondary=false,rateAttachment=false;
  int eye=-1;
- auto key()const{return std::tie(compute,pass,pipeline,width,height,colors,samples,format,subpasses,depth,secondary,rateAttachment,eye,reject,colorView,depthView,storageView);}
+ int phase=-1;bool partialVrs=false;
+ auto key()const{return std::tie(compute,pass,pipeline,width,height,colors,samples,format,subpasses,depth,secondary,rateAttachment,eye,reject,colorView,depthView,storageView,target,phase,partialVrs);}
  bool operator<(const Meta& b)const{return key()<b.key();}
 };
 struct Event {
@@ -72,6 +75,10 @@ class Profiler {
  std::map<Meta,Summary> summary_;
  beamng_trace::Resources resources_;
  uint64_t nextId_=1,recordings_=0,selected_=0,completed_=0,unavailable_=0,dropped_=0,unsupported_=0,failures_=0;
+ // Resource/descriptor fast paths read this without mutex_. A later device
+ // lifetime may configure it again, so the flag itself must remain atomic.
+ std::atomic<bool> focusedUnorm_{false};
+ uint64_t focusedLight_=0,focusedFallback_=0,focusedContaminated_=0,focusedPartial_=0;
  uint32_t random_=0x83a52e19;
  std::chrono::steady_clock::time_point lastReport_{};
  void (*log_)(const char*)=nullptr;
@@ -81,6 +88,7 @@ class Profiler {
   if(!log_ || (!force && now-lastReport_<std::chrono::seconds(5)))return;
   lastReport_=now;
   char b[800]{};
+  if(focusedUnorm_){reportUnorm();summary_.clear();return;}
   std::snprintf(b,sizeof(b),"M8.35 GPU_PROFILE recordings=%llu selected=%llu samples=%llu unavailable=%llu dropped=%llu unsupported=%llu failures=%llu groups=%zu (counters cumulative; ranking since previous report; sampled GPU spans, not frame totals)",
    (unsigned long long)recordings_,(unsigned long long)selected_,(unsigned long long)completed_,(unsigned long long)unavailable_,(unsigned long long)dropped_,(unsigned long long)unsupported_,(unsigned long long)failures_,summary_.size());log_(b);
   std::vector<std::pair<Meta,Summary>> ranked(summary_.begin(),summary_.end());
@@ -92,6 +100,20 @@ class Profiler {
   }
   reportResources(ranked);
   summary_.clear(); // Startup/loading passes must not dominate later stationary-scene windows.
+ }
+ void reportUnorm(){
+  char b[800]{};
+  std::snprintf(b,sizeof(b),"M8.38 GPU_UNORM_SUMMARY recordings=%llu selected=%llu samples=%llu unavailable=%llu dropped=%llu unsupported=%llu failures=%llu skippedLight=%llu skippedFallback=%llu skippedContaminated=%llu partialSamples=%llu groups=%zu (counters cumulative; target GPU spans since previous report, not frame totals)",
+   (unsigned long long)recordings_,(unsigned long long)selected_,(unsigned long long)completed_,(unsigned long long)unavailable_,(unsigned long long)dropped_,(unsigned long long)unsupported_,(unsigned long long)failures_,
+   (unsigned long long)focusedLight_,(unsigned long long)focusedFallback_,(unsigned long long)focusedContaminated_,(unsigned long long)focusedPartial_,summary_.size());log_(b);
+  // Partial replacements are kept in separate groups: they are informative
+  // coverage diagnostics, not a fully enabled VRS side of an A/B comparison.
+  for(const auto& [m,s]:summary_){
+   std::snprintf(b,sizeof(b),"M8.38 GPU_UNORM mode=%s phase=%d coverage=%s pass=%llu firstPipeline=%llu target=%llu size=%ux%u firstColorFormat=%u count=%llu avgMs=%.4f maxMs=%.4f sampledTotalMs=%.3f drawCalls=%llu vrsDrawCalls=%llu",
+    m.phase==0?"baseline":"vrs",m.phase,m.phase==0?"off":(m.partialVrs?"partial":"full"),
+    (unsigned long long)m.pass,(unsigned long long)m.pipeline,(unsigned long long)m.target,m.width,m.height,m.format,
+    (unsigned long long)s.count,s.total/double(s.count),s.maximum,s.total,(unsigned long long)s.draws,(unsigned long long)s.vrsDraws);log_(b);
+  }
  }
  // Definitions and candidate links are emitted at report time, never per draw.
  // Shared targets and storage descriptors can have multiple roles; these records
@@ -138,9 +160,17 @@ class Profiler {
    if(result==VK_SUCCESS || result==VK_NOT_READY){
     for(size_t i=0;i<r.events.size();++i){const auto& e=r.events[i];double ms=0;
      if(!e.complete || !data[2*i][1] || !data[2*i+1][1] || !elapsed(data[2*i][0],data[2*i+1][0],r.bits,dev.period,ms)){++unavailable_;continue;}
-     if(summary_.size()>=512 && !summary_.count(e.meta)){++dropped_;continue;}
-     auto& s=summary_[e.meta];s.total+=ms;s.maximum=std::max(s.maximum,ms);++s.count;s.draws+=e.draws;s.vrsDraws+=e.vrsDraws;
-     s.targets=e.targets;s.uses.merge(e.uses);s.uses.partial|=e.targets.partial;++completed_;
+     auto meta=e.meta;
+     if(focusedUnorm_){
+      if(e.draws<128){++focusedLight_;continue;}
+      if(meta.phase==1 && !e.vrsDraws){++focusedFallback_;continue;}
+      if(meta.phase==0 && e.vrsDraws){++focusedContaminated_;continue;}
+      meta.partialVrs=meta.phase==1 && e.vrsDraws!=e.draws;
+      if(meta.partialVrs)++focusedPartial_;
+     }
+     if(summary_.size()>=512 && !summary_.count(meta)){++dropped_;continue;}
+     auto& s=summary_[meta];s.total+=ms;s.maximum=std::max(s.maximum,ms);++s.count;s.draws+=e.draws;s.vrsDraws+=e.vrsDraws;
+     if(!focusedUnorm_){s.targets=e.targets;s.uses.merge(e.uses);s.uses.partial|=e.targets.partial;}++completed_;
     }
    }else ++failures_;
   }
@@ -169,13 +199,18 @@ class Profiler {
  }
 public:
  explicit Profiler(void(*logger)(const char*)=nullptr):log_(logger){}
- template<class Work> void resources(Work work){std::lock_guard<std::mutex> g(mutex_);work(resources_);}
+ // Configure once before registering devices or starting recording threads.
+ // Focused mode shares query ownership/lifetime rules, not the resource tracer.
+ void focusUnorm(bool enabled){std::lock_guard<std::mutex> g(mutex_);if(devices_.empty() && commands_.empty())focusedUnorm_=enabled;}
+ template<class Work> void resources(Work work){if(focusedUnorm_)return;std::lock_guard<std::mutex> g(mutex_);work(resources_);}
  void descriptors(VkCommandBuffer c,VkPipelineBindPoint point,VkPipelineLayout layout,uint32_t first,uint32_t count,const VkDescriptorSet* sets){
+  if(focusedUnorm_)return;
   std::lock_guard<std::mutex> g(mutex_);auto i=commands_.find(c);if(i==commands_.end() || !i->second.selected)return;
   if(point==VK_PIPELINE_BIND_POINT_GRAPHICS)i->second.graphicsSets.bind(layout,first,count,sets);
   if(point==VK_PIPELINE_BIND_POINT_COMPUTE)i->second.computeSets.bind(layout,first,count,sets);
  }
  void unknownDescriptors(VkCommandBuffer c){
+  if(focusedUnorm_)return;
   std::lock_guard<std::mutex> g(mutex_);auto i=commands_.find(c);if(i==commands_.end())return;
   i->second.graphicsSets.unknown();i->second.computeSets.unknown();
   if(i->second.active>=0)i->second.events[size_t(i->second.active)].uses.partial=true;
@@ -230,12 +265,13 @@ public:
    }
   }
   passes_[{d,p}]=m;
-  resources_.pass(d,p,info);
+  if(!focusedUnorm_)resources_.pass(d,p,info);
  }
- void forgetPass(VkDevice d,VkRenderPass p){std::lock_guard<std::mutex> g(mutex_);passes_.erase({d,p});resources_.forgetPass(d,p);}
+ void forgetPass(VkDevice d,VkRenderPass p){std::lock_guard<std::mutex> g(mutex_);passes_.erase({d,p});if(!focusedUnorm_)resources_.forgetPass(d,p);}
  void forgetPipeline(VkDevice d,VkPipeline p){std::lock_guard<std::mutex> g(mutex_);pipelines_.erase({d,p});}
  void legacy(VkCommandBuffer c,const VkRenderPassBeginInfo* info,int eye,uint32_t reject,bool secondary,bool shadow,bool force=false){
   std::lock_guard<std::mutex> g(mutex_);auto i=commands_.find(c);if(i==commands_.end() || !info)return;
+  if(focusedUnorm_){i->second.inside=true;return;}
   auto& r=i->second;auto p=passes_.find({r.device,info->renderPass});
   if(p!=passes_.end()){
    auto m=p->second;m.width=info->renderArea.extent.width;m.height=info->renderArea.extent.height;m.eye=eye;m.reject=reject;m.secondary=secondary;m.rateAttachment=shadow;
@@ -248,6 +284,23 @@ public:
   }else ++unsupported_;
   r.inside=true;
  }
+ // The adapter supplies learned, full-size scene targets and the current A/B
+ // phase. Negative phases are cooldown/warmup and insert no timestamps. A
+ // selected recording samples every eligible target, without the broad mode's
+ // additional 1-in-4 scope filter. Tests force recording selection in begin().
+ void targetLegacy(VkCommandBuffer c,const VkRenderPassBeginInfo* info,int phase,bool shadow,uint64_t targetId=0){
+  if(!focusedUnorm_)return;
+  std::lock_guard<std::mutex> g(mutex_);auto i=commands_.find(c);if(i==commands_.end() || !info)return;
+  auto& r=i->second;const auto p=passes_.find({r.device,info->renderPass});
+  if(phase>=0 && phase<=1 && !info->pNext && p!=passes_.end()){
+   auto m=p->second;
+   if(m.format==VK_FORMAT_R16G16B16A16_UNORM && m.colors==1 && m.samples==VK_SAMPLE_COUNT_1_BIT && m.subpasses==1 && m.depth){
+    m.width=info->renderArea.extent.width;m.height=info->renderArea.extent.height;m.phase=phase;m.target=targetId;m.rateAttachment=shadow;
+    start(c,r,m,true);
+   }else ++unsupported_;
+  }
+  r.inside=true;
+ }
  void end(VkCommandBuffer c){std::lock_guard<std::mutex> g(mutex_);auto i=commands_.find(c);if(i!=commands_.end()){finish(c,i->second);i->second.inside=false;}}
  void dynamic(VkCommandBuffer c){
   std::lock_guard<std::mutex> g(mutex_);auto i=commands_.find(c);if(i==commands_.end())return;
@@ -255,6 +308,7 @@ public:
   i->second.selected=false;++unsupported_;
  }
  void bind(VkCommandBuffer c,VkPipelineBindPoint point,VkPipeline pipeline,bool vrs){
+  if(focusedUnorm_ && point!=VK_PIPELINE_BIND_POINT_GRAPHICS)return;
   std::lock_guard<std::mutex> g(mutex_);auto i=commands_.find(c);if(i==commands_.end() || !i->second.selected)return;
   auto& r=i->second;auto key=std::make_pair(r.device,pipeline);auto p=pipelines_.find(key);
   if(p==pipelines_.end() && pipelines_.size()<8192)p=pipelines_.emplace(key,nextId_++).first;
@@ -265,13 +319,14 @@ public:
  void draw(VkCommandBuffer c){
   std::lock_guard<std::mutex> g(mutex_);auto i=commands_.find(c);if(i==commands_.end() || i->second.active<0)return;
   auto& r=i->second;auto& e=r.events[size_t(r.active)];if(e.meta.compute)return;
-  if(!e.draws || e.descriptors!=resources_.revision() || e.bindings!=r.graphicsSets.revision){
+  if(!focusedUnorm_ && (!e.draws || e.descriptors!=resources_.revision() || e.bindings!=r.graphicsSets.revision)){
    resources_.collect(r.device,r.graphicsSets,e.uses);e.descriptors=resources_.revision();e.bindings=r.graphicsSets.revision;
   }
   if(!e.draws)e.meta.pipeline=r.graphicsPipeline;
-  ++e.draws;if(r.vrs && e.meta.rateAttachment)++e.vrsDraws;
+  ++e.draws;if(r.vrs && (focusedUnorm_ || e.meta.rateAttachment))++e.vrsDraws;
  }
  void compute(VkCommandBuffer c,bool force=false){
+  if(focusedUnorm_)return;
   std::lock_guard<std::mutex> g(mutex_);auto i=commands_.find(c);if(i==commands_.end())return;
   Meta m;m.compute=true;m.pipeline=i->second.computePipeline;start(c,i->second,m,force);
   auto& r=i->second;if(r.active>=0 && !r.inside){auto& e=r.events[size_t(r.active)];resources_.collect(r.device,r.computeSets,e.uses);
@@ -280,14 +335,14 @@ public:
    if(!e.uses.storage.empty())e.meta.storageView=e.uses.storage[0]->id;
   }
  }
- void endCompute(VkCommandBuffer c){std::lock_guard<std::mutex> g(mutex_);auto i=commands_.find(c);if(i!=commands_.end() && !i->second.inside)finish(c,i->second);}
+ void endCompute(VkCommandBuffer c){if(focusedUnorm_)return;std::lock_guard<std::mutex> g(mutex_);auto i=commands_.find(c);if(i!=commands_.end() && !i->second.inside)finish(c,i->second);}
  void destroyDevice(VkDevice d){
   std::lock_guard<std::mutex> g(mutex_);
   for(auto i=commands_.begin();i!=commands_.end();)if(i->second.device==d){retire(i->second);i=commands_.erase(i);}else ++i;
   for(auto i=pools_.begin();i!=pools_.end();)if(i->second.device==d)i=pools_.erase(i);else ++i;
   for(auto i=passes_.begin();i!=passes_.end();)if(i->first.first==d)i=passes_.erase(i);else ++i;
   for(auto i=pipelines_.begin();i!=pipelines_.end();)if(i->first.first==d)i=pipelines_.erase(i);else ++i;
-  devices_.erase(d);report(true);resources_.destroyDevice(d);
+  devices_.erase(d);report(true);if(!focusedUnorm_)resources_.destroyDevice(d);
  }
 };
 }

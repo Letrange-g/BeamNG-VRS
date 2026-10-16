@@ -25,6 +25,7 @@ function Test-BeamNGIni {
     $whitespace = [char[]]" `t`r`n"
     $section = ''; $lineNumber = 0; $seen = @{}
     $foveationEnabled = $true; $sharedSceneVrs = $false; $earlyPasses = 'off'
+    $unormSceneVrs = $false; $compareUnormVrs = $false
     $sizes = @{'foveation.size1x1' = 0.25; 'foveation.size2x2' = 0.60}
     $ranges = @{
         'foveation.size1x1' = @(0, 1, $false)
@@ -69,10 +70,12 @@ function Test-BeamNGIni {
                 $earlyPasses = $value.ToLowerInvariant()
             } elseif ($id -eq 'logging.level') {
                 if (@('off', 'errors', 'info', 'debug') -cnotcontains $value.ToLowerInvariant()) { throw 'unsupported setting value' }
-            } elseif ($id -eq 'debug.drawoutline' -or $id -eq 'scissor.enabled' -or $id -eq 'foveation.enabled' -or $id -eq 'performance.turbomode' -or $id -eq 'experimental.profilegpu' -or $id -eq 'experimental.sharedscenevrs') {
+            } elseif ($id -eq 'debug.drawoutline' -or $id -eq 'scissor.enabled' -or $id -eq 'foveation.enabled' -or $id -eq 'performance.turbomode' -or $id -eq 'experimental.profilegpu' -or $id -eq 'experimental.sharedscenevrs' -or $id -eq 'experimental.unormscenevrs' -or $id -eq 'experimental.compareunormvrs') {
                 if (@('0', '1', 'false', 'true') -cnotcontains $value.ToLowerInvariant()) { throw 'expected 0, 1, false or true' }
                 if ($id -eq 'foveation.enabled') { $foveationEnabled = @('1', 'true') -ccontains $value.ToLowerInvariant() }
                 if ($id -eq 'experimental.sharedscenevrs') { $sharedSceneVrs = @('1', 'true') -ccontains $value.ToLowerInvariant() }
+                if ($id -eq 'experimental.unormscenevrs') { $unormSceneVrs = @('1', 'true') -ccontains $value.ToLowerInvariant() }
+                if ($id -eq 'experimental.compareunormvrs') { $compareUnormVrs = @('1', 'true') -ccontains $value.ToLowerInvariant() }
             } else { throw 'unknown section or setting' }
         } catch { throw "INI line ${lineNumber}: $($_.Exception.Message)" }
     }
@@ -81,6 +84,11 @@ function Test-BeamNGIni {
         if (@('false', '0', 'off') -cnotcontains $earlyPasses) { throw 'SharedSceneVRS=true requires EarlyPasses=false' }
         if (-not $foveationEnabled) { throw 'SharedSceneVRS=true requires [Foveation] Enabled=true' }
     }
+    if ($unormSceneVrs) {
+        if (@('false', '0', 'off') -cnotcontains $earlyPasses) { throw 'UnormSceneVRS=true requires EarlyPasses=false' }
+        if (-not $foveationEnabled) { throw 'UnormSceneVRS=true requires [Foveation] Enabled=true' }
+    }
+    if ($compareUnormVrs -and -not $unormSceneVrs) { throw 'CompareUnormVRS=true requires UnormSceneVRS=true' }
     if ($sizes['foveation.size1x1'] -gt $sizes['foveation.size2x2']) { throw 'Size1x1 must not exceed Size2x2' }
     Write-Output 'BeamNG-VRS.ini is valid.'
 }

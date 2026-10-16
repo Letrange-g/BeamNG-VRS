@@ -3,6 +3,10 @@
 `0.1.1-shared.1` tests whether VRS on earlier scene-color passes reduces GPU
 frame time. It is separate from the public release and starts disabled.
 
+The later [UNORM scene experiment](UNORM-SCENE-VRS.md) adds a separate pass
+switch and focused off/on timing. Keep its `UnormSceneVRS` and
+`CompareUnormVRS` switches false when isolating this shared-scene test.
+
 The resource traces show intermediate targets in both eye paths. This experiment
 uses one fixed, centered VRS pattern on eligible learned targets, without assigning
 them a permanent left or right eye. It uses your existing `Size1x1`, `Size2x2`, and

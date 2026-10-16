@@ -1,35 +1,58 @@
-SHARED SCENE VRS TEST (0.1.1-shared.1)
-This experiment applies a fixed, centered VRS pattern to learned earlier scene
-color targets that can be reused by both eyes. Final-eye VRS still follows gaze.
-There is no promised performance gain. Test both headset views for artifacts.
+UNORM SCENE VRS TEST (0.1.1-unorm.1)
+This temporary performance-ceiling test uses uniform 4x4 shading on selected
+pipelines in an earlier scene-color pass. UnormSceneVRS is independent of
+SharedSceneVRS and starts disabled. Expect coarse shading even in the center;
+Size1x1/Size2x2/Shape do not change this test's UNORM pattern. Final-eye VRS still
+follows gaze but cannot restore detail lost earlier. No gain is promised.
 Back up DLLs, launcher and INI together. Extract this ZIP beside Bin64.
 
-COMPARE OFF / ON
-Use your usual VRS, scissor and Turbo settings in both runs. Keep outlines off.
-In BeamNG-VRS.ini set:
+RECOMMENDED: ONE FOCUSED CAPTURE
+This mode switches the selected stage's VRS off/on automatically, so one
+stationary session measures both. Keep your usual resolution, game settings,
+VRS sizes, scissor and Turbo settings. In BeamNG-VRS.ini set:
 [Foveation]
 Enabled=true
+[Debug]
+DrawOutline=false
 [Experimental]
 EarlyPasses=false
 SharedSceneVRS=false
+UnormSceneVRS=true
+CompareUnormVRS=true
 ProfileGPU=false
 [Logging]
 Level=info
 
-Start Launch-BeamNG-VRS.cmd (not Diagnose), load the same scene and stationary
-view, then wait at least 10 seconds after loading before observing GPU frame
-time for 60 seconds. Exit, change only SharedSceneVRS=true, restart and repeat.
-Compare headset appearance and GPU frame time, not just FPS at the headset cap.
-Try a second off run to check whether loading or background work changed results.
+1. Rename the old %TEMP%\BeamNG_VRS_layer.log.
+2. Start Launch-BeamNG-VRS.cmd (not Diagnose), let the scene finish loading,
+   then remain stationary for about 60 seconds. Check both headset views.
+3. Exit and share the complete log.
+4. Set CompareUnormVRS=false and UnormSceneVRS=false, then restart to return
+   to your usual rendering.
 
-The experiment learns targets during play. In %TEMP%\BeamNG_VRS_layer.log,
-M8.37 reports selected targets and binds: binds above zero show the test reached
-an earlier pass. Missing coverage is not evidence that earlier VRS cannot help.
-Keep both logs for comparison; rename the previous log before starting each run.
-ProfileGPU stays false for these performance comparisons.
-If either eye flickers, loses detail in the center or looks wrong, restore
-SharedSceneVRS=false and restart. EarlyPasses cannot be combined with this test.
-See docs/SHARED-SCENE-VRS.md in the repository for details and limitations.
+Keep ProfileGPU=false: the comparison enables focused timing internally.
+The off/on phases last 10 seconds, starting at the first qualified scope.
+The first 2 seconds of each phase are excluded from measurements. The phase
+clock may start while loading. This diagnostic adds measurement overhead and
+deliberately changes shading during play.
+
+With Logging Level=info, M8.38 UNORM_SCENE reports learned/ready/selected/binds.
+M8.38 GPU_UNORM reports mode=baseline or mode=vrs timings and draw coverage.
+Both modes need measurements. coverage=full means every recorded draw in that
+scope used the replacement pipeline; hardware may still clamp the shading rate.
+These are GPU scope timings, not whole-frame totals or guaranteed savings.
+
+OPTIONAL: MANUAL COMPARISON AFTER A USEFUL RESULT
+If the focused capture shows useful coverage and timing, compare the game's GPU
+frame time with CompareUnormVRS=false and ProfileGPU=false. Test the same scene
+with UnormSceneVRS=false, then restart with only UnormSceneVRS=true. Keep all
+other settings unchanged. See docs/UNORM-SCENE-VRS.md for details and how the
+pass is recognized.
+
+If either eye looks wrong, restore CompareUnormVRS=false and UnormSceneVRS=false
+and restart. EarlyPasses cannot be combined with either scene experiment.
+SharedSceneVRS remains available as a separate experiment; keep it false to
+isolate this UNORM test.
 
 INSTALL
 1. Close BeamNG.
@@ -43,7 +66,8 @@ INSTALL
 SETTINGS
 Open BeamNG-VRS/VRS-SETTINGS.png for a visual explanation.
 [Foveation] Enabled=false disables VRS while leaving scissor/turbo available.
-Set SharedSceneVRS=false first if you enabled the shared-scene experiment.
+Set SharedSceneVRS=false, UnormSceneVRS=false and CompareUnormVRS=false first
+if you enabled any earlier scene experiment.
 The default Shape=circle uses diameters relative to eye-image height.
 Size1x1=0.25 sets the sharp circle's diameter to 25% of eye height.
 Size2x2=0.60 sets the medium-quality region's outer diameter to 60%.

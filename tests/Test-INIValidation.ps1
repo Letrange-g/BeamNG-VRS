@@ -77,6 +77,33 @@ try {
     $cases += @{ Text = "[Foveation]`nEnabled=false`n[Experimental]`nSharedSceneVRS=false"; Valid = $true }
     $cases += @{ Text = "[Experimental]`nSharedSceneVRS=on"; Valid = $false }
     $cases += @{ Text = "[Experimental]`nSharedSceneVRS=true`nsharedscenevrs=false"; Valid = $false }
+    foreach ($mode in @('false', 'true', 'FALSE', 'True', '0', '1')) {
+        $cases += @{ Text = "[ExPeRiMeNtAl]`nUnOrMsCeNeVrS=$mode"; Valid = $true }
+        $cases += @{ Text = "[ExPeRiMeNtAl]`nCoMpArEuNoRmVrS=$mode`nUnormSceneVRS=true"; Valid = $true }
+    }
+    foreach ($mode in @('false', '0', 'OFF')) {
+        $cases += @{ Text = "[Experimental]`nUnormSceneVRS=true`nSharedSceneVRS=false`nEarlyPasses=$mode`nProfileGPU=false`n[Foveation]`nEnabled=true"; Valid = $true }
+    }
+    foreach ($mode in @('true', '1', 'ON', 'trace')) {
+        $cases += @{ Text = "[Experimental]`nUnormSceneVRS=true`nEarlyPasses=$mode"; Valid = $false }
+        $cases += @{ Text = "[Experimental]`nEarlyPasses=$mode`nUnormSceneVRS=true"; Valid = $false }
+    }
+    foreach ($mode in @('false', '0')) {
+        $cases += @{ Text = "[Experimental]`nUnormSceneVRS=true`n[Foveation]`nEnabled=$mode"; Valid = $false }
+        $cases += @{ Text = "[Foveation]`nEnabled=$mode`n[Experimental]`nUnormSceneVRS=true"; Valid = $false }
+    }
+    $cases += @{ Text = "[Experimental]`nUnormSceneVRS=false`nEarlyPasses=true"; Valid = $true }
+    $cases += @{ Text = "[Foveation]`nEnabled=false`n[Experimental]`nUnormSceneVRS=false`nCompareUnormVRS=false"; Valid = $true }
+    $cases += @{ Text = "[Experimental]`nSharedSceneVRS=true`nUnormSceneVRS=true`nCompareUnormVRS=true"; Valid = $true }
+    foreach ($invalid in @(
+        "[Experimental]`nUnormSceneVRS=on", "[Experimental]`nUnormSceneVRS=2",
+        "[Experimental]`nUnormSceneVRS=true`nunormscenevrs=false",
+        "[Experimental]`nCompareUnormVRS=on", "[Experimental]`nCompareUnormVRS=2",
+        "[Experimental]`nCompareUnormVRS=false`ncompareunormvrs=false",
+        "[Experimental]`nCompareUnormVRS=true", "[Experimental]`nCompareUnormVRS=true`nUnormSceneVRS=false",
+        "[Experimental]`nUnormSceneVRS=false`nCompareUnormVRS=true`nSharedSceneVRS=true")) {
+        $cases += @{ Text = $invalid; Valid = $false }
+    }
     $caseNumber = 0
     foreach ($case in $cases) {
         ++$caseNumber

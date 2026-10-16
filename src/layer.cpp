@@ -16,6 +16,8 @@
 #include "scissor_crop.hpp"
 #include "early_vrs.hpp"
 #include "shared_scene_vrs.hpp"
+#include "unorm_pipeline_vrs.hpp"
+#include "unorm_compare.hpp"
 #include "framebuffer_reuse.hpp"
 #include "early_cpu_timing.hpp"
 #include "gpu_pass_profile.hpp"
@@ -81,6 +83,7 @@ struct DeviceDispatch {
  PFN_vkCmdBindPipeline cmdBindPipeline;
  PFN_vkDestroyPipeline destroyPipeline;
  bool vrsEnabled;
+ bool unorm4x4Supported=false;
  PFN_vkCreateRenderPass createRenderPass;
  PFN_vkDestroyRenderPass destroyRenderPass;
  PFN_vkCreateRenderPass2 createRenderPass2;
@@ -125,7 +128,10 @@ int m833Mode(){
   return !strcmp(v,"on")?2:!strcmp(v,"trace")?1:0;}();return mode;
 }
 void log(const char*);
-bool m835Enabled(){static const bool on=settingFlag("BEAMNG_VRS_PROFILE_GPU");return on;}
+bool m838Enabled(){static const bool on=settingFlag("BEAMNG_VRS_UNORM_SCENE") &&
+ settingFlag("BEAMNG_VRS_M8_EXPERIMENTAL") && m833Mode()==0;return on;}
+bool m838Compare(){static const bool on=m838Enabled() && settingFlag("BEAMNG_VRS_COMPARE_UNORM");return on;}
+bool m835Enabled(){static const bool on=settingFlag("BEAMNG_VRS_PROFILE_GPU") || m838Compare();return on;}
 beamng_profile::Profiler m835Profiler(log);
 bool m835Entry(const char* name){
  // Profile mode needs descriptor/resource lifetime hooks for sampled resource
@@ -134,13 +140,26 @@ bool m835Entry(const char* name){
 }
 void m835BeginPass(VkCommandBuffer,const VkRenderPassBeginInfo*,bool,bool);
 bool m833Enabled(){static const bool enabled=m833Mode()!=0 && settingFlag("BEAMNG_VRS_M8_EXPERIMENTAL");return enabled;}
-bool m837Enabled(){static const bool enabled=settingFlag("BEAMNG_VRS_SHARED_SCENE") &&
+bool m837ApplyShared(){static const bool enabled=settingFlag("BEAMNG_VRS_SHARED_SCENE") &&
  settingFlag("BEAMNG_VRS_M8_EXPERIMENTAL") && m833Mode()==0;return enabled;}
+bool m837Enabled(){return m837ApplyShared() || m838Enabled();}
 bool m837Tracking(){return m833Enabled() || m837Enabled();}
 std::unordered_map<VkDevice,beamng_shared::Tracker> m837Trackers;
 std::unordered_set<VkImage> m837SceneImages;
 std::unordered_set<VkRenderPass> m837ScenePasses;
 std::unordered_set<VkCommandBuffer> m837ActiveShared;
+std::unordered_set<VkImage> m838UnormImages;
+std::unordered_set<VkRenderPass> m838UnormPasses;
+std::unordered_map<VkRenderPass,uint32_t> m838DepthSlots;
+std::unordered_map<VkRenderPass,VkDevice> m838PassDevices;
+struct M838Scope { bool candidate=false,on=false,selected=false; int phase=-1; uint64_t target=0; };
+std::unordered_map<VkCommandBuffer,M838Scope> m838Scopes;
+std::unordered_map<VkDevice,beamng_unorm::CompareClock> m838Clocks;
+std::unordered_set<VkImageView> m838DepthViews;
+struct M838DepthImage { VkDevice device; uint32_t width,height; };
+std::unordered_map<VkImage,M838DepthImage> m838DepthImages;
+std::unordered_map<VkCommandBuffer,VkPipeline> m838OriginalBindings;
+std::unordered_set<VkCommandBuffer> m838BoundCopies;
 // Producer evidence is per device and never feeds the scissor classifier.
 std::unordered_map<VkDevice,beamng_early::Tracker> m833Trackers;
 template<class Work> void m837Each(VkDevice device,Work work){
@@ -305,6 +324,9 @@ struct M89Variant { VkDevice device; VkPipeline pipeline; VkRenderPass shadowPas
                     // Own the key so destroyed/recycled handles cannot change it.
                     M88PassSignature compatibility; };
 std::unordered_map<VkPipeline,M89Variant> m89Variants;
+struct M838Variant { VkDevice device; VkPipeline pipeline; M88PassSignature compatibility; };
+std::unordered_map<VkPipeline,M838Variant> m838Variants;
+std::atomic<uint64_t> m838VariantCreated{0},m838VariantSkipped{0},m838VariantFailed{0};
 // M8.30: only asymmetric static scissors need additional pipeline copies.
 // Keyed by the real base pipeline, including compatible VRS/stencil variants.
 struct M830CropVariants { VkDevice device; std::array<VkPipeline,2> eyes{}; };
@@ -620,7 +642,7 @@ bool m817Verbose() { return m817LogLevel()>=2; }
 int m817MessageLevel(const char* msg) {
  if(strstr(msg,"FAILED") || strstr(msg,"ERROR") || strstr(msg,"WARNING") ||
     strstr(msg,"FATAL") || strstr(msg,"VkResult=-") || strstr(msg,"result=-")) return 0;
- if(strstr(msg,"M8.37 ") || strstr(msg,"M8.36 ") || strstr(msg,"M8.35 ") || strstr(msg,"M8.34 ") || strstr(msg,"M8.33 ") || strstr(msg,"M8.17") || strstr(msg,"M8.18") || strstr(msg,"M8.21 ") || strstr(msg,"M8.23 ") || strstr(msg,"M8.24 ") || strstr(msg,"M8.25 ") || strstr(msg,"M8.27 ") || strstr(msg,"M8.28 ") || strstr(msg,"M8.14 AUTO_RESOLUTION") ||
+ if(strstr(msg,"M8.38 ") || strstr(msg,"M8.37 ") || strstr(msg,"M8.36 ") || strstr(msg,"M8.35 ") || strstr(msg,"M8.34 ") || strstr(msg,"M8.33 ") || strstr(msg,"M8.17") || strstr(msg,"M8.18") || strstr(msg,"M8.21 ") || strstr(msg,"M8.23 ") || strstr(msg,"M8.24 ") || strstr(msg,"M8.25 ") || strstr(msg,"M8.27 ") || strstr(msg,"M8.28 ") || strstr(msg,"M8.14 AUTO_RESOLUTION") ||
     strstr(msg,"M8.14 RESOURCE_") || strstr(msg,"M8.16 EYE_FB_STATS") ||
     strstr(msg,"M8.16 UNUSED_VRS") || strstr(msg,"M8.15 STATS") ||
     strstr(msg,"M3 VRS enabled") || strstr(msg,"M4.2 GPU:") ||
@@ -919,6 +941,11 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyDevice(VkDevice device, const VkA
      if(it!=devices.end())cache->second.destroyIdle(it->second.ffrApi,device);
      m827UploadCaches.erase(cache);
     }
+    if(it!=devices.end())for(auto v=m838Variants.begin();v!=m838Variants.end();){
+      if(v->second.device==device){if(it->second.destroyPipeline)it->second.destroyPipeline(device,v->second.pipeline,nullptr);v=m838Variants.erase(v);}else ++v;
+    }
+    m838Clocks.erase(device);
+    for(auto p=m838PassDevices.begin();p!=m838PassDevices.end();)if(p->second==device){m838UnormPasses.erase(p->first);m838DepthSlots.erase(p->first);p=m838PassDevices.erase(p);}else ++p;
     if (it != devices.end()) { m812hDestroy=it->second.m812hDestroyFence; m812hWaitIdle=it->second.ffrApi.deviceWaitIdle; next = it->second.destroyDevice; destroyPass = it->second.destroyRenderPass; destroyFb = it->second.destroyFramebuffer; api = it->second.ffrApi; devices.erase(it); }
     for(auto it=m815Pending.begin();it!=m815Pending.end();) {
       if(it->device==device){m815Orphans.push_back(*it);it=m815Pending.erase(it);}
@@ -929,10 +956,11 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyDevice(VkDevice device, const VkA
     m833Trackers.erase(device);
     auto shared=m837Trackers.find(device);
     if(shared!=m837Trackers.end()){
-     for(const auto& [id,image]:shared->second.images)m837SceneImages.erase(reinterpret_cast<VkImage>(uintptr_t(id)));
+     for(const auto& [id,image]:shared->second.images){auto handle=reinterpret_cast<VkImage>(uintptr_t(id));m837SceneImages.erase(handle);m838UnormImages.erase(handle);}
+     for(auto i=m838DepthImages.begin();i!=m838DepthImages.end();)if(i->second.device==device)i=m838DepthImages.erase(i);else ++i;
      m837Trackers.erase(shared);
     }
-    for(const auto& [view,info]:m74gViews)if(info.device==device)m833ColorViews.erase(view);
+    for(const auto& [view,info]:m74gViews)if(info.device==device){m833ColorViews.erase(view);m838DepthViews.erase(view);}
     m812liveUploaded.erase(device);
     for(auto it=m823LazyPlans.begin();it!=m823LazyPlans.end();){
      if(it->second.device==device)it=m823LazyPlans.erase(it);else ++it;
@@ -958,7 +986,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyDevice(VkDevice device, const VkA
       it=m83EyeFramebuffers.erase(it);
     }
     for (auto it3=shadowPasses.begin(); it3!=shadowPasses.end();) {
-      if (it3->second.device==device) { orphanShadows.push_back(it3->second.shadow); m832ShadowSignatures.erase(it3->second.shadow); m833ColorSlots.erase(it3->first);m837ScenePasses.erase(it3->first); it3=shadowPasses.erase(it3); }
+      if (it3->second.device==device) { orphanShadows.push_back(it3->second.shadow); m832ShadowSignatures.erase(it3->second.shadow); m833ColorSlots.erase(it3->first);m837ScenePasses.erase(it3->first);m838UnormPasses.erase(it3->first);m838DepthSlots.erase(it3->first); it3=shadowPasses.erase(it3); }
       else ++it3;
     }
     for (auto it4=shadowFramebuffers.begin(); it4!=shadowFramebuffers.end();) {
@@ -986,7 +1014,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyDevice(VkDevice device, const VkA
     uploadAttempted.erase(device);
     capturedQueues.erase(device);
     for (auto it2=commandDevices.begin(); it2!=commandDevices.end();) {
-      if (it2->second==device) {m833ActiveEarlier.erase(it2->first);m837ActiveShared.erase(it2->first);m87ActivePasses.erase(it2->first);m87PassBindCounts.erase(it2->first);it2=commandDevices.erase(it2);} else ++it2;
+      if (it2->second==device) {m838Scopes.erase(it2->first);m838OriginalBindings.erase(it2->first);m838BoundCopies.erase(it2->first);m833ActiveEarlier.erase(it2->first);m837ActiveShared.erase(it2->first);m87ActivePasses.erase(it2->first);m87PassBindCounts.erase(it2->first);it2=commandDevices.erase(it2);} else ++it2;
     }
   }
   // Every shadow framebuffer is destroyed before its associated generation.
@@ -1490,6 +1518,17 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice physic
     } else diagnosticLog("M4.2 vkGetPhysicalDeviceFragmentShadingRatesKHR unavailable");
   }
 
+  bool unorm4x4=false;
+  if(m838Enabled() && inject){
+    auto getRates=reinterpret_cast<PFN_vkGetPhysicalDeviceFragmentShadingRatesKHR>(gipa(instance,"vkGetPhysicalDeviceFragmentShadingRatesKHR"));
+    uint32_t count=0;
+    if(getRates && getRates(physical,&count,nullptr)==VK_SUCCESS && count && count<=256){
+      std::vector<VkPhysicalDeviceFragmentShadingRateKHR> rates(count);
+      for(auto& rate:rates)rate.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_KHR;
+      if(getRates(physical,&count,rates.data())==VK_SUCCESS)
+        for(const auto& rate:rates)unorm4x4|=rate.fragmentSize.width==4 && rate.fragmentSize.height==4 && (rate.sampleCounts&VK_SAMPLE_COUNT_1_BIT);
+    }
+  }
   VkResult r = create(physical, inject ? &modified : ci, alloc, out);
   bool fallback = false;
   if (r != VK_SUCCESS && inject) {
@@ -1539,8 +1578,10 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice physic
       profile.results=reinterpret_cast<PFN_vkGetQueryPoolResults>(gdpa(*out,"vkGetQueryPoolResults"));
       profile.reset=reinterpret_cast<PFN_vkCmdResetQueryPool>(gdpa(*out,"vkCmdResetQueryPool"));
       profile.stamp=reinterpret_cast<PFN_vkCmdWriteTimestamp>(gdpa(*out,"vkCmdWriteTimestamp"));
+      m835Profiler.focusUnorm(m838Compare());
       m835Profiler.device(*out,profile,props.limits.timestampPeriod,std::move(families));
-      log("M8.35 GPU_PROFILE enabled: sampled primary single-submit recordings; resource links M8.36; readback at reset/free; diagnostic overhead expected");
+      if(m838Compare())log("M8.38 UNORM_COMPARE enabled: alternating 10s baseline/VRS phases; first 2s excluded; focused nonblocking GPU timestamps");
+      else log("M8.35 GPU_PROFILE enabled: sampled primary single-submit recordings; resource links M8.36; readback at reset/free; diagnostic overhead expected");
      }else log("M8.35 GPU_PROFILE unsupported device/query setup");
     }
     dispatch.gdpa = gdpa;
@@ -1581,6 +1622,8 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice physic
     diagnosticLog(api.complete() ? "M4.8 FFR dispatch resolved: COMPLETE; upload OFF by default" : "M4.8 FFR dispatch INCOMPLETE; upload unavailable");
     dispatch.createPipelines = createPipelines;
     dispatch.vrsEnabled = inject && !fallback;
+    dispatch.unorm4x4Supported=dispatch.vrsEnabled && unorm4x4;
+    if(m838Enabled())log(dispatch.unorm4x4Supported?"M8.38 UNORM_DEVICE uniform 4x4 at one sample supported":"M8.38 UNORM_DEVICE unavailable: retaining original pipelines");
     dispatch.createRenderPass = reinterpret_cast<PFN_vkCreateRenderPass>(gdpa(*out, "vkCreateRenderPass"));
     dispatch.destroyRenderPass = reinterpret_cast<PFN_vkDestroyRenderPass>(gdpa(*out, "vkDestroyRenderPass"));
     dispatch.createRenderPass2 = reinterpret_cast<PFN_vkCreateRenderPass2>(gdpa(*out, "vkCreateRenderPass2"));
@@ -2082,6 +2125,26 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
   // Filled only on the crop/modification path. Compatible VRS copies must
   // inherit the same static-scissor crop as their original pipeline.
   std::vector<VkPipelineViewportStateCreateInfo> viewportStates;
+  // UNORM pilot variants remain compatible with the ORIGINAL render pass.
+  // Missing/unsupported variants therefore safely use the application's pipeline.
+  auto m838CreateVariants=[&](VkResult result){
+    if(result!=VK_SUCCESS || !m838Enabled() || !d.unorm4x4Supported || !d.destroyPipeline)return;
+    for(uint32_t i=0;out && i<count;++i){
+      M88PassSignature compatibility;
+      {std::lock_guard<std::mutex> guard(mu);
+       auto key=m88PassSignatures.find(infos[i].renderPass);
+       if(!m838UnormPasses.count(infos[i].renderPass) || key==m88PassSignatures.end())continue;
+       compatibility=key->second;
+      }
+      if(!out[i] || !beamng_unorm::eligible(infos[i])){++m838VariantSkipped;continue;}
+      auto variant=infos[i];auto rate=beamng_unorm::rate4x4();variant.pNext=&rate;
+      if(i<viewportStates.size() && viewportStates[i].pScissors)variant.pViewportState=&viewportStates[i];
+      VkPipeline replacement=VK_NULL_HANDLE;
+      if(d.createPipelines(device,cache,1,&variant,nullptr,&replacement)==VK_SUCCESS && replacement){
+        std::lock_guard<std::mutex> guard(mu);m838Variants[out[i]]={device,replacement,std::move(compatibility)};++m838VariantCreated;
+      }else {if(replacement)d.destroyPipeline(device,replacement,nullptr);++m838VariantFailed;}
+    }
+  };
   // M8.9: run for BOTH pipeline creation branches. Previously only the
   // passthrough branch created variants, while attachment-combiner mode used
   // the modified branch exclusively.
@@ -2206,6 +2269,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
         m87Pipelines[out[i]]={device,infos[i].renderPass,infos[i].subpass};
     }
     m89CreateVariants(result);
+    m838CreateVariants(result);
     return result;
   }
 
@@ -2269,6 +2333,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
   if(result==VK_SUCCESS && out)for(uint32_t i=0;i<count;++i)
     m830CreateCropVariants(device,cache,out[i],modified[i],infos[i].pViewportState,alloc,d);
   m89CreateVariants(result);
+  m838CreateVariants(result);
   if (cropChanged) {
     char message[160];
     sprintf_s(message,"M6.2 static-scissor pipelines cropped: %u/%u",cropChanged,count);
@@ -2326,6 +2391,21 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateRenderPass(
    }
    p.samples = singleSample ? 1 : 0;
    p.eligible = sp.colorAttachmentCount > 0 && singleSample;
+  }
+  if(m838Enabled() && !ci->pNext && ci->subpassCount==1 && ci->pSubpasses && ci->pAttachments){
+    const auto& sp=ci->pSubpasses[0];
+    std::lock_guard<std::mutex> guard(mu);
+    m838PassDevices[*out]=device;
+    if(sp.pDepthStencilAttachment && sp.pDepthStencilAttachment->attachment<ci->attachmentCount)
+      m838DepthSlots[*out]=sp.pDepthStencilAttachment->attachment;
+    if(sp.colorAttachmentCount==1 && sp.pColorAttachments && sp.pColorAttachments[0].attachment<ci->attachmentCount &&
+       sp.pDepthStencilAttachment && sp.pDepthStencilAttachment->attachment<ci->attachmentCount &&
+       !sp.inputAttachmentCount && !sp.preserveAttachmentCount && !sp.pResolveAttachments &&
+       ci->pAttachments[sp.pColorAttachments[0].attachment].format==VK_FORMAT_R16G16B16A16_UNORM &&
+       ci->pAttachments[sp.pColorAttachments[0].attachment].samples==VK_SAMPLE_COUNT_1_BIT &&
+       ci->pAttachments[sp.pDepthStencilAttachment->attachment].samples==VK_SAMPLE_COUNT_1_BIT){
+      m838UnormPasses.insert(*out);m833ColorSlots[*out]=sp.pColorAttachments[0].attachment;
+    }
   }
   // Shadow creation is opt-in and never changes BeamNG's original handles.
   // Vulkan render-pass VRS requires VkRenderPassFragmentDensityMapCreateInfoEXT? No:
@@ -2449,7 +2529,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyRenderPass(
    auto it=shadowPasses.find(pass);
    if (it!=shadowPasses.end()) { shadow=it->second.shadow; m832ShadowSignatures.erase(shadow); shadowPasses.erase(it); }
    passInfos.erase(pass);
-   m833ColorSlots.erase(pass);m837ScenePasses.erase(pass);
+   m833ColorSlots.erase(pass);m837ScenePasses.erase(pass);m838UnormPasses.erase(pass);m838DepthSlots.erase(pass);m838PassDevices.erase(pass);
    if(m833Enabled())for(auto& [owner,tracker]:m833Trackers)tracker.erasePass(m833Id(pass));
    if(m837Enabled())for(auto& [owner,tracker]:m837Trackers)tracker.erasePass(m833Id(pass));
    m818StencilCapable.erase(pass);
@@ -2499,6 +2579,12 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateImageView(
         ci->subresourceRange.baseMipLevel==0 && ci->subresourceRange.levelCount==1 &&
         ci->subresourceRange.baseArrayLayer==0 && ci->subresourceRange.layerCount==1)
        m833ColorViews.insert(*out);
+     if(m838Enabled() && !ci->pNext && ci->viewType==VK_IMAGE_VIEW_TYPE_2D &&
+        (ci->subresourceRange.aspectMask&VK_IMAGE_ASPECT_DEPTH_BIT) &&
+        !(ci->subresourceRange.aspectMask&~(VK_IMAGE_ASPECT_DEPTH_BIT|VK_IMAGE_ASPECT_STENCIL_BIT)) &&
+        ci->subresourceRange.baseMipLevel==0 && ci->subresourceRange.levelCount==1 &&
+        ci->subresourceRange.baseArrayLayer==0 && ci->subresourceRange.layerCount==1)
+       m838DepthViews.insert(*out);
      report = m817Verbose() && m74gLogCount++ < 2500;
    }
    if (report) {
@@ -2523,7 +2609,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyImageView(
  {
    std::lock_guard<std::mutex> guard(mu);
    m74gViews.erase(view);
-   m833ColorViews.erase(view);
+   m833ColorViews.erase(view);m838DepthViews.erase(view);
  }
  if (d.destroyImageView) d.destroyImageView(device, view, alloc);
 }
@@ -2782,15 +2868,24 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateImage(
   const auto f=ci->format;
   if(f==VK_FORMAT_R8G8B8A8_UNORM || f==VK_FORMAT_R8G8B8A8_SRGB ||
      f==VK_FORMAT_B8G8R8A8_UNORM || f==VK_FORMAT_B8G8R8A8_SRGB ||
-     f==VK_FORMAT_R16G16B16A16_SFLOAT || f==VK_FORMAT_B10G11R11_UFLOAT_PACK32){
+     f==VK_FORMAT_R16G16B16A16_SFLOAT || f==VK_FORMAT_B10G11R11_UFLOAT_PACK32 ||
+     (m838Enabled() && f==VK_FORMAT_R16G16B16A16_UNORM)){
    std::lock_guard<std::mutex> guard(mu);
    if(m833Enabled())m833Trackers[device].image(m833Id(*out),ci->extent.width,ci->extent.height);
    if(m837Enabled()){
     const bool scene=f==VK_FORMAT_R16G16B16A16_SFLOAT;
-    m837Trackers[device].image(m833Id(*out),ci->extent.width,ci->extent.height,scene);
+    const bool unorm=m838Enabled() && f==VK_FORMAT_R16G16B16A16_UNORM;
+    m837Trackers[device].image(m833Id(*out),ci->extent.width,ci->extent.height,scene,unorm);
+    if(unorm)m838UnormImages.insert(*out);
     if(scene)m837SceneImages.insert(*out);
    }
   }
+ }
+ if(m838Enabled() && result==VK_SUCCESS && ci && out && !ci->pNext &&
+    ci->imageType==VK_IMAGE_TYPE_2D && ci->extent.depth==1 && ci->arrayLayers==1 &&
+    ci->mipLevels==1 && ci->samples==VK_SAMPLE_COUNT_1_BIT && (ci->usage&VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)){
+  std::lock_guard<std::mutex> guard(mu);
+  m838DepthImages[*out]={device,ci->extent.width,ci->extent.height};m837Trackers[device].depthImage(m833Id(*out));
  }
  return result;
 }
@@ -2814,7 +2909,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkFreeCommandBuffers(
  auto d = lookupDevice(device);
  if (buffers) {
   std::lock_guard<std::mutex> guard(mu);
-  for (uint32_t i=0; i<count; ++i){if(m835Enabled())m835Profiler.reset(buffers[i],true);commandDevices.erase(buffers[i]);m833ActiveEarlier.erase(buffers[i]);m837ActiveShared.erase(buffers[i]);
+  for (uint32_t i=0; i<count; ++i){if(m835Enabled())m835Profiler.reset(buffers[i],true);commandDevices.erase(buffers[i]);m838Scopes.erase(buffers[i]);m838OriginalBindings.erase(buffers[i]);m838BoundCopies.erase(buffers[i]);m833ActiveEarlier.erase(buffers[i]);m837ActiveShared.erase(buffers[i]);
    m837Each(device,[&](auto& t){t.commands.erase(m833Id(buffers[i]));});
   }
  }
@@ -3031,6 +3126,7 @@ static bool m57SelectShadow(VkCommandBuffer cmd, const VkRenderPassBeginInfo* in
    auto cd = commandDevices.find(cmd);
    if (cd == commandDevices.end()) return false;
    device = cd->second;
+   if(m838Enabled() && m838UnormPasses.count(info->renderPass))return false;
    auto pi = shadowPasses.find(info->renderPass);
    auto fi = shadowFramebuffers.find(info->framebuffer);
    auto originalFb = framebuffers.find(info->framebuffer);
@@ -3414,6 +3510,24 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdBindPipeline(VkCommandBuffer cmd,VkPi
    }
   }
  }
+ if(point==VK_PIPELINE_BIND_POINT_GRAPHICS && m838Enabled()){
+   std::lock_guard<std::mutex> guard(mu);
+   const auto dev=commandDevices.find(cmd);
+   if(dev!=commandDevices.end()){
+     auto& tracker=m837Trackers[dev->second];tracker.pipeline(m833Id(cmd),m833Id(originalPipeline));
+     m838OriginalBindings[cmd]=originalPipeline;m838BoundCopies.erase(cmd);
+     auto scope=m838Scopes.find(cmd);auto variant=m838Variants.find(originalPipeline);
+     auto pass=m87ActivePasses.find(cmd);
+     auto signature=pass==m87ActivePasses.end()?m88PassSignatures.end():m88PassSignatures.find(pass->second);
+     if(scope!=m838Scopes.end() && scope->second.candidate && scope->second.on && !m811BaselineEnabled() &&
+        variant!=m838Variants.end() && variant->second.device==dev->second &&
+        signature!=m88PassSignatures.end() && m832Compatible(variant->second.compatibility,signature->second) &&
+        !m89ActiveShadows.count(cmd) && tracker.allowUnormPipeline(m833Id(cmd),m833Id(originalPipeline),GetTickCount64())){
+       pipeline=variant->second.pipeline;profileVrs=true;m838BoundCopies.insert(cmd);++tracker.stats.unormBinds;
+       if(!scope->second.selected){scope->second.selected=true;++tracker.stats.unormSelected;}
+     }
+   }
+ }
  if(point==VK_PIPELINE_BIND_POINT_GRAPHICS) {
    bool shadowActive=false, substituted=false, hasVariant=false, matchingPass=false,usedStencil=false,compatibleReuse=false;
    VkRenderPass activePass=VK_NULL_HANDLE;
@@ -3496,6 +3610,15 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyPipeline(VkDevice device,VkPipeli
       vi->second.maskedPipeline && n->second>0)--n->second;
    m87Pipelines.erase(pipeInfo);
   }
+  if(m838Enabled()){
+   auto t=m837Trackers.find(device);if(t!=m837Trackers.end())t->second.erasePipeline(m833Id(pipeline));
+   auto uniform=m838Variants.find(pipeline);
+   if(uniform!=m838Variants.end()){
+    auto d=devices.find(device);if(d!=devices.end() && d->second.destroyPipeline)d->second.destroyPipeline(device,uniform->second.pipeline,nullptr);
+    m838Variants.erase(uniform);
+   }
+   for(auto i=m838OriginalBindings.begin();i!=m838OriginalBindings.end();)if(i->second==pipeline){m838BoundCopies.erase(i->first);i=m838OriginalBindings.erase(i);}else ++i;
+  }
   auto variant=m89Variants.find(pipeline);
   auto destroyCrops=[&](VkPipeline base){
    auto crops=m830CropVariants.find(base);if(crops==m830CropVariants.end())return;
@@ -3526,6 +3649,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdEndRenderPass(VkCommandBuffer cmd) {
   m818MaskedCommands.erase(cmd);m818SelectedEye.erase(cmd);}
  auto d=lookupCommand(cmd); m81DrawOutline(cmd,d); cropBlackBars(cmd,d); if(d.cmdEndRenderPass) d.cmdEndRenderPass(cmd);
  if(m835Enabled())m835Profiler.end(cmd);
+ m838Restore(cmd,d);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdEndRenderPass2(VkCommandBuffer cmd,const VkSubpassEndInfo* end) {
  m833End(cmd);
@@ -3533,6 +3657,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdEndRenderPass2(VkCommandBuffer cmd,co
   m818MaskedCommands.erase(cmd);m818SelectedEye.erase(cmd);}
  auto d=lookupCommand(cmd); m81DrawOutline(cmd,d); cropBlackBars(cmd,d); if(d.cmdEndRenderPass2) d.cmdEndRenderPass2(cmd,end);
  if(m835Enabled())m835Profiler.end(cmd);
+ m838Restore(cmd,d);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdNextSubpass(VkCommandBuffer cmd,VkSubpassContents contents) {
  m833Invalidate(cmd);
@@ -3961,6 +4086,12 @@ void m74hTrace(const char* op, VkCommandBuffer cmd, VkImage src, VkImage dst, ui
  // Copies may update the shared target between its heavy scene pass and display.
  // Keep the old eye-specific learner's strict transfer barrier unchanged.
  if(m833Enabled()){std::lock_guard<std::mutex> guard(mu);auto t=m833Command(cmd);if(t)t->invalidate(m833Id(cmd));}
+ if(m838Enabled()){
+  std::lock_guard<std::mutex> guard(mu);
+  if(m838DepthImages.count(dst)){
+   auto c=commandDevices.find(cmd);if(c!=commandDevices.end())m837Trackers[c->second].invalidate(m833Id(cmd));
+  }
+ }
  const int copyEye=m75TraceTransfer(src,dst);
  if(m835Enabled()){
   VkDevice device{};
