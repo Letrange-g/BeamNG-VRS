@@ -58,6 +58,7 @@ inline Values defaults() {
  Values out;
  activation(out, true);
  out["BEAMNG_VRS_TURBO_MODE"] = "1";
+ out["BEAMNG_VRS_ALL_PASSES"] = "1";
  out["BEAMNG_VRS_SHAPE"] = "circle";
  out["BEAMNG_VRS_FOVEATION_MODE"] = "eye";
  out["BEAMNG_VRS_CENTER_RADIUS"] = "0.25";
@@ -90,6 +91,7 @@ inline void setting(Values& out, const std::string& section, const std::string& 
   out["BEAMNG_VRS_LOG_LEVEL"]=level=="off"?"-1":level=="errors"?"0":level=="debug"?"2":"1";
  }
  else if(id == "performance.turbomode") out["BEAMNG_VRS_TURBO_MODE"]=boolean(value);
+ else if(id == "foveation.allpasses") out["BEAMNG_VRS_ALL_PASSES"]=boolean(value);
  else if(id == "foveation.shape") out["BEAMNG_VRS_SHAPE"] = choice(value, {"circle", "square", "ellipse"});
  else if(id == "foveation.size1x1" || id == "foveation.size2x2") {
   number(value, 0, 1);

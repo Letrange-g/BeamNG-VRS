@@ -65,7 +65,7 @@ function Test-BeamNGIni {
                 if (@('circle', 'square', 'ellipse') -cnotcontains $value.ToLowerInvariant()) { throw 'unsupported setting value' }
             } elseif ($id -eq 'logging.level') {
                 if (@('off', 'errors', 'info', 'debug') -cnotcontains $value.ToLowerInvariant()) { throw 'unsupported setting value' }
-            } elseif ($id -eq 'debug.drawoutline' -or $id -eq 'scissor.enabled' -or $id -eq 'foveation.enabled' -or $id -eq 'performance.turbomode') {
+            } elseif ($id -eq 'debug.drawoutline' -or $id -eq 'scissor.enabled' -or $id -eq 'foveation.enabled' -or $id -eq 'foveation.allpasses' -or $id -eq 'performance.turbomode') {
                 if (@('0', '1', 'false', 'true') -cnotcontains $value.ToLowerInvariant()) { throw 'expected 0, 1, false or true' }
             } else { throw 'unknown section or setting' }
         } catch { throw "INI line ${lineNumber}: $($_.Exception.Message)" }

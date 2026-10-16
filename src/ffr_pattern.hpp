@@ -116,4 +116,15 @@ inline Pattern make(uint32_t pixelWidth, uint32_t pixelHeight,
  return makeGaze(pixelWidth,pixelHeight,tileWidth,tileHeight,
                  .5f,.5f,centerSize,middleSize,rate(2,2),rate(4,4),shape);
 }
+// M8.32: shading-rate texels for passes whose eye is unknown. Each tile keeps
+// the FINER rate of the two eyes on each axis, so neither eye loses detail.
+inline uint8_t finerRate(uint8_t a, uint8_t b) {
+ return static_cast<uint8_t>(std::min(a&3,b&3) | (std::min((a>>2)&3,(b>>2)&3)<<2));
+}
+inline void combineFiner(const std::vector<uint8_t>& left, const std::vector<uint8_t>& right,
+                         std::vector<uint8_t>& out) {
+ if(left.size()!=right.size())throw std::invalid_argument("combined eye patterns differ in size");
+ out.resize(left.size());
+ for(size_t i=0;i<left.size();++i)out[i]=finerRate(left[i],right[i]);
+}
 } // namespace beamng_ffr

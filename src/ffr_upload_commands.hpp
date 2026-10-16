@@ -4,10 +4,12 @@
 #include <utility>
 
 namespace beamng_ffr {
+// Left eye, right eye and (M8.32) the combined pattern for unclassified passes.
+constexpr size_t maxRateImages=3;
 struct GazeTransferKey {
- std::array<VkBuffer,2> sources{};
- std::array<VkImage,2> targets{};
- std::array<uint32_t,2> widths{},heights{};
+ std::array<VkBuffer,maxRateImages> sources{};
+ std::array<VkImage,maxRateImages> targets{};
+ std::array<uint32_t,maxRateImages> widths{},heights{};
  bool operator==(const GazeTransferKey&)const=default;
 };
 struct UploadCommands {
@@ -87,18 +89,21 @@ public:
   while(count_)destroyUploadCommands(api,device,idle_[--count_]);
  }
 };
-inline GazeTransferKey gazeTransferKey(const std::array<StagingSlot,2>& sources,
-                                     const std::array<GpuImage,2>& targets){
+template<size_t N>
+inline GazeTransferKey gazeTransferKey(const std::array<StagingSlot,N>& sources,
+                                     const std::array<GpuImage,N>& targets){
+ static_assert(N<=maxRateImages);
  GazeTransferKey key;
- for(int eye=0;eye<2;++eye)if(sources[eye].buffer){
+ for(size_t eye=0;eye<N;++eye)if(sources[eye].buffer){
   key.sources[eye]=sources[eye].buffer;key.targets[eye]=targets[eye].image;
   key.widths[eye]=targets[eye].width;key.heights[eye]=targets[eye].height;
  }
  return key;
 }
+template<size_t N>
 inline void recordGazeCommands(const Api& api,UploadCommands& c,
-                              const std::array<StagingSlot,2>& sources,
-                              const std::array<GpuImage,2>& targets){
+                              const std::array<StagingSlot,N>& sources,
+                              const std::array<GpuImage,N>& targets){
  const auto key=gazeTransferKey(sources,targets);
  if(c.recorded && c.transfer==key)return;
  if(c.recorded)throw std::invalid_argument("M8.28 recorded upload needs a pool reset");
@@ -106,7 +111,7 @@ inline void recordGazeCommands(const Api& api,UploadCommands& c,
  // No ONE_TIME_SUBMIT flag: completed commands can be resubmitted. No
  // SIMULTANEOUS_USE flag: a pending buffer never enters the idle cache.
  check(api.beginCommandBuffer(c.command,&begin),"M8.28 begin reusable upload");
- for(int eye=0;eye<2;++eye)if(sources[eye].buffer)
+ for(size_t eye=0;eye<N;++eye)if(sources[eye].buffer)
   recordGazeTransfer(api,c.command,sources[eye],targets[eye]);
  check(api.endCommandBuffer(c.command),"M8.28 end reusable upload");
  c.transfer=key;c.recorded=true;

@@ -5,6 +5,41 @@ shape, 30 ms gaze grace and 8 ms refresh interval. GPU/FPS improvements must be
 measured in BeamNG; there is no game, headset or rendering GPU in the cloud test
 environment.
 
+## All eye-sized passes (M8.32)
+
+Up to 0.1.0, VRS was applied only to render passes whose image is later copied
+into an OpenXR swapchain image. A pass is classified as left or right only
+through that copy, so in practice only the last passes of each eye (tonemap,
+UI, final composition) were foveated. The expensive scene, lighting and most
+post-processing passes write intermediate eye-sized images that never reach
+OpenXR directly, so they kept full-rate shading. Scissor has no such
+requirement and crops every eye-sized pass, which explains why it saved much
+more than VRS, even with near-uniform 4x4 shading.
+
+`[Foveation] AllPasses=true` (default) also gives those unclassified eye-sized
+passes a shading-rate attachment. Because their eye is unknown, they use a
+third, combined image: each tile takes the finer rate of the left and right
+patterns, so neither eye loses detail it would otherwise keep. With fixed
+center foveation both eyes match and the combined image is identical. With eye
+tracking the combined sharp region is the union of both eyes' regions, which
+are close together when both eyes look at the same point.
+
+The combined payload is rebuilt when either eye's pattern changes and uses the
+same staging, pinning and asynchronous upload path as the eye images. The
+existing VRS copies of render passes and pipelines already covered these passes;
+only the framebuffer and shading-rate image selection change. Passes that are
+multisampled, multi-subpass, use input/resolve attachments, dynamic rendering or
+compute shaders are still not foveated.
+
+To measure, compare `AllPasses=true` and `false` with scissor off, outlines off
+and normal logging. The info log reports
+`M8.32 PASS_SELECT left=… right=… combined=… eyeSizedWithoutVrsCopy=…` at the
+first selection and every 4,096 selections. `combined` counts the newly
+foveated passes; `eyeSizedWithoutVrsCopy` counts eye-sized pass begins that had
+no compatible VRS copy (for example MSAA or multi-subpass passes). Watch for
+shimmering on fine detail in intermediate passes, and use `AllPasses=false` if
+it is unacceptable.
+
 ## Implemented changes
 
 - **Pattern generation:** each row intersects a circle, square or ellipse in a

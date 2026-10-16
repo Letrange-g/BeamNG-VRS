@@ -5,6 +5,7 @@ The release ZIP puts `BeamNG-VRS.ini` beside `Launch-BeamNG-VRS.cmd` at the extr
 | Section | Setting | Default | Meaning |
 | --- | --- | --- | --- |
 | Foveation | `Enabled` | `true` | Apply VRS. Set `false` for scissor-only or turbo-only use; those settings remain independent. Beta.10+. |
+| Foveation | `AllPasses` | `true` | Also apply VRS to the game's internal eye-sized passes (scene, lighting, post effects) that are not directly copied to the headset. Those passes use the finer rate of both eyes per tile. Set `false` to foveate only the final eye image, as in 0.1.0. |
 | Foveation | `Size1x1` | `0.25` | Inner full-quality region size (0 to 1); ellipse uses width/height-relative diameters, circle uses height, square uses height-relative side length. |
 | Foveation | `Size2x2` | `0.60` | Outer size of the medium-quality region (0 to 1); must be at least `Size1x1`. Outside it, shading uses 4x4. |
 | Foveation | `Shape` | `circle` | `circle`, `square`, or `ellipse`. Square uses side length; ellipse uses eye-width-relative horizontal diameter and eye-height-relative vertical diameter. |

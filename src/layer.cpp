@@ -38,6 +38,10 @@ extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInst
 extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice device, const char* name);
 
 namespace {
+// M8.32: shading-rate image slots: 0=left eye, 1=right eye, 2=combined pattern
+// (finer of both eyes) for eye-sized passes that are not classified as one eye.
+constexpr int kRateImages=3;
+constexpr int kCombinedImage=2;
 uint32_t m813Width();
 uint32_t m813Height();
 std::atomic<uint32_t> m814ActiveWidth{5190},m814ActiveHeight{4168};
@@ -334,7 +338,7 @@ std::unordered_map<VkDevice, std::vector<CapturedQueue>> capturedQueues;
 std::unordered_map<VkDevice, beamng_ffr::GpuImage> uploadedPatterns;
 // M8.3: independent left/right shading-rate images. Static until a safe
 // frame-synchronized update path is implemented.
-std::unordered_map<VkDevice, std::array<beamng_ffr::GpuImage,2>> m83EyePatterns;
+std::unordered_map<VkDevice, std::array<beamng_ffr::GpuImage,kRateImages>> m83EyePatterns;
 // M8.16: old spare GPU pool structure retained for resource-generation
 // compatibility; the eye-tracked uploader uses the two primary per-eye images.
 struct M812ImagePool { std::array<std::array<beamng_ffr::GpuImage,2>,2> extra{}; };
@@ -349,14 +353,14 @@ uint64_t m812hNextSerial=0;
 
 // M8.12a: three persistently mapped transfer-source buffers per eye.
 // No GPU writes/reads or image rebinding yet; safe preparation stage only.
-struct M812Staging { std::array<std::array<beamng_ffr::StagingSlot,3>,2> slots{}; };
+struct M812Staging { std::array<std::array<beamng_ffr::StagingSlot,3>,kRateImages> slots{}; };
 std::unordered_map<VkDevice, M812Staging> m812Staging;
 // M8.14: cache a COMPLETE resource generation for each observed resolution.
 // Old generations stay alive until vkDestroyDevice; old application's framebuffers
 // may still refer to their views after a swapchain resize.
 struct M814ResourceSet {
  beamng_ffr::GpuImage base{};
- std::array<beamng_ffr::GpuImage,2> eyes{};
+ std::array<beamng_ffr::GpuImage,kRateImages> eyes{};
  M812ImagePool imagePool{};
  M812Staging staging{};
 };
@@ -365,29 +369,29 @@ std::mutex m814ResourceMutex;
 uint64_t m814Key(uint32_t w,uint32_t h){return (uint64_t(w)<<32)|h;}
 
 // M8.12b: CPU-to-host-visible staging only. No GPU transfer until safe synchronization is installed.
-std::array<uint64_t,2> m812bPreparedCount{};
+std::array<uint64_t,kRateImages> m812bPreparedCount{};
 struct M825PatternCenter { float u=.5f, v=.5f; };
 std::array<M825PatternCenter,2> m825StagedCenters{}; // guarded by mu
 
 // M8.12-live: last fully uploaded CPU sequence per eye.
-std::unordered_map<VkDevice,std::array<uint64_t,2>> m812liveUploaded;
+std::unordered_map<VkDevice,std::array<uint64_t,kRateImages>> m812liveUploaded;
 std::mutex m812liveQueueMutex;
 // M8.15: each (device, resolution) owns three persistently mapped source slots
 // per eye.  An in-flight upload pins its source slot until the upload fence
 // signals; CPU preparation skips pinned slots rather than blocking a VR frame.
 struct M815SlotState {
- std::array<std::array<bool,3>,2> busy{};
+ std::array<std::array<bool,3>,kRateImages> busy{};
  // Source timestamp follows a particular pinned/free staging slot so upload
  // telemetry measures the sample actually submitted, not the newest eye pose.
- std::array<std::array<uint64_t,3>,2> sourceTickMs{};
- std::array<std::array<uint64_t,3>,2> preparedTickMs{};
- std::array<int,2> latestSlot{{-1,-1}};
- std::array<uint64_t,2> latestSeq{};
+ std::array<std::array<uint64_t,3>,kRateImages> sourceTickMs{};
+ std::array<std::array<uint64_t,3>,kRateImages> preparedTickMs{};
+ std::array<int,kRateImages> latestSlot{{-1,-1,-1}};
+ std::array<uint64_t,kRateImages> latestSeq{};
 };
 struct M815Upload : beamng_ffr::UploadCommands {
  VkDevice device=VK_NULL_HANDLE;
  uint64_t resolution=0;
- std::array<int,2> slots{{-1,-1}};
+ std::array<int,kRateImages> slots{{-1,-1,-1}};
 };
 std::unordered_map<VkDevice,std::map<uint64_t,M815SlotState>> m815SlotStates;
 std::vector<M815Upload> m815Pending;
@@ -421,7 +425,7 @@ void m815PollLocked(VkDevice device,const DeviceDispatch& dispatch) {
   auto state=m815SlotStates.find(device);
   if(state!=m815SlotStates.end()){
    auto gen=state->second.find(it->resolution);
-   if(gen!=state->second.end())for(int eye=0;eye<2;++eye)
+   if(gen!=state->second.end())for(int eye=0;eye<kRateImages;++eye)
     if(it->slots[eye]>=0)gen->second.busy[eye][it->slots[eye]]=false;
   }
   beamng_ffr::UploadCommands completed=*it;
@@ -433,7 +437,7 @@ void m815PollLocked(VkDevice device,const DeviceDispatch& dispatch) {
 
 struct M85EyeFramebufferPair {
  VkDevice device = VK_NULL_HANDLE;
- std::array<VkFramebuffer,2> eyes{};
+ std::array<VkFramebuffer,kRateImages> eyes{};
 };
 std::unordered_map<VkFramebuffer, M85EyeFramebufferPair> m83EyeFramebuffers;
 // M8.23: optional LAZY eye framebuffer variants. Save the original attachment
@@ -828,7 +832,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyDevice(VkDevice device, const VkA
   std::vector<M815Upload> m815Orphans;
   beamng_ffr::Api api{};
   beamng_ffr::GpuImage image{};
-  std::array<beamng_ffr::GpuImage,2> eyeImages{};
+  std::array<beamng_ffr::GpuImage,kRateImages> eyeImages{};
   M812Staging staging{};
   M812ImagePool imagePool{};
   std::map<uint64_t,M814ResourceSet> m814Sets{};
@@ -1044,9 +1048,9 @@ void m812liveBeforeSubmit(VkQueue queue){
  auto& uploaded=m812liveUploaded[device];
  // Retire completed upload command pools and unpin their staging slots.
  m815PollLocked(device,dispatch);
- std::array<int,2> uploadSlots{{-1,-1}};
- std::array<uint64_t,2> next=uploaded;
- for(int eye=0;eye<2;++eye){
+ std::array<int,kRateImages> uploadSlots{{-1,-1,-1}};
+ std::array<uint64_t,kRateImages> next=uploaded;
+ for(int eye=0;eye<kRateImages;++eye){
   if(slotState.latestSeq[eye]<=uploaded[eye])continue;
   const int idx=slotState.latestSlot[eye];
   if(idx<0 || idx>=3 || slotState.busy[eye][idx])continue;
@@ -1056,7 +1060,7 @@ void m812liveBeforeSubmit(VkQueue queue){
   uploadSlots[eye]=idx;
   next[eye]=slotState.latestSeq[eye];
  }
- if(uploadSlots[0]<0 && uploadSlots[1]<0)return;
+ if(std::all_of(uploadSlots.begin(),uploadSlots.end(),[](int slot){return slot<0;}))return;
  // This is CPU sample-to-queue-submit age, NOT photon/display latency.
  const uint64_t m821SampleTime=GetTickCount64();
  LARGE_INTEGER uploadStart{}, uploadStop{}, uploadFrequency{};
@@ -1077,8 +1081,8 @@ void m812liveBeforeSubmit(VkQueue queue){
  VkCommandBuffer cmd=VK_NULL_HANDLE;
  bool submitted=false;
  try{
-  std::array<beamng_ffr::StagingSlot,2> sources{};
-  for(int eye=0;eye<2;++eye)if(uploadSlots[eye]>=0)
+  std::array<beamng_ffr::StagingSlot,kRateImages> sources{};
+  for(int eye=0;eye<kRateImages;++eye)if(uploadSlots[eye]>=0)
    sources[eye]=si->second.slots[eye][uploadSlots[eye]];
   const auto key=beamng_ffr::gazeTransferKey(sources,ii->second);
   auto commands=m827UploadCaches[device].acquire(api,device,family,&key);
@@ -1092,7 +1096,7 @@ void m812liveBeforeSubmit(VkQueue queue){
    // The fence will release this pool and both pinned staging slots, WITHOUT
    // a host-side wait. The application's submit follows on the same queue.
    m815Pending.push_back({commands,device,resolution,uploadSlots});
-   for(int eye=0;eye<2;++eye)if(uploadSlots[eye]>=0)
+   for(int eye=0;eye<kRateImages;++eye)if(uploadSlots[eye]>=0)
     slotState.busy[eye][uploadSlots[eye]]=true;
    fence=VK_NULL_HANDLE;pool=VK_NULL_HANDLE;
   }else{
@@ -1102,7 +1106,7 @@ void m812liveBeforeSubmit(VkQueue queue){
    fence=VK_NULL_HANDLE;pool=VK_NULL_HANDLE;
   }
   uploaded=next;
-  for(int eye=0;eye<2;++eye)if(uploadSlots[eye]>=0){
+  for(int eye=0;eye<kRateImages;++eye)if(uploadSlots[eye]>=0){
    const uint64_t source=slotState.sourceTickMs[eye][uploadSlots[eye]];
    if(source && m821SampleTime>=source)
     m821RecordUploadAge(beamng_gaze_timing::ageMs(m821SampleTime,source));
@@ -1150,8 +1154,8 @@ void m812liveBeforeSubmit(VkQueue queue){
   }
   static std::atomic<unsigned> reports{0};
   if(m817Verbose() && reports.fetch_add(1,std::memory_order_relaxed)<64){char msg[256]{};
-   sprintf_s(msg,"M8.15 GPU_GAZE_UPLOADED L=%llu R=%llu SYNC=%s pending=%zu cpuUs=%llu",
-    (unsigned long long)uploaded[0],(unsigned long long)uploaded[1],
+   sprintf_s(msg,"M8.15 GPU_GAZE_UPLOADED L=%llu R=%llu C=%llu SYNC=%s pending=%zu cpuUs=%llu",
+    (unsigned long long)uploaded[0],(unsigned long long)uploaded[1],(unsigned long long)uploaded[kCombinedImage],
     async?"QUEUE_ORDERED_FENCE":"DEVICE_IDLE_FALLBACK",m815Pending.size(),cpuUs);log(msg);}
  }catch(const std::exception& ex){char msg[320]{};
   sprintf_s(msg,"M8.15 UPLOAD_FAILED: %s",ex.what());log(msg);
@@ -1692,12 +1696,12 @@ static void recordGraphicsQueue(VkDevice device, VkQueue queue, uint32_t family,
       uploadedPatterns[device] = uploaded;
     }
     if (m8Enabled()) {
-      std::array<beamng_ffr::GpuImage,2> eyeImages{};
+      std::array<beamng_ffr::GpuImage,kRateImages> eyeImages{};
       try {
-        eyeImages[0]=beamng_ffr::upload(dispatch.ffrApi,dispatch.physical,device,queue,family,pattern);
-        eyeImages[1]=beamng_ffr::upload(dispatch.ffrApi,dispatch.physical,device,queue,family,pattern);
+        for(auto& eyeImage:eyeImages)
+          eyeImage=beamng_ffr::upload(dispatch.ffrApi,dispatch.physical,device,queue,family,pattern);
         {std::lock_guard<std::mutex> guard(mu);m83EyePatterns[device]=eyeImages;}
-        log("M8.3 two independent eye shading-rate images uploaded; FIXED patterns, not gaze-updated");
+        log("M8.3 left/right/combined shading-rate images uploaded with the centered pattern");
         // M8.16: obsolete spare VRS images were never attached to the active
         // eye render passes. Keep an empty pool entry for M8.14 generation
         // compatibility, but do not allocate four unused VkImages per scale.
@@ -1713,7 +1717,7 @@ static void recordGraphicsQueue(VkDevice device, VkQueue queue, uint32_t family,
               slot=beamng_ffr::createStaging(dispatch.ffrApi,dispatch.physical,device,bytes);
           {std::lock_guard<std::mutex> guard(mu);m812Staging[device]=staging;}
           char msg[220]{};
-          sprintf_s(msg,"M8.12a STAGING_READY eyes=2 slotsPerEye=3 bytesPerSlot=%llu GPU_SUBMIT=DISABLED",
+          sprintf_s(msg,"M8.12a STAGING_READY images=3 slotsPerImage=3 bytesPerSlot=%llu GPU_SUBMIT=DISABLED",
               static_cast<unsigned long long>(bytes));
           log(msg);
         } catch(const std::exception& ex) {
@@ -1818,7 +1822,7 @@ bool m814EnsureResources(VkDevice device,uint32_t w,uint32_t h){
    m812Staging[device]=it->second.staging;
    m812liveUploaded[device]=m812bPreparedCount;
    m815SlotStates[device][key].latestSeq=m812bPreparedCount;
-   m815SlotStates[device][key].latestSlot={{-1,-1}};
+   m815SlotStates[device][key].latestSlot={{-1,-1,-1}};
    m814ActiveWidth.store(w,std::memory_order_release);
    m814ActiveHeight.store(h,std::memory_order_release);
    m825LastResizeMs.store(GetTickCount64(),std::memory_order_release);
@@ -1857,7 +1861,7 @@ bool m814EnsureResources(VkDevice device,uint32_t w,uint32_t h){
   m812Staging[device]=fresh.staging;
   m812liveUploaded[device]=m812bPreparedCount;
   m815SlotStates[device][key].latestSeq=m812bPreparedCount;
-  m815SlotStates[device][key].latestSlot={{-1,-1}};
+  m815SlotStates[device][key].latestSlot={{-1,-1,-1}};
   m814ActiveWidth.store(w,std::memory_order_release);
   m814ActiveHeight.store(h,std::memory_order_release);
   m825LastResizeMs.store(GetTickCount64(),std::memory_order_release);
@@ -2458,18 +2462,18 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateFramebuffer(
         {
          std::lock_guard<std::mutex> guard(mu);
          m823LazyPlans[*out]=std::move(plan);
-         m83EyeFramebuffers[*out]={device,{VK_NULL_HANDLE,VK_NULL_HANDLE}};
+         m83EyeFramebuffers[*out]={device,{}};
          shadowFramebuffers[*out]={device,VK_NULL_HANDLE};
         }
         m823Stats.lazyPlans.fetch_add(1,std::memory_order_relaxed);
        }else{
-       std::array<VkImageView,2> eyeViews{};
+       std::array<VkImageView,kRateImages> eyeViews{};
        {std::lock_guard<std::mutex> guard(mu);
         auto it=m83EyePatterns.find(device);
-        if(it!=m83EyePatterns.end())for(int eye=0;eye<2;++eye)eyeViews[eye]=it->second[eye].view;
+        if(it!=m83EyePatterns.end())for(int eye=0;eye<kRateImages;++eye)eyeViews[eye]=it->second[eye].view;
        }
-       std::array<VkFramebuffer,2> eyeFbs{};
-       for(int eye=0;eye<2;++eye) {
+       std::array<VkFramebuffer,kRateImages> eyeFbs{};
+       for(int eye=0;eye<kRateImages;++eye) {
          if(!eyeViews[eye])continue;
          views.back()=eyeViews[eye];
          const VkResult result=d.createFramebuffer(device,&variant,alloc,&eyeFbs[eye]);
@@ -2488,7 +2492,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateFramebuffer(
          if(failures.fetch_add(1,std::memory_order_relaxed)<12)
            log("M8.16 EYE_FRAMEBUFFER_CREATE_FAILED; original render pass preserved");
        }
-       if(eyeFbs[0] && eyeFbs[1])m823Stats.eagerVariants.fetch_add(2,std::memory_order_relaxed);
+       if(eyeFbs[0] && eyeFbs[1])m823Stats.eagerVariants.fetch_add(eyeFbs[kCombinedImage]?3:2,std::memory_order_relaxed);
        } // eager fallback
        const uint64_t count=m823Stats.eligible.load(std::memory_order_relaxed);
        if(count==1 || count%8192==0){
@@ -2557,7 +2561,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyFramebuffer(
  std::lock_guard<std::mutex> lazyGuard(m823CreateMutex);
  auto d = lookupDevice(device);
  VkFramebuffer shadow = VK_NULL_HANDLE;
- std::array<VkFramebuffer,2> eyeFbs{};
+ std::array<VkFramebuffer,kRateImages> eyeFbs{};
  M812FramebufferPool spareFbs{};
  { std::lock_guard<std::mutex> guard(mu);
    auto poolIt=m812FramebufferPools.find(framebuffer);
@@ -2716,12 +2720,33 @@ static void logRenderPassBegin(const VkRenderPassBeginInfo* info, const char* ta
   }
  }
 }
+namespace {
+// M8.32: also foveate eye-sized passes that never reach an OpenXR image
+// directly (G-buffer, lighting, most post-processing), using the combined image.
+bool m832AllPassesEnabled(){static const bool on=settingFlag("BEAMNG_VRS_ALL_PASSES");return on;}
+struct M832Stats { std::atomic<uint64_t> selected[kRateImages]{}, noShadowCopy{0}; };
+M832Stats m832Stats;
+void m832Report(){
+ const uint64_t total=m832Stats.selected[0].load(std::memory_order_relaxed)+
+   m832Stats.selected[1].load(std::memory_order_relaxed)+
+   m832Stats.selected[kCombinedImage].load(std::memory_order_relaxed);
+ if(total!=1 && total%4096)return;
+ char msg[240]{};
+ sprintf_s(msg,"M8.32 PASS_SELECT left=%llu right=%llu combined=%llu eyeSizedWithoutVrsCopy=%llu allPasses=%u",
+   (unsigned long long)m832Stats.selected[0].load(std::memory_order_relaxed),
+   (unsigned long long)m832Stats.selected[1].load(std::memory_order_relaxed),
+   (unsigned long long)m832Stats.selected[kCombinedImage].load(std::memory_order_relaxed),
+   (unsigned long long)m832Stats.noShadowCopy.load(std::memory_order_relaxed),
+   m832AllPassesEnabled()?1u:0u);
+ log(msg);
+}
+}
 namespace { int m8ClassifiedEye(VkImage image); }
 // M8.23: allocate just the classified eye's shadow framebuffer on first use.
 // Serialize with resolution changes, destruction, and other first-use calls.
 // No framebuffer or VkImageView is ever shared across original object lifetimes.
 static bool m823EnsureEyeFramebuffer(VkDevice device,VkFramebuffer original,int eye){
- if(eye<0 || eye>1)return false;
+ if(eye<0 || eye>=kRateImages)return false;
  std::lock_guard<std::mutex> resolutionGuard(m814ResourceMutex);
  std::lock_guard<std::mutex> createGuard(m823CreateMutex);
  M823LazyFramebuffer plan{};
@@ -2823,7 +2848,14 @@ static bool m57SelectShadow(VkCommandBuffer cmd, const VkRenderPassBeginInfo* in
        if (eye >= 0 && eye < 2) eyeFound[eye] = true;
      }
    }
-   if (m8Enabled() && (eyeFound[0] == eyeFound[1])) return false;
+   // M8.32: an eye-sized pass that is unclassified (or uses both eyes'
+   // images) gets the combined pattern: the finer rate of both eyes per tile.
+   const bool combined = m8Enabled() && eyeFound[0] == eyeFound[1];
+   if (combined && !m832AllPassesEnabled()) return false;
+   if (originalFb != framebuffers.end() && originalFb->second.layers == 1 &&
+       originalFb->second.width == m813Width() && originalFb->second.height == m813Height() &&
+       (pi == shadowPasses.end() || fi == shadowFramebuffers.end()))
+     m832Stats.noShadowCopy.fetch_add(1,std::memory_order_relaxed);
    if (pi == shadowPasses.end() || fi == shadowFramebuffers.end() ||
        originalFb == framebuffers.end() ||
        originalFb->second.width != m813Width() || originalFb->second.height != m813Height() ||
@@ -2831,7 +2863,7 @@ static bool m57SelectShadow(VkCommandBuffer cmd, const VkRenderPassBeginInfo* in
    pass = pi->second.shadow;
    fb = fi->second.shadow;
    if(m8Enabled()) {
-     const int eye=eyeFound[0]?0:1;
+     const int eye=combined?kCombinedImage:(eyeFound[0]?0:1);
      selectedEye = eye;
      auto ef=m83EyeFramebuffers.find(info->framebuffer);
      if(ef==m83EyeFramebuffers.end() || ef->second.device!=device)return false;
@@ -2850,12 +2882,17 @@ static bool m57SelectShadow(VkCommandBuffer cmd, const VkRenderPassBeginInfo* in
   fb=it->second.eyes[selectedEye];
  }
  m823Stats.shadowSelections.fetch_add(1,std::memory_order_relaxed);
+ if(selectedEye>=0 && selectedEye<kRateImages){
+  m832Stats.selected[selectedEye].fetch_add(1,std::memory_order_relaxed);
+  m832Report();
+ }
  modified = *info;
  modified.renderPass = pass;
  modified.framebuffer = fb;
  {std::lock_guard<std::mutex> guard(mu);
   m89ActiveShadows[cmd]=pass;
-  if(selectedEye>=0)m818SelectedEye[cmd]=selectedEye;
+  // Stencil masks and outlines are per-eye; the combined slot has neither.
+  if(selectedEye>=0 && selectedEye<2)m818SelectedEye[cmd]=selectedEye;
  }
  if (m810ShadowReports.fetch_add(1,std::memory_order_relaxed)<64) {
    char msg[256]{};
@@ -3395,6 +3432,48 @@ M825EffectiveGaze m825EffectiveGaze(int eye){
 // CPU producer: choose effective gaze, generate the tile map, and publish only
 // to a free staging slot. Queue-submit hooks are the GPU consumer; they pin each
 // consumed slot until its fence signals. Never overwrite a busy mapped buffer.
+// M8.32: latest CPU pattern of each eye for the current resolution (guarded by mu).
+// An eye without a staged pattern still holds the centered upload on the GPU.
+std::array<std::vector<uint8_t>,2> m832EyeTexels;
+uint64_t m832EyeGeneration=0;
+// Stage the per-tile finer rate of both eyes into the combined image's free
+// staging slot. Same slot pinning rules as the per-eye images. Returns false
+// when a slot was busy, so the caller retries on its next refresh.
+bool m832StageCombined(uint32_t width,uint32_t height,uint64_t generation){
+ const auto centered=m58MakePattern(width,height);
+ std::lock_guard<std::mutex> guard(mu);
+ if(width!=m813Width() || height!=m813Height() || m832EyeGeneration!=generation)return true;
+ const auto& left=m832EyeTexels[0].empty()?centered.texels:m832EyeTexels[0];
+ const auto& right=m832EyeTexels[1].empty()?centered.texels:m832EyeTexels[1];
+ static std::vector<uint8_t> combined; // guarded by mu
+ try{beamng_ffr::combineFiner(left,right,combined);}catch(const std::exception&){return true;}
+ const int image=kCombinedImage;
+ bool complete=true;
+ for(auto& entry:m812Staging){
+  auto& slots=m815SlotStates[entry.first][generation];
+  const int latest=slots.latestSlot[image];
+  if(latest>=0 && latest<3){
+   const auto& prior=entry.second.slots[image][latest];
+   if(prior.mapped && prior.capacity>=combined.size() &&
+      !std::memcmp(prior.mapped,combined.data(),combined.size()))continue;
+  }
+  int selected=-1;
+  for(int trial=0;trial<3;++trial){
+   const int candidate=int((m812bPreparedCount[image]+trial)%3);
+   if(!slots.busy[image][candidate]){selected=candidate;break;}
+  }
+  if(selected<0){complete=false;continue;}
+  auto& slot=entry.second.slots[image][selected];
+  if(!slot.mapped || slot.capacity<combined.size())continue;
+  std::memcpy(slot.mapped,combined.data(),combined.size());
+  ++m812bPreparedCount[image];
+  slots.latestSlot[image]=selected;
+  slots.latestSeq[image]=m812bPreparedCount[image];
+  slots.sourceTickMs[image][selected]=0; // derived payload: excluded from gaze-age telemetry
+  slots.preparedTickMs[image][selected]=GetTickCount64();
+ }
+ return complete;
+}
 void m84PrepareEyePatterns() {
  static const bool enabled=settingFlag("BEAMNG_VRS_M84_CPU_GAZE");
  if(!enabled)return;
@@ -3408,6 +3487,7 @@ void m84PrepareEyePatterns() {
  uint32_t width=0,height=0;
  {std::lock_guard<std::mutex> guard(mu);width=m813Width();height=m813Height();}
  const uint64_t generation=m814Key(width,height);
+ bool eyePatternChanged=false;
  for(int eye=0;eye<2;++eye){
   const auto decision=m825EffectiveGaze(eye);
   auto gaze=decision.gaze;
@@ -3433,6 +3513,11 @@ void m84PrepareEyePatterns() {
      m59Rate("BEAMNG_VRS_MID_RATE",beamng_ffr::rate(2,2)),
      m59Rate("BEAMNG_VRS_OUTER_RATE",beamng_ffr::rate(4,4)),m824Shape());
   if(mode==2)std::fill(pattern.texels.begin(),pattern.texels.end(),beamng_ffr::rate(1,1));
+  if(m832AllPassesEnabled()){
+   std::lock_guard<std::mutex> guard(mu);
+   if(m832EyeGeneration!=generation){m832EyeTexels={};m832EyeGeneration=generation;}
+   if(m832EyeTexels[eye]!=pattern.texels){m832EyeTexels[eye]=pattern.texels;eyePatternChanged=true;}
+  }
   // Stage freshest valid gaze only into a source buffer that is not pinned
   // by an in-flight GPU upload.
   if (m8Enabled()) {
@@ -3503,7 +3588,11 @@ void m84PrepareEyePatterns() {
      eye,gaze.u,gaze.v,pattern.texels.size());
    log(msg);
   }
- }
+ } static std::atomic<bool> combinedPending{false};
+ if(eyePatternChanged)combinedPending.store(true,std::memory_order_relaxed);
+ if(m8Enabled() && combinedPending.load(std::memory_order_relaxed) &&
+    m832StageCombined(width,height,generation))
+  combinedPending.store(false,std::memory_order_relaxed);
 }
 // Debug overlay is independent of VRS enablement. It draws into color attachment 0
 // immediately before the classified render pass ends. Intended only for single-subpass
