@@ -124,6 +124,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyCommandPool(VkDevice device,VkCom
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkAllocateDescriptorSets(VkDevice device,const VkDescriptorSetAllocateInfo* i,VkDescriptorSet* o){
  auto d=lookupDevice(device);if(!d.early_vkAllocateDescriptorSets)return VK_ERROR_INITIALIZATION_FAILED;
  auto r=d.early_vkAllocateDescriptorSets(device,i,o);
+ if(m835Enabled() && r==VK_SUCCESS && i && o)m835Profiler.resources([&](auto& t){t.allocateSets(device,*i,o);});
  if(m833Enabled() && r==VK_SUCCESS && i && o){std::lock_guard<std::mutex> g(mu);
   auto& t=m833Trackers[device];for(uint32_t j=0;j<i->descriptorSetCount;++j)t.allocateSet(m833Id(o[j]),m833Id(i->descriptorPool));
  }return r;
@@ -131,20 +132,24 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkAllocateDescriptorSets(VkDevice devi
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkFreeDescriptorSets(VkDevice device,VkDescriptorPool p,uint32_t n,const VkDescriptorSet* s){
  auto d=lookupDevice(device);if(!d.early_vkFreeDescriptorSets)return VK_ERROR_INITIALIZATION_FAILED;
  auto r=d.early_vkFreeDescriptorSets(device,p,n,s);
+ if(m835Enabled() && r==VK_SUCCESS)m835Profiler.resources([&](auto& t){t.freeSets(device,n,s);});
  if(m833Enabled() && s){std::lock_guard<std::mutex> g(mu);for(uint32_t j=0;j<n;++j)m833Trackers[device].eraseSet(m833Id(s[j]));}return r;
 }
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkResetDescriptorPool(VkDevice device,VkDescriptorPool p,VkDescriptorPoolResetFlags f){
  auto d=lookupDevice(device);if(!d.early_vkResetDescriptorPool)return VK_ERROR_INITIALIZATION_FAILED;
  auto r=d.early_vkResetDescriptorPool(device,p,f);
+ if(m835Enabled() && r==VK_SUCCESS)m835Profiler.resources([&](auto& t){t.resetPool(device,p);});
  if(m833Enabled()){std::lock_guard<std::mutex> g(mu);m833Trackers[device].resetDescriptors(m833Id(p));}return r;
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyDescriptorPool(VkDevice device,VkDescriptorPool p,const VkAllocationCallbacks* a){
  auto d=lookupDevice(device);
+ if(m835Enabled())m835Profiler.resources([&](auto& t){t.resetPool(device,p);});
  if(m833Enabled()){std::lock_guard<std::mutex> g(mu);m833Trackers[device].resetDescriptors(m833Id(p));}
  if(d.early_vkDestroyDescriptorPool)d.early_vkDestroyDescriptorPool(device,p,a);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL vkUpdateDescriptorSets(VkDevice device,uint32_t n,const VkWriteDescriptorSet* w,uint32_t m,const VkCopyDescriptorSet* cp){
  auto d=lookupDevice(device);if(d.early_vkUpdateDescriptorSets)d.early_vkUpdateDescriptorSets(device,n,w,m,cp);
+ if(m835Enabled())m835Profiler.resources([&](auto& t){t.update(device,n,w,m,cp);});
  beamng_cpu::Sample timing(beamng_cpu::Update,m833Enabled() && m817LogLevel()>=1);
  if(!m833Enabled())return;std::lock_guard<std::mutex> g(mu);auto& t=m833Trackers[device];
  for(uint32_t j=0;w && j<n;++j){const auto& v=w[j];
@@ -169,6 +174,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkUpdateDescriptorSets(VkDevice device,uin
 #define EARLY_TEMPLATE(name) \
 extern "C" VKAPI_ATTR void VKAPI_CALL name(VkDevice device,VkDescriptorSet s,VkDescriptorUpdateTemplate t,const void* data){ \
  auto d=lookupDevice(device);if(d.early_##name)d.early_##name(device,s,t,data); \
+ if(m835Enabled())m835Profiler.resources([&](auto& trace){trace.unknown(device,s);}); \
  if(m833Enabled()){std::lock_guard<std::mutex> g(mu);m833Trackers[device].unknown(m833Id(s));} }
 EARLY_TEMPLATE(vkUpdateDescriptorSetWithTemplate)
 EARLY_TEMPLATE(vkUpdateDescriptorSetWithTemplateKHR)
@@ -180,10 +186,11 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdBindDescriptorSets(VkCommandBuffer c,
   std::array<uint64_t,8> ids{};for(uint32_t j=0;j<n;++j)ids[j]=m833Id(s[j]);
   t.bind(m833Id(c),m833Id(l),first,n,ids.data());
  });
+ if(m835Enabled())m835Profiler.descriptors(c,p,l,first,n,s);
  if(fn)fn(c,p,l,first,n,s,dc,offsets);
 }
 #define EARLY_FORWARD(name,signature,arguments,tracking) \
-extern "C" VKAPI_ATTR void VKAPI_CALL name signature {auto fn=m834Command(c,&DeviceDispatch::early_##name,beamng_cpu::Draw,[&](auto& t){tracking;});if(m835Enabled() && !strncmp(#name,"vkCmdDraw",9))m835Profiler.draw(c);if(m835Enabled() && !strncmp(#name,"vkCmdDispatch",13))m835Profiler.compute(c);if(fn)fn arguments;if(m835Enabled() && !strncmp(#name,"vkCmdDispatch",13))m835Profiler.endCompute(c);}
+extern "C" VKAPI_ATTR void VKAPI_CALL name signature {auto fn=m834Command(c,&DeviceDispatch::early_##name,beamng_cpu::Draw,[&](auto& t){tracking;});if(m835Enabled() && (!strncmp(#name,"vkCmdPushDescriptor",19) || !strcmp(#name,"vkCmdExecuteCommands")))m835Profiler.unknownDescriptors(c);if(m835Enabled() && !strncmp(#name,"vkCmdDraw",9))m835Profiler.draw(c);if(m835Enabled() && !strncmp(#name,"vkCmdDispatch",13))m835Profiler.compute(c);if(fn)fn arguments;if(m835Enabled() && !strncmp(#name,"vkCmdDispatch",13))m835Profiler.endCompute(c);}
 EARLY_FORWARD(vkCmdPushDescriptorSetKHR,(VkCommandBuffer c,VkPipelineBindPoint p,VkPipelineLayout l,uint32_t s,uint32_t n,const VkWriteDescriptorSet* w),(c,p,l,s,n,w),t.invalidate(m833Id(c)))
 EARLY_FORWARD(vkCmdPushDescriptorSetWithTemplateKHR,(VkCommandBuffer c,VkDescriptorUpdateTemplate t,VkPipelineLayout l,uint32_t s,const void* data),(c,t,l,s,data),t.invalidate(m833Id(c)))
 EARLY_FORWARD(vkCmdExecuteCommands,(VkCommandBuffer c,uint32_t n,const VkCommandBuffer* s),(c,n,s),t.invalidate(m833Id(c)))
@@ -206,6 +213,7 @@ EARLY_FORWARD(vkCmdClearDepthStencilImage,(VkCommandBuffer c,VkImage i,VkImageLa
 #undef EARLY_FORWARD
 extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyImage(VkDevice device,VkImage i,const VkAllocationCallbacks* a){
  auto d=lookupDevice(device);
+ if(m835Enabled())m835Profiler.resources([&](auto& t){t.destroyImage(device,i);});
  if(m833Enabled()){std::lock_guard<std::mutex> g(mu);m833Trackers[device].eraseImage(m833Id(i));m833ForgetImage(i);}
  if(d.early_vkDestroyImage)d.early_vkDestroyImage(device,i,a);
 }

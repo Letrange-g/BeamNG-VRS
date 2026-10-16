@@ -1,4 +1,4 @@
-GPU PASS PROFILING TEST (0.1.1-profile.1)
+GPU PASS + RESOURCE LINKS TEST (0.1.1-profile.2)
 Back up DLLs, launcher and INI together. Extract this ZIP beside Bin64.
 In BeamNG-VRS.ini set:
 [Experimental]
@@ -7,16 +7,20 @@ ProfileGPU=true
 [Logging]
 Level=info
 
-Restart. Load your usual scene, wait until loading settles, then stay in the
-same view for 45-60 seconds. Exit normally and share the new M8.35 entries in
-%TEMP%\BeamNG_VRS_layer.log (or ZIP the full log). Keep normal VRS enabled and
+Rename the previous %TEMP%\BeamNG_VRS_layer.log before starting for a clean capture.
+Start Launch-BeamNG-VRS.cmd (not Diagnose). Load your usual scene, wait until
+loading settles, then stay in the same view for 60 seconds. Exit normally and
+compress the full %TEMP%\BeamNG_VRS_layer.log as ZIP or 7z. Keep normal VRS enabled and
 debug outlines off. GPU profiling adds overhead: this is not an FPS benchmark.
 Set ProfileGPU=false and restart for normal play.
 
 Graphics passes and compute dispatches are sampled. Query results are read
 without waiting, when the game resets/frees command buffers. Dynamic rendering,
 protected/simultaneous-use recording and some newer draw APIs are not covered.
-No rendering quality or pass-selection change is made by ProfileGPU itself.
+M8.36 entries connect sampled passes to color/depth targets and bound image
+descriptors, including compute storage images. These are candidate connections,
+not proof of shader access or left/right eye identity. No rendering quality or
+pass-selection change is made by ProfileGPU itself.
 See docs/GPU-PROFILING.md in the repository for interpretation and limitations.
 
 INSTALL

@@ -45,13 +45,27 @@ int main(){
  auto init=[&](Profiler& p){p.device(device,api,1,{family});p.pool(device,pool,0,0);p.allocate(device,pool,cmd,true);p.pass(device,pass,rp);};
  auto graphics=[&](Profiler& p,bool shadow){p.legacy(cmd,&begin,0,0,false,shadow,true);p.bind(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,h<VkPipeline>(5),true);p.draw(cmd);p.end(cmd);};
  {
-  Profiler p(logger);init(p);p.begin(cmd,&cb,true);graphics(p,false);
+  Profiler p(logger);init(p);
+  const auto image=h<VkImage>(70);const auto view=h<VkImageView>(71);const auto set=h<VkDescriptorSet>(72);
+  begin.framebuffer=h<VkFramebuffer>(73);
+  p.resources([&](auto& resources){
+   VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};ci.extent={100,80,1};ci.format=VK_FORMAT_R16G16B16A16_SFLOAT;ci.usage=VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;resources.createImage(device,image,ci);
+   VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};vi.image=image;vi.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};resources.createView(device,view,vi);
+   VkFramebufferCreateInfo fi{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};fi.attachmentCount=1;fi.pAttachments=&view;resources.framebuffer(device,begin.framebuffer,fi);
+   VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};ai.descriptorSetCount=1;resources.allocateSets(device,ai,&set);
+   VkDescriptorImageInfo ii{};ii.imageView=view;VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};w.dstSet=set;w.descriptorType=VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;w.descriptorCount=1;w.pImageInfo=&ii;resources.update(device,1,&w,0,nullptr);
+   resources.observeEye(device,image,0);
+  });
+  p.begin(cmd,&cb,true);p.descriptors(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,h<VkPipelineLayout>(74),0,1,&set);graphics(p,false);
   assert(creates==1 && stamps==2 && reads==0 && destroys==0);
   p.submitted(cmd);for(auto& [id,q]:queries)q.pending=true;
   assert(reads==0); // Submission never reads or waits for GPU results.
   for(auto& [id,q]:queries)q.pending=false;
+  // GPU events own their view/image snapshots after application destruction.
+  p.resources([&](auto& resources){resources.forgetFramebuffer(device,begin.framebuffer);resources.destroyView(device,view);resources.destroyImage(device,image);});
   p.reset(cmd);assert(reads==1 && destroys==1);p.destroyDevice(device);
   assert(contains("kind=graphics") && contains("avgMs=1.0000") && contains("vrsDrawCalls=0"));
+  assert(contains("M8.36 GPU_IMAGE image=1") && contains("eyeMask=1") && contains("colorView=2") && contains("readViews=2 storageViews=none partial=0"));
  }
  lines.clear();{
   Profiler p(logger);init(p);p.begin(cmd,&cb,true);graphics(p,true);p.submitted(cmd);p.reset(cmd);

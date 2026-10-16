@@ -18,6 +18,7 @@ top to bottom.
 | `src/early_vrs.hpp` | Bounded one-hop producer inference (experimental) | `Tracker::draw`, `endPass`, `eye` |
 | `src/framebuffer_reuse.hpp` | Idle VRS framebuffer reuse; exact keys and lifetime invalidation | `IdleCache::take`, `release`, `invalidate` |
 | `src/gpu_pass_profile.hpp` | Sampled GPU pass timing; pools owned by command recordings | `Profiler::start`, `retire`, `report` |
+| `src/gpu_resource_trace.hpp` | Bounded image/view generations and candidate descriptor/attachment links | `Resources::targets`, `collect`, `transfer`; diagnostic only |
 | `src/early_cpu_timing.hpp` | Sampled CPU wall-time measurements | `Sample`, `counters` |
 | `src/early_vrs_hooks.inc` | Vulkan descriptor/draw/lifetime adapter | `m833Begin`, `m833Eye`, `m833Report` |
 | `src/ffr_pattern.hpp` | Build the per-eye shading-rate tile image | `make`, `makeGaze`, region geometry and row spans |

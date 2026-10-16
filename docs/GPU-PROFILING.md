@@ -8,7 +8,7 @@ normal-play performance upgrade. Public 0.1.0 is unchanged.
 ## Capture one stationary scene
 
 Back up your current DLLs, launcher and INI together. Download the test artifact,
-extract its outer ZIP, then install `BeamNG-VRS-0.1.1-profile.1-windows-x64.zip`.
+extract its outer ZIP, then install `BeamNG-VRS-0.1.1-profile.2-windows-x64.zip`.
 Use the matching launcher; older launchers reject the new setting.
 
 ```ini
@@ -22,7 +22,8 @@ Level=info
 
 Keep normal `[Foveation] Enabled=true`, debug outlines off, and your usual
 resolution/scissor/Turbo settings. Restart BeamNG, load the scene, let loading
-settle, and stay in the same view for 45–60 seconds. Exit normally. Share
+settle, and stay in the same view for 60 seconds. Use `Launch-BeamNG-VRS.cmd`, not
+`Diagnose-BeamNG-VRS.cmd`. Exit normally. Share
 `%TEMP%\BeamNG_VRS_layer.log`, compressed if large. It appends across launches;
 rename the existing log before launching if you want a separate capture.
 
@@ -55,6 +56,55 @@ draws can indicate untracked APIs or secondary work; it is not proof of no VRS.
 Expensive compute groups point to work requiring a different optimisation.
 Attachment formats and sizes can suggest a role, but cannot prove that a group
 is lighting, SSAO, scene colour, normals or a final composite.
+
+## Resource connections in profile.2
+
+The first user capture identified two graphics groups at eye resolution with
+roughly 1.2–1.3 ms sampled spans and no VRS draws. Their eye identity was unknown.
+This build adds resource observations to investigate those intermediate targets;
+it does **not** enable VRS on them or claim those spans are recoverable savings.
+
+- `GPU_PASS` now includes `colorView`, `depthView` and `storageView`. Groups split
+  by their actual target view identities. Compute groups split by the first
+  observed storage view; that view is **not** assumed to be a write target.
+- `M8.36 GPU_LINK` lists candidate sampled/input-attachment reads and storage
+  views bound during sampled graphics/compute work. Up to 128 groups per window
+  get link records, including groups outside the timing table's top 20.
+- `GPU_VIEW` maps a view ID to an image ID, format and mip/layer/aspect range.
+  `GPU_IMAGE` describes dimensions, format, usage and sample count. IDs are
+  process-local lifetime IDs; reused handles get new IDs. Old sample snapshots
+  retain their original identities after resources are destroyed.
+- `eyeMask` records direct transfers to currently published OpenXR eye images:
+  0 unknown, 1 left, 2 right, 3 both over the image's lifetime. Both endpoints
+  receive the observed label; historical source handles do not seed new image
+  generations. This diagnostic does not expand the existing VRS classifier. A shared depth image or a matching resolution
+  is insufficient evidence for assigning an eye.
+- `GPU_TRANSFER` records image copy/blit/resolve endpoints and region count.
+  These are recorded operations, including potentially unsubmitted recordings;
+  subresource regions, execution order and synchronization are not reconstructed.
+- `partial=1` identifies missing/truncated/unsupported observations. Image arrays,
+  descriptor update templates, push descriptors, layout changes and secondary
+  execution can make the observations partial. Ordinary sampled material textures
+  are excluded; render-target, depth, storage and unknown imported images remain.
+  Buffers and shader access reflection are not captured.
+
+Descriptor image definitions are cached at update time. Bound descriptors are
+examined only inside sampled GPU scopes, when bindings or descriptor definitions
+change. This supports chains through different command buffers and compute stages
+as **candidate** connections, not verified dataflow. A bound resource need not be
+read by the shader; storage access may be read, write, or both. Descriptors can be
+updated after recording. Unions within a reporting group can combine different
+uses of a shared target. `partial=0` does not prove complete shader coverage.
+
+No per-draw logging, GPU waits, or new VRS selections are added. This extra
+tracking still has diagnostic overhead. `ProfileGPU=false` disables it along with
+GPU timing; leave `EarlyPasses=false` for this capture and normal play.
+
+Resource storage is bounded: 32,768 live image definitions, 65,536 views, 16,384
+sets/framebuffers, 128 image slots per set, 8 bound sets per bind point, 32 candidate
+read and 32 storage views per sample/group, and 256 transfer groups per report.
+`GPU_LINKS` reports omitted groups and cumulative resource-table drops. A capped
+or unsupported path must not be interpreted as absence of an image dependency.
 
 ## Measurement and lifetime limits
 

@@ -127,9 +127,9 @@ void log(const char*);
 bool m835Enabled(){static const bool on=settingFlag("BEAMNG_VRS_PROFILE_GPU");return on;}
 beamng_profile::Profiler m835Profiler(log);
 bool m835Entry(const char* name){
- return m835Enabled() && (!strncmp(name,"vkCmdDraw",9) || !strncmp(name,"vkCmdDispatch",13) ||
-  !strcmp(name,"vkCreateCommandPool") || !strcmp(name,"vkBeginCommandBuffer") || !strcmp(name,"vkResetCommandBuffer") ||
-  !strcmp(name,"vkResetCommandPool") || !strcmp(name,"vkDestroyCommandPool"));
+ // Profile mode needs descriptor/resource lifetime hooks for sampled resource
+ // links. This does not activate the early-pass classifier or widen VRS scope.
+ (void)name;return m835Enabled();
 }
 void m835BeginPass(VkCommandBuffer,const VkRenderPassBeginInfo*,bool,bool);
 bool m833Enabled(){static const bool enabled=m833Mode()!=0 && settingFlag("BEAMNG_VRS_M8_EXPERIMENTAL");return enabled;}
@@ -605,7 +605,7 @@ bool m817Verbose() { return m817LogLevel()>=2; }
 int m817MessageLevel(const char* msg) {
  if(strstr(msg,"FAILED") || strstr(msg,"ERROR") || strstr(msg,"WARNING") ||
     strstr(msg,"FATAL") || strstr(msg,"VkResult=-") || strstr(msg,"result=-")) return 0;
- if(strstr(msg,"M8.35 ") || strstr(msg,"M8.34 ") || strstr(msg,"M8.33 ") || strstr(msg,"M8.17") || strstr(msg,"M8.18") || strstr(msg,"M8.21 ") || strstr(msg,"M8.23 ") || strstr(msg,"M8.24 ") || strstr(msg,"M8.25 ") || strstr(msg,"M8.27 ") || strstr(msg,"M8.28 ") || strstr(msg,"M8.14 AUTO_RESOLUTION") ||
+ if(strstr(msg,"M8.36 ") || strstr(msg,"M8.35 ") || strstr(msg,"M8.34 ") || strstr(msg,"M8.33 ") || strstr(msg,"M8.17") || strstr(msg,"M8.18") || strstr(msg,"M8.21 ") || strstr(msg,"M8.23 ") || strstr(msg,"M8.24 ") || strstr(msg,"M8.25 ") || strstr(msg,"M8.27 ") || strstr(msg,"M8.28 ") || strstr(msg,"M8.14 AUTO_RESOLUTION") ||
     strstr(msg,"M8.14 RESOURCE_") || strstr(msg,"M8.16 EYE_FB_STATS") ||
     strstr(msg,"M8.16 UNUSED_VRS") || strstr(msg,"M8.15 STATS") ||
     strstr(msg,"M3 VRS enabled") || strstr(msg,"M4.2 GPU:") ||
@@ -1508,7 +1508,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice physic
       profile.reset=reinterpret_cast<PFN_vkCmdResetQueryPool>(gdpa(*out,"vkCmdResetQueryPool"));
       profile.stamp=reinterpret_cast<PFN_vkCmdWriteTimestamp>(gdpa(*out,"vkCmdWriteTimestamp"));
       m835Profiler.device(*out,profile,props.limits.timestampPeriod,std::move(families));
-      log("M8.35 GPU_PROFILE enabled: sampled primary single-submit recordings; readback at reset/free; diagnostic overhead expected");
+      log("M8.35 GPU_PROFILE enabled: sampled primary single-submit recordings; resource links M8.36; readback at reset/free; diagnostic overhead expected");
      }else log("M8.35 GPU_PROFILE unsupported device/query setup");
     }
     dispatch.gdpa = gdpa;
@@ -2450,6 +2450,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateImageView(
  auto d = lookupDevice(device);
  if (!d.createImageView) return VK_ERROR_INITIALIZATION_FAILED;
  VkResult r = d.createImageView(device, ci, alloc, out);
+ if(m835Enabled() && r==VK_SUCCESS && ci && out)m835Profiler.resources([&](auto& t){t.createView(device,*out,*ci);});
  if (r == VK_SUCCESS && ci && out) {
    bool report = false;
    {
@@ -2475,6 +2476,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateImageView(
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyImageView(
  VkDevice device, VkImageView view, const VkAllocationCallbacks* alloc) {
+ if(m835Enabled())m835Profiler.resources([&](auto& t){t.destroyView(device,view);});
  std::lock_guard<std::mutex> reuseGuard(m823CreateMutex);
  auto d = lookupDevice(device);
  for(auto id:m834FramebufferCache.invalidate([&](const auto& k){return k.device==m833Id(device) &&
@@ -2500,6 +2502,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateFramebuffer(
     m814EnsureResources(device,xrW,xrH);
  }
  VkResult r = d.createFramebuffer(device, ci, alloc, out);
+ if(m835Enabled() && r==VK_SUCCESS && ci && out)m835Profiler.resources([&](auto& t){t.framebuffer(device,*out,*ci);});
  if (r == VK_SUCCESS && ci && out) {
   m823Stats.originals.fetch_add(1,std::memory_order_relaxed);
   std::lock_guard<std::mutex> guard(mu);
@@ -2690,6 +2693,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateFramebuffer(
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyFramebuffer(
  VkDevice device, VkFramebuffer framebuffer, const VkAllocationCallbacks* alloc) {
+ if(m835Enabled())m835Profiler.resources([&](auto& t){t.forgetFramebuffer(device,framebuffer);});
  std::lock_guard<std::mutex> lazyGuard(m823CreateMutex);
  auto d = lookupDevice(device);
  VkFramebuffer shadow = VK_NULL_HANDLE;
@@ -2731,6 +2735,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateImage(
   }
  }
  const auto result=d.createImage(device,ci,alloc,out);
+ if(m835Enabled() && result==VK_SUCCESS && ci && out)m835Profiler.resources([&](auto& t){t.createImage(device,*out,*ci);});
  if(m833Enabled() && result==VK_SUCCESS && ci && out && !ci->pNext &&
     ci->imageType==VK_IMAGE_TYPE_2D && ci->extent.depth==1 && ci->arrayLayers==1 &&
     ci->samples==VK_SAMPLE_COUNT_1_BIT && ci->mipLevels==1 &&
@@ -3518,14 +3523,15 @@ bool m75ReadEyeImages(uint64_t out[2][3]) {
  }
  return false;
 }
-void m75TraceTransfer(VkImage src,VkImage dst) {
- uint64_t images[2][3]{};if(!m75ReadEyeImages(images))return;
+int m75TraceTransfer(VkImage src,VkImage dst) {
+ uint64_t images[2][3]{};if(!m75ReadEyeImages(images))return -1;
  int eye=-1;
  for(int e=0;e<2;++e)for(int i=0;i<3;++i)if(images[e][i] && (uint64_t)(uintptr_t)dst==images[e][i])eye=e;
- if(eye<0)return;
+ if(eye<0)return -1;
  {std::lock_guard<std::mutex> guard(mu);m75Sources[src]=eye;}
  unsigned n=m75MatchLogs.fetch_add(1,std::memory_order_relaxed);
  if(n<32){char b[256]{};sprintf_s(b,"M7.5a transferEye eye=%d source=%p destination=%p",eye,(void*)src,(void*)dst);log(b);}
+ return eye;
 }
 // M7.5b: per-eye attachment readiness assessment. No GPU resources are created
 // or bound here; this is a deliberately non-invasive prerequisite audit.
@@ -3903,7 +3909,14 @@ namespace {
 std::atomic<unsigned> m74hTransferCount{0};
 void m74hTrace(const char* op, VkCommandBuffer cmd, VkImage src, VkImage dst, uint32_t regions) {
  m833Invalidate(cmd);
- m75TraceTransfer(src,dst);
+ const int copyEye=m75TraceTransfer(src,dst);
+ if(m835Enabled()){
+  VkDevice device{};
+  {std::lock_guard<std::mutex> guard(mu);auto c=commandDevices.find(cmd);if(c!=commandDevices.end())device=c->second;}
+  // Stamp only a direct transfer to a currently published OpenXR image. Do not
+  // seed new image generations from historical source-handle classifications.
+  if(device)m835Profiler.resources([&](auto& t){t.observeEye(device,src,copyEye);t.observeEye(device,dst,copyEye);t.transfer(device,src,dst,op,regions);});
+ }
  if(!m817Verbose())return;
  unsigned n = m74hTransferCount.fetch_add(1, std::memory_order_relaxed);
  if (n >= 12000) return;

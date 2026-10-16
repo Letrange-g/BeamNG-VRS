@@ -6,7 +6,8 @@ assert 'M8.17 STATS uploads=' in s
 assert 'M8.17 VISIBILITY_MASK runtimeAdvertised=' in x
 assert '"XR_KHR_visibility_mask"' in x
 assert 'if(!m817Verbose())return;' in s
-assert 'm75TraceTransfer(src,dst);\n if(!m817Verbose())return;' in s, 'Do not disable gaze source classification'
+transfer = s[s.index('void m74hTrace('):s.index('extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdCopyImage(', s.index('void m74hTrace('))]
+assert transfer.index('m75TraceTransfer(src,dst);') < transfer.index('if(!m817Verbose())return;'), 'Keep gaze source classification before the debug logging gate'
 assert 'm815Pending.push_back' in s and 'm815PollLocked(device,dispatch)' in s, 'Async fence workflow preserved'
 assert 'm814EnsureResources(device,xrW,xrH)' in s, 'Dynamic resolution workflow preserved'
 assert 'm81DrawOutline(cmd,d)' in s
