@@ -1,3 +1,14 @@
+# ⚠️ [DEPRECATED] ⚠️
+
+> [!CAUTION]
+> **This project is deprecated and no longer needed.**
+>
+> Since **BeamNG.drive 0.40**, VR runs on **DirectX 12 with OpenXR** instead of Vulkan.
+> BeamNG-VRS is a Vulkan layer, so it no longer applies, and native VR
+> performance in the game is much better than what this project provided.
+>
+> Please use the game's built-in VR. The information below is kept for reference only.
+
 # BeamNG-VRS
 
 Foveated rendering and optional edge cropping for **BeamNG.drive in Vulkan VR**.
