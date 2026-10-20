@@ -44,6 +44,20 @@ inline std::string choice(std::string value, std::initializer_list<std::string_v
  return value;
 }
 
+// Launcher-only: the PowerShell launcher disables these implicit OpenXR layers
+// for the game process. The DLLs only validate the value.
+inline void openxrLayerList(const std::string& value) {
+ if(value.empty() || value == "*") return;
+ std::istringstream names(value);
+ std::string name;
+ while(std::getline(names, name, ',')) {
+  name = trim(name);
+  if(name.empty() || name.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-") != std::string::npos)
+   throw std::runtime_error("expected OpenXR layer names separated by commas, or *");
+ }
+ if(value.back() == ',') throw std::runtime_error("expected OpenXR layer names separated by commas, or *");
+}
+
 // These are rendering/tracking gates, not DLL loading switches. Scissor and
 // turbo stay independent; the OpenXR layer still identifies eye images.
 inline void activation(Values& out, bool enabled) {
@@ -113,7 +127,8 @@ inline void setting(Values& out, const std::string& section, const std::string& 
     {"lefteyeleft", "LEFT_EYE_LEFT"}, {"lefteyeright", "LEFT_EYE_RIGHT"},
     {"righteyeleft", "RIGHT_EYE_LEFT"}, {"righteyeright", "RIGHT_EYE_RIGHT"}};
   out["BEAMNG_VRS_SCISSOR_" + names.at(key)] = value;
- } else throw std::runtime_error("unknown section or setting");
+ } else if(id == "openxr.disablelayers") openxrLayerList(value);
+ else throw std::runtime_error("unknown section or setting");
 }
 
 inline Values parse(std::istream& input) {
@@ -129,7 +144,7 @@ inline Values parse(std::istream& input) {
    if(line[0] == '[') {
     if(line.back() != ']') throw std::runtime_error("invalid section header");
     section = lower(trim(line.substr(1, line.size() - 2)));
-    if(section != "foveation" && section != "debug" && section != "scissor" && section != "tracking" && section != "performance" && section != "logging" && section != "lensmask")
+    if(section != "foveation" && section != "debug" && section != "scissor" && section != "tracking" && section != "performance" && section != "logging" && section != "lensmask" && section != "openxr")
      throw std::runtime_error("unknown section");
     continue;
    }

@@ -41,7 +41,8 @@ function Test-LaunchLayout {
     if (-not $env:VK_LAYER_PATH -and $content -notmatch '(?m)^VK_LAYER_PATH=\r?$') { throw 'Launcher replaced normal Vulkan layer discovery.' }
     if ($env:VK_ADD_LAYER_PATH -ne 'existing-add-path') { throw 'Launcher changed the parent Vulkan search path.' }
     if ($Diagnostics) {
-        if ($content -notmatch 'VK_LOADER_DEBUG=error,warn,layer' -or $content -notmatch 'BEAMNG_VRS_LOG_LEVEL=2') {
+        if ($content -notmatch 'VK_LOADER_DEBUG=error,warn,layer' -or $content -notmatch 'BEAMNG_VRS_LOG_LEVEL=2' -or
+            $content -notmatch 'XR_LOADER_DEBUG=info') {
             throw 'Diagnostic settings were not applied.'
         }
         if (-not $diagnosticLog -or (Get-Content -LiteralPath $diagnosticLog -Raw) -notmatch 'Vulkan loader diagnostic fixture') {
@@ -99,6 +100,34 @@ try {
     Test-LaunchLayout -Layers $layers
     Set-Content -LiteralPath $ini -Value "[Foveation]`nEnabled=false`n[Scissor]`nEnabled=true`n[Performance]`nTurboMode=true`n[Logging]`nLevel=off" -Encoding UTF8
     Test-LaunchLayout -Layers $layers
+    # Listed implicit OpenXR layers are disabled in the child only, through their
+    # own disable_environment; layers already off in the registry are left alone.
+    $registry = 'HKCU:\Software\BeamNG-VRS-Test-' + [Guid]::NewGuid() + '\Implicit'
+    try {
+        [void](New-Item -Path $registry -Force)
+        foreach ($layer in @(@('overlay', 0), @('off', 1))) {
+            $manifest = Join-Path $temp ('XR_APILAYER_TEST_' + $layer[0] + '.json')
+            Set-Content -LiteralPath $manifest -Encoding UTF8 -Value ('{"file_format_version":"1.0.0","api_layer":{"name":"XR_APILAYER_TEST_' + $layer[0] +
+                '","library_path":"test.dll","api_version":"1.0","implementation_version":"1","description":"test","disable_environment":"DISABLE_XR_APILAYER_TEST_' + $layer[0] + '"}}')
+            [void](New-ItemProperty -Path $registry -Name $manifest -PropertyType DWord -Value $layer[1])
+        }
+        Set-Content -LiteralPath $ini -Value "[OpenXR]`nDisableLayers=XR_APILAYER_TEST_overlay, XR_APILAYER_TEST_off" -Encoding UTF8
+        $messages = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -CheckOnly -OpenXRLayerRegistry $registry
+        if ($LASTEXITCODE -ne 0 -or ($messages -join "`n") -notmatch 'XR_APILAYER_TEST_overlay \[disabled for BeamNG' -or
+            ($messages -join "`n") -notmatch 'XR_APILAYER_TEST_off \[off in registry\]') { throw 'CheckOnly did not report implicit OpenXR layers.' }
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -OpenXRLayerRegistry $registry
+        if ($LASTEXITCODE -ne 0) { throw 'Launcher failed with implicit OpenXR layers.' }
+        $deadline = [DateTime]::UtcNow.AddSeconds(10); $content = ''
+        while ([DateTime]::UtcNow -lt $deadline) {
+            try { $content = Get-Content -LiteralPath $result -Raw; if ($content -match 'DISABLE_XR_APILAYER_TEST_off=') { break } } catch {}
+            Start-Sleep -Milliseconds 100
+        }
+        if ($content -notmatch '(?m)^DISABLE_XR_APILAYER_TEST_overlay=1\r?$' -or $content -notmatch '(?m)^DISABLE_XR_APILAYER_TEST_off=\r?$') {
+            throw 'Implicit OpenXR layer was not disabled for the child only.'
+        }
+        if ($env:DISABLE_XR_APILAYER_TEST_overlay) { throw 'Launcher changed the parent environment.' }
+        Remove-Item -LiteralPath $result
+    } finally { Remove-Item -LiteralPath (Split-Path -Parent $registry) -Recurse -Force -ErrorAction SilentlyContinue }
     # The public launcher must not silently edit/use an obsolete nested INI.
     Move-Item -LiteralPath $ini -Destination $layers
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -CheckOnly
@@ -111,7 +140,7 @@ try {
     Set-Content -LiteralPath $ini -Value "[Debug]`nDrawOutline=typo" -Encoding UTF8
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher
     if ($LASTEXITCODE -eq 0 -or (Test-Path -LiteralPath $result)) { throw 'Invalid INI started the game.' }
-    Write-Output 'Launcher integration passed: root/Bin64 layouts, root INI, both executable names, working directory, Vulkan discovery, diagnostic capture, arguments, child environment, CheckOnly, missing INI/executable and invalid INI.'
+    Write-Output 'Launcher integration passed: root/Bin64 layouts, root INI, both executable names, working directory, Vulkan discovery, diagnostic capture, arguments, child environment, CheckOnly, implicit OpenXR layer disabling, missing INI/executable and invalid INI.'
 } finally {
     foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $before[$name], 'Process') }
     Remove-Item -LiteralPath $temp -Recurse -Force

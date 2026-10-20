@@ -17,6 +17,7 @@
 #include <openxr/openxr_loader_negotiation.h>
 #include <cstring>
 #include <cstdio>
+#include <atomic>
 #include <mutex>
 #include <unordered_map>
 #include <vector>
@@ -27,6 +28,9 @@
 #include <cmath>
 namespace {
 std::mutex stateMutex;
+// Implicit layers sit above this explicit layer and may query global functions
+// through it with XR_NULL_HANDLE; forward those to the chain below.
+std::atomic<PFN_xrGetInstanceProcAddr> downstreamGetInstanceProcAddr{};
 // One downstream function table per OpenXR instance. Each interceptor resolves
 // ownership first, copies the needed entries, releases stateMutex, then forwards.
 struct Dispatch {
@@ -749,6 +753,11 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeGetInstanceProcAddr(XrInstance in
  if(!name||!function)return XR_ERROR_VALIDATION_FAILURE;
  if(!strcmp(name,"xrGetInstanceProcAddr")){*function=reinterpret_cast<PFN_xrVoidFunction>(probeGetInstanceProcAddr);return XR_SUCCESS;}
  if(!strcmp(name,"xrCreateApiLayerInstance")){*function=reinterpret_cast<PFN_xrVoidFunction>(probeCreateApiLayerInstance);return XR_SUCCESS;}
+ if(instance==XR_NULL_HANDLE){
+  const auto next=downstreamGetInstanceProcAddr.load();
+  if(next)return next(instance,name,function);
+  *function=nullptr;return XR_ERROR_FUNCTION_UNSUPPORTED;
+ }
  Dispatch d{};
  {std::lock_guard<std::mutex> g(stateMutex);auto it=instances.find(instance);if(it==instances.end())return XR_ERROR_HANDLE_INVALID;d=it->second;}
  if(!strcmp(name,"xrGetSystemProperties")){*function=reinterpret_cast<PFN_xrVoidFunction>(probeGetSystemProperties);return XR_SUCCESS;}
@@ -772,6 +781,7 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeGetInstanceProcAddr(XrInstance in
 extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateApiLayerInstance(const XrInstanceCreateInfo* info,const XrApiLayerCreateInfo* layerInfo,XrInstance* instance){
  if(!info||!layerInfo||!layerInfo->nextInfo||!instance)return XR_ERROR_VALIDATION_FAILURE;
  auto* next=layerInfo->nextInfo;
+ downstreamGetInstanceProcAddr.store(next->nextGetInstanceProcAddr);
  XrApiLayerCreateInfo forwarded=*layerInfo;forwarded.nextInfo=next->next;
  bool appGaze=false;
  bool appVisibilityMask=false;
@@ -808,7 +818,7 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateApiLayerInstance(const XrIn
    runtimeVisibilityMask?1u:0u,appVisibilityMask?1u:0u,m818Enabled()?0u:1u);
   logLine(msg);
  }
- const bool force=enabled("BEAMNG_EYE_FORCE_EXTENSION");
+ bool force=enabled("BEAMNG_EYE_FORCE_EXTENSION");
  XrInstanceCreateInfo modified=*info;
  std::vector<const char*> extensionNames;
  bool injected=false;
@@ -832,6 +842,13 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateApiLayerInstance(const XrIn
  }
  XrResult r=next->nextCreateApiLayerInstance(injected?&modified:info,&forwarded,instance);
  logResult("Next xrCreateApiLayerInstance",r);
+ if(XR_FAILED(r)&&injected){
+  // Another layer below may reject an extension BeamNG did not ask for: fail open.
+  logLine("OpenXR WARNING: instance creation failed with injected extensions; retrying with the game's own request");
+  injected=false;injectedMask=false;force=false;
+  r=next->nextCreateApiLayerInstance(info,&forwarded,instance);
+  logResult("Next xrCreateApiLayerInstance retry",r);
+ }
  if(XR_FAILED(r))return r;
  Dispatch d{};d.next=next->nextGetInstanceProcAddr;d.gazeExtension=appGaze||(force && runtimeGaze);d.visibilityMaskEnabled=appVisibilityMask||injectedMask;
  PFN_xrVoidFunction fn{};
