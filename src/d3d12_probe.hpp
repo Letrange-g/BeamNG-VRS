@@ -1,19 +1,39 @@
 #pragma once
+#include "ffr_pattern.hpp"
 #include <cstddef>
 #include <cstdint>
 
-// M8.41: diagnostics-only Direct3D 12 probe. BeamNG 0.40 hands its D3D12
-// device to the OpenXR layer in xrCreateSession; from there this probe reports
-// VRS support and which render-target sizes the game binds per frame, so the
-// later D3D12 foveation can target the real (pre-upscale) eye passes.
-// It never changes rendering. Implemented in d3d12_probe.cpp (C COM interface).
+// M8.41/M8.42: Direct3D 12 side of BeamNG-VRS. BeamNG 0.40 hands its D3D12
+// device and queue to the OpenXR layer in xrCreateSession. From there this
+// module hooks render-target binding to:
+//  - M8.41 (diagnostics runs only): report VRS support and the render-target
+//    sizes bound per frame;
+//  - M8.42: apply a tile-based shading-rate image (VRS Tier 2) to eye-shaped
+//    render targets, at the game's internal render size and at full size.
+// Both eyes share the same intermediate targets, so each tile uses the finer
+// rate of the two eyes (the M8.32 combined pattern). Implemented in
+// d3d12_probe.cpp with the C COM interface.
 namespace beamng_d3d12 {
 using LogFn = void (*)(const char*);
-// Logs VRS tier and installs render-target hooks once per process. Returns
-// false (and changes nothing) when the device or a hook cannot be used.
-bool attach(void* device, LogFn log);
+struct Foveation {
+ bool enabled = false;
+ bool gaze = false;          // Follow eye tracking; otherwise fixed center.
+ float center = .25f, middle = .55f;
+ uint8_t middleRate = beamng_ffr::rate(2, 2), outerRate = beamng_ffr::rate(4, 4);
+ beamng_ffr::Shape shape = beamng_ffr::Shape::Circle;
+ uint32_t graceMs = 30;
+};
+// Installs the hooks once per process and selects this device for VRS. With
+// neither diagnostics nor foveation requested it changes nothing. Returns
+// false (rendering untouched) when the device or a hook cannot be used.
+bool attach(void* device, void* queue, LogFn log, bool diagnostics, const Foveation& foveation);
 // Known OpenXR eye swapchain textures (ID3D12Resource*), marked in reports.
 void setEyeImages(const uint64_t* images, size_t count);
-// Called once per xrEndFrame; logs a render-target histogram periodically.
+// OpenXR eye swapchain size; render targets with the same aspect ratio at
+// 25-100% of this size receive the shading-rate image.
+void setEyeSize(uint32_t width, uint32_t height);
+// Projected gaze per eye in [0,1] image coordinates; bit i of mask = eye i valid.
+void setGaze(const float u[2], const float v[2], uint32_t mask);
+// Called once per xrEndFrame: updates shading-rate images, logs diagnostics.
 void frame();
 }

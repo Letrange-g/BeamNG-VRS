@@ -21,7 +21,7 @@ The release ZIP puts `BeamNG-VRS.ini` beside `Launch-BeamNG-VRS.cmd` at the extr
 | LensMask | `Size` | `1.15` | Kept ellipse diameter relative to eye-image width/height (0.5 to 1.5). `1.0` touches all four edges and skips about 21% of pixels; `1.41` skips none. Increase it if black corners are visible. |
 | Performance | `TurboMode` | `false` | Experimental one-frame OpenXR wait overlap. Enabled by default in 0.1.0; off by default since it showed no gain in GPU-limited tests. Restart to change. |
 | OpenXR | `DisableLayers` | `*` | Implicit OpenXR layers to turn off for BeamNG only: `*` (all, default), comma-separated names, or empty to keep every layer. See [Other OpenXR layers](#other-openxr-layers). |
-| Renderer | `API` | `d3d12` | `d3d12` starts BeamNG with `-gfx d3d12`, the game's VR default since 0.40; only the OpenXR layer (turbo, gaze, logging) applies there for now. `vulkan` starts `-gfx vk`, where foveation, scissor and lens mask work. |
+| Renderer | `API` | `d3d12` | `d3d12` starts BeamNG with `-gfx d3d12`, the game's VR default since 0.40. Foveation (fixed or eye-tracked) uses D3D12 VRS Tier 2 there; scissor and lens mask are Vulkan-only, and `AllPasses` does not apply. `vulkan` starts `-gfx vk` with the original Vulkan layer. See [Direct3D 12](#direct3d-12). |
 | Logging | `Level` | `info` | `off`, `errors`, `info`, or `debug`. Default is brief status/errors, not verbose diagnostics. |
 | Tracking | `GracePeriodMs` | `30` | Hold the last valid gaze for this many milliseconds during temporary tracking loss (0 to 1000). |
 | Tracking | `GazeRefreshMs` | `8` | Minimum CPU gaze polling interval (2 to 50 ms). This does not measure eye-to-display latency. |
@@ -118,6 +118,23 @@ control applies to this project's two DLLs, not BeamNG, SteamVR or other layers.
 `Diagnose-BeamNG-VRS.cmd` overrides the INI with debug logging to collect evidence.
 Normal launch uses the INI. Disabling logs may reduce some overhead but no FPS
 increase is established. Invalid INI errors still appear in the launcher.
+
+## Direct3D 12
+
+BeamNG 0.40 renders VR with Direct3D 12 and, by default, draws most of each eye's
+scene at half the headset resolution before upscaling it. With `[Renderer]
+API=d3d12` (default) the OpenXR layer receives the game's D3D12 device and applies
+a shading-rate image (VRS Tier 2, 16-pixel tiles on tested GPUs) to every render
+target with the eye image's shape at 25-100% of its size, so both the internal
+render size and the full-size passes are covered. The same `[Foveation]` sizes,
+shape and rates apply, and `[Tracking]` gaze settings move the sharp region with
+eye tracking. Both eyes share the game's intermediate targets, so each tile uses
+the finer rate of the two eyes; the sharp region is the union of both eyes' regions.
+
+Not yet available with Direct3D 12: scissor crop, lens mask and the debug
+outline. A GPU without VRS Tier 2 keeps normal rendering and logs
+`M8.42 D3D12 foveation unavailable`. `Diagnose-BeamNG-VRS.cmd` also logs the VRS
+tier and the render-target sizes the game binds per frame (`M8.41` lines).
 
 ## Other OpenXR layers
 

@@ -1,17 +1,12 @@
-# ⚠️ [DEPRECATED] ⚠️
-
-> [!CAUTION]
-> **This project is deprecated and no longer needed.**
->
-> Since **BeamNG.drive 0.40**, VR runs on **DirectX 12 with OpenXR** instead of Vulkan.
-> BeamNG-VRS is a Vulkan layer, so it no longer applies, and native VR
-> performance in the game is much better than what this project provided.
->
-> Please use the game's built-in VR. The information below is kept for reference only.
+> [!NOTE]
+> **BeamNG.drive 0.40** renders VR with **Direct3D 12 and OpenXR**. The launcher now starts
+> BeamNG in Direct3D 12 by default, and foveated rendering (fixed or eye-tracked) works there
+> through D3D12 variable rate shading (GPU with VRS Tier 2). Scissor crop and the lens mask
+> are still Vulkan-only (`[Renderer] API=vulkan`). Direct3D 12 support is new and experimental.
 
 # BeamNG-VRS
 
-Foveated rendering and optional edge cropping for **BeamNG.drive in Vulkan VR**.
+Foveated rendering for **BeamNG.drive VR** (Direct3D 12 or Vulkan), plus optional edge cropping in Vulkan.
 Keep more detail where you look and reduce rendering work around the edges.
 Works with a fixed center or supported eye tracking.
 

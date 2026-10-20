@@ -1,5 +1,6 @@
-// M8.41: real D3D12 hooks on a WARP device (no GPU or headset): install,
-// chain to the runtime, classify render targets and report without changing rendering.
+// M8.41/M8.42: real D3D12 hooks on a WARP device (no GPU or headset): install,
+// chain to the runtime, classify render targets, and, where WARP offers VRS
+// Tier 2, create, upload and bind shading-rate images without device removal.
 #include "d3d12_probe.hpp"
 #include <windows.h>
 #include <d3d12.h>
@@ -25,9 +26,20 @@ int main(){
   // CI runners provide WARP; a silent skip would hide a broken probe.
   std::cerr<<"D3D12 WARP device unavailable\n";return 1;
  }
- assert(beamng_d3d12::attach(device,capture));
- assert(beamng_d3d12::attach(device,capture)); // Idempotent: hooks install once.
+ D3D12_COMMAND_QUEUE_DESC qd{D3D12_COMMAND_LIST_TYPE_DIRECT};ID3D12CommandQueue* queue=nullptr;
+ assert(SUCCEEDED(device->CreateCommandQueue(&qd,__uuidof(ID3D12CommandQueue),reinterpret_cast<void**>(&queue))));
+ D3D12_FEATURE_DATA_D3D12_OPTIONS6 options{};
+ const bool tier2=SUCCEEDED(device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS6,&options,sizeof(options))) &&
+   options.VariableShadingRateTier>=D3D12_VARIABLE_SHADING_RATE_TIER_2 && options.ShadingRateImageTileSize==16;
+ beamng_d3d12::Foveation fov{};
+ assert(!beamng_d3d12::attach(device,queue,capture,false,fov)); // Nothing requested: no hooks.
+ assert(lines.empty());
+ fov.enabled=true;fov.gaze=true;
+ assert(beamng_d3d12::attach(device,queue,capture,true,fov));
+ assert(beamng_d3d12::attach(device,queue,capture,true,fov)); // Idempotent: hooks install once.
  assert(logged("M8.41 D3D12 VRS tier=") && logged("hooks=installed"));
+ assert(logged(tier2?"M8.42 D3D12 foveation active":"M8.42 D3D12 foveation unavailable"));
+ beamng_d3d12::setEyeSize(96,80);
 
  D3D12_HEAP_PROPERTIES heap{D3D12_HEAP_TYPE_DEFAULT};
  auto texture=[&](UINT64 w,UINT h){
@@ -64,20 +76,38 @@ int main(){
   release(list4);
  }
  assert(SUCCEEDED(list->Close()));
- D3D12_COMMAND_QUEUE_DESC qd{D3D12_COMMAND_LIST_TYPE_DIRECT};ID3D12CommandQueue* queue=nullptr;
- assert(SUCCEEDED(device->CreateCommandQueue(&qd,__uuidof(ID3D12CommandQueue),reinterpret_cast<void**>(&queue))));
  ID3D12CommandList* lists[]{list};queue->ExecuteCommandLists(1,lists);
  ID3D12Fence* fence=nullptr;assert(SUCCEEDED(device->CreateFence(0,D3D12_FENCE_FLAG_NONE,__uuidof(ID3D12Fence),reinterpret_cast<void**>(&fence))));
- assert(SUCCEEDED(queue->Signal(fence,1)));
- while(fence->GetCompletedValue()<1)Sleep(1);
- assert(SUCCEEDED(device->GetDeviceRemovedReason()));
+ uint64_t fenceValue=0;
+ auto drain=[&]{assert(SUCCEEDED(queue->Signal(fence,++fenceValue)));while(fence->GetCompletedValue()<fenceValue)Sleep(1);
+  assert(SUCCEEDED(device->GetDeviceRemovedReason()));};
+ drain();
 
- for(int i=0;i<300;++i)beamng_d3d12::frame();
+ // Both eye-shaped sizes were requested; the next frame builds and uploads their images.
+ beamng_d3d12::frame();drain();
+ if(tier2){
+  assert(logged("M8.42 shading-rate image for 96x80: 6x5 tiles"));
+  assert(logged("M8.42 shading-rate image for 48x40: 3x3 tiles"));
+ }
+ // Bind with VRS, then a non-eye target, then follow a moving gaze (re-upload) and bind again.
+ for(int round=0;round<2;++round){
+  assert(SUCCEEDED(allocator->Reset()) && SUCCEEDED(list->Reset(allocator,nullptr)));
+  list->OMSetRenderTargets(1,&first,FALSE,nullptr);list->ClearRenderTargetView(first,black,0,nullptr);
+  list->OMSetRenderTargets(1,&second,FALSE,nullptr);list->ClearRenderTargetView(second,black,0,nullptr);
+  list->OMSetRenderTargets(0,nullptr,FALSE,nullptr);
+  assert(SUCCEEDED(list->Close()));queue->ExecuteCommandLists(1,lists);drain();
+  const float u[2]{.2f,.1f},v[2]{.8f,.9f};beamng_d3d12::setGaze(u,v,3);
+  beamng_d3d12::frame();drain();
+ }
+
+ for(int i=0;i<297;++i)beamng_d3d12::frame();
+ drain();
  assert(logged("M8.41 D3D12 render targets frames=300"));
  assert(logged("M8.41 rt 96x80 format=28 samples=1 eyeSwapchain=1"));
  assert(logged("M8.41 rt 48x40 format=28 samples=1 eyeSwapchain=0"));
+ if(tier2)assert(logged("M8.42 D3D12 foveation frames=300 vrsBindsPerFrame=0.0")); // 4 VRS binds over 300 frames rounds to 0.0.
  for(const auto& l:lines)std::cout<<l<<'\n';
  release(fence);release(queue);release(list);release(allocator);release(rtvs);release(half);release(eye);
  release(device);release(warp);release(factory);
- std::cout<<"D3D12 probe: WARP device hooks, single-range and render-pass binds, eye classification and report passed\n";
+ std::cout<<"D3D12 probe: WARP device hooks, binds, eye classification, report and "<<(tier2?"VRS image upload/bind/gaze update":"VRS-unavailable fallback")<<" passed\n";
 }

@@ -509,6 +509,9 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeEndFrame(XrSession session,const 
    if(!layer || layer->type!=XR_TYPE_COMPOSITION_LAYER_PROJECTION)continue;
    const auto* projection=reinterpret_cast<const XrCompositionLayerProjection*>(layer);
    if(projection->viewCount>=2 && projection->views){
+    // The projection rect is the eye image the game renders, unlike UI swapchain pairs.
+    const auto& extent=projection->views[0].subImage.imageRect.extent;
+    if(extent.width>0 && extent.height>0)beamng_d3d12::setEyeSize(uint32_t(extent.width),uint32_t(extent.height));
     std::lock_guard<std::mutex> guard(stateMutex);
     for(int eye=0;eye<2;++eye){auto it=m75SwapchainImage.find(projection->views[eye].subImage.swapchain);
      if(it!=m75SwapchainImage.end())for(size_t j=0;j<it->second.size()&&j<3;++j)images[eye][j]=it->second[j];}
@@ -530,6 +533,37 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeGetInstanceProcAddr(XrInstance in
 // extensions, and resolve only downstream pointers (never our own interceptors).
 extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateApiLayerInstance(const XrInstanceCreateInfo* info,const XrApiLayerCreateInfo* layerInfo,XrInstance* instance);
 
+// M8.42: D3D12 foveation uses the same [Foveation]/[Tracking] settings as the Vulkan layer.
+float m842Size(const char* name,float fallback){
+ char v[32]{};const DWORD n=beamng_config::read(name,v,sizeof(v));
+ if(!n||n>=sizeof(v))return fallback;
+ char* end=nullptr;const float value=strtof(v,&end);
+ return end!=v && !*end && std::isfinite(value) && value>=0.f && value<=1.f ? value : fallback;
+}
+uint8_t m842Rate(const char* name,uint8_t fallback){
+ char v[16]{};if(!beamng_config::read(name,v,sizeof(v)))return fallback;
+ return !strcmp(v,"1x1")?beamng_ffr::rate(1,1):!strcmp(v,"2x2")?beamng_ffr::rate(2,2):!strcmp(v,"4x4")?beamng_ffr::rate(4,4):fallback;
+}
+beamng_d3d12::Foveation m842Foveation(bool gazeAvailable){
+ beamng_d3d12::Foveation f{};
+ f.enabled=enabled("BEAMNG_VRS_ENABLE_FEATURES");
+ char mode[16]{};
+ f.gaze=gazeAvailable && enabled("BEAMNG_EYE_SAMPLE") &&
+   (!beamng_config::read("BEAMNG_VRS_FOVEATION_MODE",mode,sizeof(mode)) || !strcmp(mode,"eye"));
+ f.center=m842Size("BEAMNG_VRS_CENTER_RADIUS",.25f);
+ f.middle=std::max(f.center,m842Size("BEAMNG_VRS_MID_RADIUS",.55f));
+ f.middleRate=m842Rate("BEAMNG_VRS_MID_RATE",beamng_ffr::rate(2,2));
+ f.outerRate=m842Rate("BEAMNG_VRS_OUTER_RATE",beamng_ffr::rate(4,4));
+ char shape[16]{};
+ if(beamng_config::read("BEAMNG_VRS_SHAPE",shape,sizeof(shape)))
+  f.shape=!_stricmp(shape,"square")?beamng_ffr::Shape::Square:!_stricmp(shape,"ellipse")?beamng_ffr::Shape::Ellipse:beamng_ffr::Shape::Circle;
+ char grace[16]{};
+ if(beamng_config::read("BEAMNG_VRS_GAZE_GRACE_MS",grace,sizeof(grace))){
+  char* end=nullptr;const unsigned long ms=strtoul(grace,&end,10);
+  if(end!=grace && !*end && ms<=1000)f.graceMs=uint32_t(ms);
+ }
+ return f;
+}
 // M7.2b diagnostic gaze action. Failures never block BeamNG's original calls.
 extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateSession(XrInstance inst,const XrSessionCreateInfo* ci,XrSession* session){
  Dispatch d{}; {std::lock_guard<std::mutex> g(stateMutex);auto it=instances.find(inst);if(it==instances.end())return XR_ERROR_HANDLE_INVALID;d=it->second;}
@@ -550,8 +584,8 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateSession(XrInstance inst,con
    if(next->type==XR_TYPE_GRAPHICS_BINDING_D3D12_KHR){
     d3d12=true;const auto* b=reinterpret_cast<const D3D12Binding*>(next);
     char msg[200]{};sprintf_s(msg,sizeof(msg),"M8.40 graphics=D3D12 device=%p queue=%p",b->device,b->queue);logLine(msg);
-    // Diagnostics runs only (debug logging): report VRS support and render-target sizes.
-    if(m817Verbose())beamng_d3d12::attach(b->device,logLine);
+    // M8.42 foveation when enabled; M8.41 render-target report in diagnostics runs.
+    beamng_d3d12::attach(b->device,b->queue,logLine,m817Verbose(),m842Foveation(d.gazeExtension));
    }
   }
   if(vulkan)logLine("M8.40 graphics=Vulkan");
@@ -740,6 +774,7 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeLocateViews(XrSession session,con
   if(std::isfinite(u[i])&&std::isfinite(v[i]))mask|=(1u<<i);
  }
  publishProjectedGaze(u,v,mask,poseTick,info->displayTime);
+ beamng_d3d12::setGaze(u,v,mask);
  if(gazeShared){
   auto* s=gazeShared;InterlockedIncrement(&s->sequence);MemoryBarrier();
   for(int i=0;i<2;++i){s->eyeU[i]=u[i];s->eyeV[i]=v[i];}

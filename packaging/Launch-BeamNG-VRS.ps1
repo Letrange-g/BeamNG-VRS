@@ -230,7 +230,7 @@ try {
     $layerReport | Where-Object { $_ -like '*disabled for BeamNG*' } | Write-Output
     [void][System.Diagnostics.Process]::Start($start)
     if ($script:Renderer -eq 'd3d12') {
-        Write-Output 'BeamNG launched in Direct3D 12 mode. Foveation, scissor and lens mask are Vulkan-only for now; the OpenXR layer (turbo, gaze, logging) is active.'
+        Write-Output 'BeamNG launched in Direct3D 12 mode. Foveation uses D3D12 VRS; scissor and lens mask are Vulkan-only. Change BeamNG-VRS.ini and restart to apply settings.'
     } else { Write-Output 'BeamNG launched in Vulkan mode. Change BeamNG-VRS.ini and restart to apply settings.' }
 } catch {
     Write-Error $_ -ErrorAction Continue
