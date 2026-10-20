@@ -40,6 +40,14 @@ If an old beta logs `Failed to open dynamic library "./BeamNG_VRS.dll" with
 error 87, update the complete package. Beta.4 corrected the Windows relative
 paths in both layer manifests.
 
+## VR does not start with other OpenXR layers installed
+
+If BeamNG stays on the desktop when VR is enabled but works after other VR
+tools are uninstalled or switched off, an implicit OpenXR layer from one of
+them is the likely cause. Run `Diagnose-BeamNG-VRS.cmd`; the window and log list
+the installed layers. Set `[OpenXR] DisableLayers=*` to confirm, then name only
+the failing layer. See [Other OpenXR layers](CONFIGURATION.md#other-openxr-layers).
+
 ## Rendering limits
 
 Foveation reduces eligible fragment shading; it does not lower render-target

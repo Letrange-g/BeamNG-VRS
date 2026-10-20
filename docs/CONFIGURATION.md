@@ -20,6 +20,7 @@ The release ZIP puts `BeamNG-VRS.ini` beside `Launch-BeamNG-VRS.cmd` at the extr
 | LensMask | `Enabled` | `true` | Skip rendering the image corners outside an ellipse, which the headset lenses hide. Experimental; check the edges in the headset. |
 | LensMask | `Size` | `1.15` | Kept ellipse diameter relative to eye-image width/height (0.5 to 1.5). `1.0` touches all four edges and skips about 21% of pixels; `1.41` skips none. Increase it if black corners are visible. |
 | Performance | `TurboMode` | `false` | Experimental one-frame OpenXR wait overlap. Enabled by default in 0.1.0; off by default since it showed no gain in GPU-limited tests. Restart to change. |
+| OpenXR | `DisableLayers` | empty | Comma-separated implicit OpenXR layer names, or `*`, to turn off for BeamNG only. See [Other OpenXR layers](#other-openxr-layers). |
 | Logging | `Level` | `info` | `off`, `errors`, `info`, or `debug`. Default is brief status/errors, not verbose diagnostics. |
 | Tracking | `GracePeriodMs` | `30` | Hold the last valid gaze for this many milliseconds during temporary tracking loss (0 to 1000). |
 | Tracking | `GazeRefreshMs` | `8` | Minimum CPU gaze polling interval (2 to 50 ms). This does not measure eye-to-display latency. |
@@ -116,6 +117,32 @@ control applies to this project's two DLLs, not BeamNG, SteamVR or other layers.
 `Diagnose-BeamNG-VRS.cmd` overrides the INI with debug logging to collect evidence.
 Normal launch uses the INI. Disabling logs may reduce some overhead but no FPS
 increase is established. Invalid INI errors still appear in the launcher.
+
+## Other OpenXR layers
+
+Overlays, toolkits and streaming add-ons often install *implicit* OpenXR API
+layers, which the OpenXR loader puts into every VR game. They sit above this
+project's layer, closest to the game, so BeamNG-VRS cannot filter what they
+receive. If one of them fails, for example because it does not support the
+game's graphics API, BeamNG cannot create its OpenXR instance or session and
+stays on the desktop.
+
+```ini
+[OpenXR]
+DisableLayers=XR_APILAYER_EXAMPLE_overlay, XR_APILAYER_EXAMPLE_toolkit
+```
+
+The launcher reads the installed implicit layers from
+`HKLM` and `HKCU\SOFTWARE\Khronos\OpenXR\1\ApiLayers\Implicit` and sets each
+listed layer's own `disable_environment` variable in BeamNG's process only.
+Nothing in the registry changes and other games keep the layers. `*` turns off
+every implicit layer; use it once to check whether a layer is the cause, then
+name only the one you need off. `Diagnose-BeamNG-VRS.cmd` and
+`Launch-BeamNG-VRS.ps1 -CheckOnly` print each layer's name and whether it is
+active, off in the registry, or disabled for BeamNG. Diagnostics also set
+`XR_LOADER_DEBUG=info`, so the saved log shows the layer chain and the
+`xrCreateInstance` result. The setting applies only when BeamNG is started by
+this launcher.
 
 ## Existing developer launch scripts
 

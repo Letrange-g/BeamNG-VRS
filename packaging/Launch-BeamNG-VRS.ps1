@@ -3,7 +3,10 @@ param(
     [string]$GameExecutable,
     [switch]$CheckOnly,
     [switch]$Diagnostics,
-    [switch]$ValidateOnly
+    [switch]$ValidateOnly,
+    # Implicit OpenXR layer registry keys; tests replace them with a scratch key.
+    [string[]]$OpenXRLayerRegistry = @('HKLM:\SOFTWARE\Khronos\OpenXR\1\ApiLayers\Implicit',
+                                       'HKCU:\SOFTWARE\Khronos\OpenXR\1\ApiLayers\Implicit')
 )
 $ErrorActionPreference = 'Stop'
 function Assert-IniNumber {
@@ -16,6 +19,38 @@ function Assert-IniNumber {
         throw 'value is outside the allowed range'
     }
     return $number
+}
+# Comma-separated implicit OpenXR layer names, or * for all of them. Empty keeps every layer.
+function ConvertTo-OpenXRLayerList {
+    param([string]$Value)
+    if (-not $Value) { return }
+    if ($Value -eq '*') { return '*' }
+    foreach ($name in ($Value -split ',')) {
+        $name = $name.Trim([char[]]" `t")
+        if ($name -cnotmatch '^[A-Za-z0-9_.-]+$') { throw 'expected OpenXR layer names separated by commas, or *' }
+        $name
+    }
+}
+# Implicit layers load into every OpenXR game before explicit ones, so this
+# project's layer cannot shield BeamNG from them. Their manifests must name a
+# disable_environment variable, which turns a layer off for one process only.
+function Get-OpenXRImplicitLayers {
+    param([string[]]$RegistryKeys)
+    foreach ($key in $RegistryKeys) {
+        if (-not (Test-Path -LiteralPath $key)) { continue }
+        $item = Get-Item -LiteralPath $key
+        foreach ($manifest in $item.GetValueNames()) {
+            $layer = [pscustomobject]@{ Name = $null; Manifest = $manifest; Enabled = ($item.GetValue($manifest) -eq 0)
+                                        DisableEnvironment = $null; EnableEnvironment = $null }
+            try {
+                $json = [IO.File]::ReadAllText($manifest) | ConvertFrom-Json
+                $layer.Name = [string]$json.api_layer.name
+                $layer.DisableEnvironment = [string]$json.api_layer.disable_environment
+                $layer.EnableEnvironment = [string]$json.api_layer.enable_environment
+            } catch {}
+            $layer
+        }
+    }
 }
 function Test-BeamNGIni {
     param([string]$Path)
@@ -48,7 +83,7 @@ function Test-BeamNGIni {
             if ($line.StartsWith('[')) {
                 if (-not $line.EndsWith(']')) { throw 'invalid section header' }
                 $section = $line.Substring(1, $line.Length - 2).Trim($whitespace).ToLowerInvariant()
-                if (@('foveation', 'debug', 'scissor', 'lensmask', 'tracking', 'performance', 'logging') -cnotcontains $section) { throw 'unknown section' }
+                if (@('foveation', 'debug', 'scissor', 'lensmask', 'tracking', 'performance', 'logging', 'openxr') -cnotcontains $section) { throw 'unknown section' }
                 continue
             }
             $equals = $line.IndexOf('=')
@@ -68,6 +103,8 @@ function Test-BeamNGIni {
                 if (@('off', 'errors', 'info', 'debug') -cnotcontains $value.ToLowerInvariant()) { throw 'unsupported setting value' }
             } elseif ($id -eq 'debug.drawoutline' -or $id -eq 'scissor.enabled' -or $id -eq 'foveation.enabled' -or $id -eq 'foveation.allpasses' -or $id -eq 'lensmask.enabled' -or $id -eq 'performance.turbomode') {
                 if (@('0', '1', 'false', 'true') -cnotcontains $value.ToLowerInvariant()) { throw 'expected 0, 1, false or true' }
+            } elseif ($id -eq 'openxr.disablelayers') {
+                $script:DisabledOpenXRLayers = @(ConvertTo-OpenXRLayerList -Value $value)
             } else { throw 'unknown section or setting' }
         } catch { throw "INI line ${lineNumber}: $($_.Exception.Message)" }
     }
@@ -79,6 +116,7 @@ try {
     $layerDirectory = $PSScriptRoot
     $installDirectory = Split-Path -Parent $layerDirectory
     $iniPath = Join-Path $installDirectory 'BeamNG-VRS.ini'
+    $script:DisabledOpenXRLayers = @()
     if (-not (Test-Path -LiteralPath $iniPath -PathType Leaf)) {
         throw 'BeamNG-VRS.ini not found beside Launch-BeamNG-VRS.cmd. Extract the entire ZIP; when upgrading, move your saved INI beside the CMD.'
     }
@@ -132,9 +170,35 @@ try {
         if ($layers -notcontains $binding[1]) { $layers += $binding[1] }
         $start.EnvironmentVariables[$binding[0]] = $layers -join ';'
     }
-    if ($CheckOnly) { Write-Output 'Release files and game executable found. No game started.'; return }
+    $implicitLayers = @(Get-OpenXRImplicitLayers -RegistryKeys $OpenXRLayerRegistry)
+    $layerReport = @()
+    foreach ($layer in $implicitLayers) {
+        $label = if ($layer.Name) { $layer.Name } else { '(unreadable manifest) ' + [IO.Path]::GetFileName($layer.Manifest) }
+        $state = if (-not $layer.Enabled) { 'off in registry' }
+                 elseif ($layer.EnableEnvironment -and -not $start.EnvironmentVariables[$layer.EnableEnvironment]) { 'inactive (needs ' + $layer.EnableEnvironment + ')' }
+                 else { 'active' }
+        $listed = $layer.Name -and ($script:DisabledOpenXRLayers -contains '*' -or $script:DisabledOpenXRLayers -contains $layer.Name)
+        if ($listed -and $layer.Enabled) {
+            if ($layer.DisableEnvironment) {
+                $start.EnvironmentVariables[$layer.DisableEnvironment] = '1'
+                $state = 'disabled for BeamNG by BeamNG-VRS.ini'
+            } else { Write-Warning "OpenXR layer $($layer.Name) has no disable_environment and cannot be disabled for BeamNG only." }
+        }
+        $layerReport += "OpenXR implicit layer: $label [$state]"
+    }
+    foreach ($name in $script:DisabledOpenXRLayers) {
+        if ($name -ne '*' -and -not ($implicitLayers | Where-Object { $_.Name -eq $name })) {
+            Write-Warning "[OpenXR] DisableLayers names $name, but no implicit OpenXR layer has that name."
+        }
+    }
+    if ($CheckOnly) {
+        $layerReport | Write-Output
+        Write-Output 'Release files and game executable found. No game started.'; return
+    }
     if ($Diagnostics) {
         $start.EnvironmentVariables['VK_LOADER_DEBUG'] = 'error,warn,layer'
+        # The OpenXR loader then reports the layer chain and which layer failed xrCreateInstance.
+        $start.EnvironmentVariables['XR_LOADER_DEBUG'] = 'info'
         $start.EnvironmentVariables['BEAMNG_VRS_LOG_LEVEL'] = '2'
         $start.EnvironmentVariables['BEAMNG_VRS_M4_DIAGNOSTICS'] = '1'
         $start.RedirectStandardError = $true
@@ -143,6 +207,9 @@ try {
         Write-Output 'Close BeamNG (and any error dialog), then share this log if launch fails.'
         $writer = New-Object IO.StreamWriter($logPath, $false, [Text.Encoding]::UTF8)
         try {
+            if (-not $layerReport) { $layerReport = @('OpenXR implicit layers: none registered') }
+            foreach ($line in $layerReport) { Write-Output $line; $writer.WriteLine($line) }
+            $writer.Flush()
             $process = [System.Diagnostics.Process]::Start($start)
             while ($null -ne ($line = $process.StandardError.ReadLine())) {
                 $writer.WriteLine($line)
@@ -153,6 +220,7 @@ try {
         } finally { $writer.Dispose() }
         return
     }
+    $layerReport | Where-Object { $_ -like '*disabled for BeamNG*' } | Write-Output
     [void][System.Diagnostics.Process]::Start($start)
     Write-Output 'BeamNG launched in Vulkan mode. Change BeamNG-VRS.ini and restart to apply settings.'
 } catch {

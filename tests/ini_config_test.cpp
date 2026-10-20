@@ -30,6 +30,11 @@ int main() {
  std::istringstream mask("[LensMask]\nEnabled=true\nSize=1.05\n");
  const auto masked=parse(mask);
  assert(masked.at("BEAMNG_VRS_LENS_MASK")=="1" && masked.at("BEAMNG_VRS_LENS_MASK_SIZE")=="1.05");
+ for(const char* layers : {"[OpenXR]\nDisableLayers=\n", "[OpenXR]\nDisableLayers=*\n",
+     "[openxr]\ndisablelayers = XR_APILAYER_A_overlay , XR_APILAYER_b.2-x\n"}) {
+  std::istringstream input(layers);
+  assert(parse(input).at("BEAMNG_VRS_LENS_MASK")=="1");
+ }
  std::istringstream finalOnly("[Foveation]\nAllPasses=false\n");
  assert(parse(finalOnly).at("BEAMNG_VRS_ALL_PASSES")=="0");
  std::istringstream independent("[Foveation]\nEnabled=false\n[Scissor]\nEnabled=true\n[Performance]\nTurboMode=true\n");
@@ -117,7 +122,9 @@ int main() {
      "[Scissor]\nLeftEyeLeft=0\nlefteyeleft=0.1", "[Scissor]\nRight=NaN", "[Scissor]\nLeft=0\nleft=0.1",
      "[Tracking]\nGracePeriodMs=1001", "[Tracking]\nGazeRefreshMs=1",
      "[Tracking]\nGazeRefreshMs=8.5", "[Tracking]\nGazeRefreshMs=8.0",
-     "[Foveation]\nShape=triangle", "[Debug]\nDrawOutline=1 ; inline comment", "[Debug", "DrawOutline=1", "# empty\n"}) {
+     "[Foveation]\nShape=triangle", "[Debug]\nDrawOutline=1 ; inline comment",
+     "[OpenXR]\nDisableLayers=XR layer", "[OpenXR]\nDisableLayers=A,,B", "[OpenXR]\nDisableLayers=A,", "[OpenXR]\nDisableLayers=A,*",
+     "[OpenXR]\nDisableLayers=A\ndisablelayers=B", "[OpenXR]\nTypo=1", "[Debug", "DrawOutline=1", "# empty\n"}) {
   bool rejected = false;
   try { std::istringstream input(bad); (void)parse(input); } catch(const std::runtime_error&) { rejected = true; }
   assert(rejected);
