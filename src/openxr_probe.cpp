@@ -1,5 +1,6 @@
 #include "windows_config.hpp"
 #include "openxr_turbo.hpp"
+#include "d3d12_probe.hpp"
 #include <memory>
 // OpenXR side of BeamNG-VRS: identify eye swapchains, publish resolution and
 // projected gaze, and optionally overlap frame waiting with BeamNG's CPU work.
@@ -516,9 +517,11 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeEndFrame(XrSession session,const 
   }
   if(images[0][0] && images[1][0] && images[0][0]!=images[1][0]){
    m75Publish(images);
+   beamng_d3d12::setEyeImages(&images[0][0],6);
    static unsigned n=0;if(m817Verbose() && (++n%180)==1){char b[256]{};sprintf_s(b,"M7.5a OpenXR eyeImages L=%p R=%p",(void*)(uintptr_t)images[0][0],(void*)(uintptr_t)images[1][0]);logLine(b);}
   }
  }
+ beamng_d3d12::frame();
  const auto c=frameContext(session);
  return c.turbo?c.turbo->end(info):d.endFrame(session,info);
 }
@@ -547,6 +550,8 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateSession(XrInstance inst,con
    if(next->type==XR_TYPE_GRAPHICS_BINDING_D3D12_KHR){
     d3d12=true;const auto* b=reinterpret_cast<const D3D12Binding*>(next);
     char msg[200]{};sprintf_s(msg,sizeof(msg),"M8.40 graphics=D3D12 device=%p queue=%p",b->device,b->queue);logLine(msg);
+    // Diagnostics runs only (debug logging): report VRS support and render-target sizes.
+    if(m817Verbose())beamng_d3d12::attach(b->device,logLine);
    }
   }
   if(vulkan)logLine("M8.40 graphics=Vulkan");
