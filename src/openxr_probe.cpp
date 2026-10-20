@@ -81,7 +81,11 @@ struct GazeSession {
  std::shared_ptr<beamng_turbo::Scheduler> turbo;
 };
 std::unordered_map<XrSession, GazeSession> sessions;
-// M7.5a: OpenXR swapchain -> VkImage, then projection view -> eye.
+// M8.40: BeamNG 0.40 defaults to Direct3D 12. Mirror the two D3D12 OpenXR
+// structs so this layer needs no d3d12.h; only the COM pointers are recorded.
+struct D3D12Binding { XrStructureType type; const void* next; void* device; void* queue; };
+struct D3D12SwapchainImage { XrStructureType type; void* next; void* texture; };
+// M7.5a: OpenXR swapchain -> VkImage (or ID3D12Resource), then projection view -> eye.
 std::unordered_map<XrSwapchain, std::vector<uint64_t>> m75SwapchainImage;
 std::unordered_map<XrSwapchain,XrSession> swapchainSessions;
 // Resolution is published as soon as the second matching swapchain exists;
@@ -461,7 +465,18 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeEnumerateSwapchainImages(
     {std::lock_guard<std::mutex> guard(stateMutex); {auto& entries=m75SwapchainImage[swapchain];if(entries.size()<=i)entries.resize(i+1);entries[i]=static_cast<uint64_t>(reinterpret_cast<uintptr_t>(vi->image));}}
     ++reported;
    }
-  }else{logLine("M7.4f swapchain images are not Vulkan KHR type");++reported;}
+  }else if(*count && images[0].type==XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR){
+   for(uint32_t i=0;i<*count&&reported<160;++i){
+    const auto* di=&reinterpret_cast<const D3D12SwapchainImage*>(images)[i];
+    if(di->type!=XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR)break;
+    char msg[256]{};
+    sprintf_s(msg,sizeof(msg),"M8.40 swapchain=%p imageIndex=%u ID3D12Resource=%p",
+      (void*)swapchain,i,di->texture);
+    logLine(msg);
+    {std::lock_guard<std::mutex> guard(stateMutex); {auto& entries=m75SwapchainImage[swapchain];if(entries.size()<=i)entries.resize(i+1);entries[i]=static_cast<uint64_t>(reinterpret_cast<uintptr_t>(di->texture));}}
+    ++reported;
+   }
+  }else{logLine("M7.4f swapchain images are neither Vulkan nor D3D12 KHR type");++reported;}
  }
  return r;
 }
@@ -526,14 +541,22 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateSession(XrInstance inst,con
  logResult("M7.2b xrCreateSession",r);
  if(XR_SUCCEEDED(r) && session){
   GazeSession gs{};gs.instance=inst;
-  bool vulkan=false;
-  if(ci)for(auto* next=reinterpret_cast<const XrBaseInStructure*>(ci->next);next;next=next->next)
+  bool vulkan=false,d3d12=false;
+  if(ci)for(auto* next=reinterpret_cast<const XrBaseInStructure*>(ci->next);next;next=next->next){
    if(next->type==XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR)vulkan=true;
+   if(next->type==XR_TYPE_GRAPHICS_BINDING_D3D12_KHR){
+    d3d12=true;const auto* b=reinterpret_cast<const D3D12Binding*>(next);
+    char msg[200]{};sprintf_s(msg,sizeof(msg),"M8.40 graphics=D3D12 device=%p queue=%p",b->device,b->queue);logLine(msg);
+   }
+  }
+  if(vulkan)logLine("M8.40 graphics=Vulkan");
+  else if(!d3d12)logLine("M8.40 graphics=other (only gaze and eye resolution are available)");
+  // Frame timing is graphics-API neutral; D3D12 still needs in-headset validation.
   if(enabled("BEAMNG_VRS_TURBO_MODE")){
-   if(vulkan && d.waitFrame && d.beginFrame && d.endFrame && d.beginSession && d.endSession && d.destroySession && d.destroySwapchain){
+   if((vulkan||d3d12) && d.waitFrame && d.beginFrame && d.endFrame && d.beginSession && d.endSession && d.destroySession && d.destroySwapchain){
     try {gs.turbo=std::make_shared<beamng_turbo::Scheduler>(*session,d.waitFrame,d.beginFrame,d.endFrame,true);}
     catch(...) {logLine("M8.31 TURBO WARNING: scheduler allocation failed; retaining normal timing");}
-   }else logLine("M8.31 TURBO unavailable: requires Vulkan session and complete frame/lifecycle callbacks");
+   }else logLine("M8.31 TURBO unavailable: requires Vulkan or D3D12 session and complete frame/lifecycle callbacks");
   }
   if(d.gazeExtension && enabled("BEAMNG_EYE_SAMPLE") && d.createReferenceSpace){
    XrReferenceSpaceCreateInfo si{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};

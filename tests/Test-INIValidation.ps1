@@ -30,6 +30,8 @@ try {
         @{ Text = "[LensMask]`nEnabled=true`nSize=1.05"; Valid = $true },
         @{ Text = "[Logging]`nLevel=off"; Valid = $true },
         @{ Text = "[OpenXR]`nDisableLayers="; Valid = $true },
+        @{ Text = "[Renderer]`nAPI=vulkan"; Valid = $true },
+        @{ Text = "[renderer]`napi = D3D12"; Valid = $true },
         @{ Text = "[OpenXR]`nDisableLayers=*"; Valid = $true },
         @{ Text = "[openxr]`ndisablelayers = XR_APILAYER_A_overlay , XR_APILAYER_b.2-x"; Valid = $true },
         @{ Text = "[Logging]`nLevel=errors"; Valid = $true },
@@ -56,7 +58,7 @@ try {
         "[Tracking]`nGazeRefreshMs=8e0", "[Foveation]`nShape=triangle",
         "[Debug]`nDrawOutline=1 ; inline comment",
         "[OpenXR]`nDisableLayers=XR layer", "[OpenXR]`nDisableLayers=A,,B", "[OpenXR]`nDisableLayers=A,", "[OpenXR]`nDisableLayers=A,*",
-        "[OpenXR]`nDisableLayers=A`ndisablelayers=B", "[OpenXR]`nTypo=1", "[Debug", "DrawOutline=1", "# empty`n",
+        "[OpenXR]`nDisableLayers=A`ndisablelayers=B", "[OpenXR]`nTypo=1", "[Renderer]`nAPI=dx12", "[Renderer]`nAPI=", "[Debug", "DrawOutline=1", "# empty`n",
         '', "[Debug]`nDrawOutline="
     )) { $cases += @{ Text = $bad; Valid = $false } }
     $caseNumber = 0

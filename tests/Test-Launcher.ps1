@@ -128,6 +128,19 @@ try {
         if ($env:DISABLE_XR_APILAYER_TEST_overlay) { throw 'Launcher changed the parent environment.' }
         Remove-Item -LiteralPath $result
     } finally { Remove-Item -LiteralPath (Split-Path -Parent $registry) -Recurse -Force -ErrorAction SilentlyContinue }
+    # [Renderer] API=d3d12 starts BeamNG 0.40's Direct3D 12 renderer instead of Vulkan.
+    Set-Content -LiteralPath $ini -Value "[Renderer]`nAPI=d3d12" -Encoding UTF8
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher
+    if ($LASTEXITCODE -ne 0) { throw 'Launcher failed with the D3D12 renderer.' }
+    $deadline = [DateTime]::UtcNow.AddSeconds(10); $content = ''
+    while ([DateTime]::UtcNow -lt $deadline) {
+        try { $content = Get-Content -LiteralPath $result -Raw; if ($content -match 'XR_ENABLE_API_LAYERS=.*probe') { break } } catch {}
+        Start-Sleep -Milliseconds 100
+    }
+    if ($content -notmatch '(?m)^arguments=-gfx d3d12\r?$' -or $content -notmatch 'XR_ENABLE_API_LAYERS=.*XR_APILAYER_BEAMNG_eye_probe') {
+        throw 'The child did not receive D3D12 arguments and OpenXR layer activation.'
+    }
+    Remove-Item -LiteralPath $result
     # The public launcher must not silently edit/use an obsolete nested INI.
     Move-Item -LiteralPath $ini -Destination $layers
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -CheckOnly
@@ -140,7 +153,7 @@ try {
     Set-Content -LiteralPath $ini -Value "[Debug]`nDrawOutline=typo" -Encoding UTF8
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher
     if ($LASTEXITCODE -eq 0 -or (Test-Path -LiteralPath $result)) { throw 'Invalid INI started the game.' }
-    Write-Output 'Launcher integration passed: root/Bin64 layouts, root INI, both executable names, working directory, Vulkan discovery, diagnostic capture, arguments, child environment, CheckOnly, implicit OpenXR layer disabling, missing INI/executable and invalid INI.'
+    Write-Output 'Launcher integration passed: root/Bin64 layouts, root INI, both executable names, working directory, Vulkan discovery, diagnostic capture, arguments, child environment, CheckOnly, implicit OpenXR layer disabling, D3D12 renderer, missing INI/executable and invalid INI.'
 } finally {
     foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $before[$name], 'Process') }
     Remove-Item -LiteralPath $temp -Recurse -Force

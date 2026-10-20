@@ -68,7 +68,18 @@ int main(){
   assert(r.inFlight==0 && r.waits==r.begins && r.begins==r.ends);
  }
  assert(sessionEnds==2 && sessionDestroys==2 && swapchainDestroys==2 && instanceDestroys==1);
+ // BeamNG 0.40 defaults to Direct3D 12; frame timing is API-neutral, so turbo is offered there too.
+ {Runtime r;runtime=&r;r.allow(100);instances[inst]=d;XrSession created{};
+  D3D12Binding d3d12{XR_TYPE_GRAPHICS_BINDING_D3D12_KHR,nullptr,reinterpret_cast<void*>(uintptr_t(7)),reinterpret_cast<void*>(uintptr_t(8))};
+  XrSessionCreateInfo dci{XR_TYPE_SESSION_CREATE_INFO};dci.next=&d3d12;
+  assert(probeCreateSession(inst,&dci,&created)==XR_SUCCESS && sessions.at(created).turbo);
+  assert(probeDestroySession(created)==XR_SUCCESS && !sessions.count(created));
+  // Unknown graphics bindings keep normal timing.
+  XrBaseInStructure other{XR_TYPE_GRAPHICS_BINDING_OPENGL_WIN32_KHR,nullptr};dci.next=&other;
+  assert(probeCreateSession(inst,&dci,&created)==XR_SUCCESS && !sessions.at(created).turbo);
+  assert(probeDestroySession(created)==XR_SUCCESS);
+ }
  assert(std::filesystem::is_empty(directory)); // Level=off never creates a layer log.
  std::filesystem::remove_all(directory);
- std::cout<<"Real OpenXR hooks: disabled timing, no-gaze ownership, turbo option, proc routing, swapchain drain, restart, session/instance teardown and logging off passed\n";
+ std::cout<<"Real OpenXR hooks: disabled timing, no-gaze ownership, turbo option, D3D12 binding, proc routing, swapchain drain, restart, session/instance teardown and logging off passed\n";
 }
