@@ -97,7 +97,7 @@ inline Values defaults() {
  out["BEAMNG_VRS_LENS_MASK"] = "1";
  out["BEAMNG_VRS_LENS_MASK_SIZE"] = "1.15";
  out["BEAMNG_VRS_LOG_LEVEL"] = "1";
- out["BEAMNG_VRS_RENDERER"] = "vulkan";
+ out["BEAMNG_VRS_RENDERER"] = "d3d12";
  return out;
 }
 inline void setting(Values& out, const std::string& section, const std::string& key, std::string value) {
@@ -129,7 +129,8 @@ inline void setting(Values& out, const std::string& section, const std::string& 
     {"righteyeleft", "RIGHT_EYE_LEFT"}, {"righteyeright", "RIGHT_EYE_RIGHT"}};
   out["BEAMNG_VRS_SCISSOR_" + names.at(key)] = value;
  } else if(id == "openxr.disablelayers") openxrLayerList(value);
- // Launcher-only: selects BeamNG's -gfx argument. The Vulkan layer applies only to vulkan.
+ // Launcher-only: selects BeamNG's -gfx argument (default d3d12, BeamNG 0.40's VR
+ // default). The Vulkan layer (VRS, scissor, lens mask) applies only to vulkan.
  else if(id == "renderer.api") out["BEAMNG_VRS_RENDERER"] = choice(value, {"vulkan", "d3d12"});
  else throw std::runtime_error("unknown section or setting");
 }

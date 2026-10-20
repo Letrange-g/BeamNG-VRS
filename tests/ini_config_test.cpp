@@ -35,9 +35,9 @@ int main() {
   std::istringstream input(layers);
   assert(parse(input).at("BEAMNG_VRS_LENS_MASK")=="1");
  }
- assert(defaults.at("BEAMNG_VRS_RENDERER")=="vulkan");
- std::istringstream renderer("[renderer]\napi = D3D12\n");
- assert(parse(renderer).at("BEAMNG_VRS_RENDERER")=="d3d12");
+ assert(defaults.at("BEAMNG_VRS_RENDERER")=="d3d12");
+ std::istringstream renderer("[renderer]\napi = Vulkan\n");
+ assert(parse(renderer).at("BEAMNG_VRS_RENDERER")=="vulkan");
  std::istringstream finalOnly("[Foveation]\nAllPasses=false\n");
  assert(parse(finalOnly).at("BEAMNG_VRS_ALL_PASSES")=="0");
  std::istringstream independent("[Foveation]\nEnabled=false\n[Scissor]\nEnabled=true\n[Performance]\nTurboMode=true\n");

@@ -120,7 +120,7 @@ try {
     $installDirectory = Split-Path -Parent $layerDirectory
     $iniPath = Join-Path $installDirectory 'BeamNG-VRS.ini'
     $script:DisabledOpenXRLayers = @()
-    $script:Renderer = 'vulkan'
+    $script:Renderer = 'd3d12'
     if (-not (Test-Path -LiteralPath $iniPath -PathType Leaf)) {
         throw 'BeamNG-VRS.ini not found beside Launch-BeamNG-VRS.cmd. Extract the entire ZIP; when upgrading, move your saved INI beside the CMD.'
     }
@@ -152,9 +152,9 @@ try {
     $start = New-Object System.Diagnostics.ProcessStartInfo
     $start.FileName = $GameExecutable
     $start.WorkingDirectory = Split-Path -Parent (Split-Path -Parent $GameExecutable)
-    # BeamNG 0.40 defaults to Direct3D 12. The Vulkan layer (VRS, scissor, lens
-    # mask) only works with vk; d3d12 keeps the OpenXR layer (gaze, turbo, logs).
-    $start.Arguments = if ($script:Renderer -eq 'd3d12') { '-gfx d3d12' } else { '-gfx vk' }
+    # Direct3D 12 is BeamNG 0.40's VR default and the launcher's. The Vulkan layer
+    # (VRS, scissor, lens mask) only works with vk; d3d12 keeps the OpenXR layer.
+    $start.Arguments = if ($script:Renderer -eq 'vulkan') { '-gfx vk' } else { '-gfx d3d12' }
     $start.UseShellExecute = $false
     # The child receives its own environment. The shell and Windows settings are untouched.
     # Old testing scripts must not silently override the user's INI settings.

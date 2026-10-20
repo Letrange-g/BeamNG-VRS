@@ -21,7 +21,7 @@ The release ZIP puts `BeamNG-VRS.ini` beside `Launch-BeamNG-VRS.cmd` at the extr
 | LensMask | `Size` | `1.15` | Kept ellipse diameter relative to eye-image width/height (0.5 to 1.5). `1.0` touches all four edges and skips about 21% of pixels; `1.41` skips none. Increase it if black corners are visible. |
 | Performance | `TurboMode` | `false` | Experimental one-frame OpenXR wait overlap. Enabled by default in 0.1.0; off by default since it showed no gain in GPU-limited tests. Restart to change. |
 | OpenXR | `DisableLayers` | empty | Comma-separated implicit OpenXR layer names, or `*`, to turn off for BeamNG only. See [Other OpenXR layers](#other-openxr-layers). |
-| Renderer | `API` | `vulkan` | `vulkan` starts BeamNG with `-gfx vk`, where foveation, scissor and lens mask work. `d3d12` starts BeamNG 0.40's default Direct3D 12 renderer; only the OpenXR layer (turbo, gaze, logging) applies there for now. |
+| Renderer | `API` | `d3d12` | `d3d12` starts BeamNG with `-gfx d3d12`, the game's VR default since 0.40; only the OpenXR layer (turbo, gaze, logging) applies there for now. `vulkan` starts `-gfx vk`, where foveation, scissor and lens mask work. |
 | Logging | `Level` | `info` | `off`, `errors`, `info`, or `debug`. Default is brief status/errors, not verbose diagnostics. |
 | Tracking | `GracePeriodMs` | `30` | Hold the last valid gaze for this many milliseconds during temporary tracking loss (0 to 1000). |
 | Tracking | `GazeRefreshMs` | `8` | Minimum CPU gaze polling interval (2 to 50 ms). This does not measure eye-to-display latency. |
