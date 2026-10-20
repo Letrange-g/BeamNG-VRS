@@ -22,7 +22,8 @@ int main(){
  if(FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory4),reinterpret_cast<void**>(&factory))) ||
     FAILED(factory->EnumWarpAdapter(__uuidof(IDXGIAdapter),reinterpret_cast<void**>(&warp))) ||
     FAILED(D3D12CreateDevice(warp,D3D_FEATURE_LEVEL_11_0,__uuidof(ID3D12Device),reinterpret_cast<void**>(&device)))){
-  std::cout<<"D3D12 WARP unavailable; probe smoke skipped\n";return 0;
+  // CI runners provide WARP; a silent skip would hide a broken probe.
+  std::cerr<<"D3D12 WARP device unavailable\n";return 1;
  }
  assert(beamng_d3d12::attach(device,capture));
  assert(beamng_d3d12::attach(device,capture)); // Idempotent: hooks install once.
