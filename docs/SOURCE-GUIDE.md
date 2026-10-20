@@ -20,7 +20,7 @@ top to bottom.
 | `src/layer.cpp` | Intercept Vulkan calls; manage pipelines, crop state and GPU uploads | Functions listed below |
 | `src/openxr_probe.cpp` | Intercept OpenXR calls; identify eyes, publish gaze and route turbo | `probeCreateSession`, `probeEndFrame`, `probeWaitFrame` |
 | `src/openxr_turbo.hpp` | One-frame async wait scheduler | `Scheduler::wait`, `begin`, `end`, `drain`, `stop` |
-| `src/d3d12_probe.cpp` | Diagnostics-only D3D12 probe (BeamNG 0.40 DX12 VR): VRS tier and per-frame render-target sizes via vtable hooks, debug logging only | `attach`, `frame`, `hookOMSetRenderTargets` |
+| `src/d3d12_probe.cpp` | D3D12 side (BeamNG 0.40 DX12 VR), driven from the OpenXR layer: VRS Tier 2 foveation on eye-shaped render targets (M8.42), scissor clipping, lens-corner rates and final-image black edges/outline (M8.43), and the diagnostics render-target report (M8.41), via vtable hooks | `attach`, `bind`, `updateFoveation`, `hookRSSetScissorRects`, `finishEyeImage` |
 | `src/ffr_upload_commands.hpp` | Reuse completed upload recordings/resources | Cache and ownership helpers |
 | `src/beamng_gaze_shared.hpp` | Shared-memory structures used between the DLLs | Mapping names and data structures |
 | `tests/` | Executable examples of configuration and lifetime rules | Parser, crop, hook and turbo tests |

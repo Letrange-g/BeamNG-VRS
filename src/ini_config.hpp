@@ -130,7 +130,7 @@ inline void setting(Values& out, const std::string& section, const std::string& 
   out["BEAMNG_VRS_SCISSOR_" + names.at(key)] = value;
  } else if(id == "openxr.disablelayers") openxrLayerList(value);
  // Launcher-only: selects BeamNG's -gfx argument (default d3d12, BeamNG 0.40's VR
- // default). The Vulkan layer (VRS, scissor, lens mask) applies only to vulkan.
+ // default). d3d12 features come from the OpenXR layer, vulkan ones from the Vulkan layer.
  else if(id == "renderer.api") out["BEAMNG_VRS_RENDERER"] = choice(value, {"vulkan", "d3d12"});
  else throw std::runtime_error("unknown section or setting");
 }

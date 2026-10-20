@@ -1,5 +1,6 @@
 #pragma once
 #include "ffr_pattern.hpp"
+#include "scissor_crop.hpp"
 #include <cstddef>
 #include <cstdint>
 
@@ -10,9 +11,15 @@
 //    sizes bound per frame;
 //  - M8.42: apply a tile-based shading-rate image (VRS Tier 2) to eye-shaped
 //    render targets, at the game's internal render size and at full size.
+//  - M8.43: the [Scissor], [LensMask] and [Debug] options. Eye-shaped targets
+//    get their scissor rectangles clipped to the crop; the lens corners get
+//    the coarsest rate; and before each OpenXR eye image is released, its
+//    cropped edges and lens corners are cleared to black and the debug
+//    outline is drawn on it.
 // Both eyes share the same intermediate targets, so each tile uses the finer
-// rate of the two eyes (the M8.32 combined pattern). Implemented in
-// d3d12_probe.cpp with the C COM interface.
+// rate of the two eyes (the M8.32 combined pattern), and the render-time crop
+// keeps what either eye needs. Implemented in d3d12_probe.cpp with the C COM
+// interface.
 namespace beamng_d3d12 {
 using LogFn = void (*)(const char*);
 struct Foveation {
@@ -23,10 +30,23 @@ struct Foveation {
  beamng_ffr::Shape shape = beamng_ffr::Shape::Circle;
  uint32_t graceMs = 30;
 };
-// Installs the hooks once per process and selects this device for VRS. With
-// neither diagnostics nor foveation requested it changes nothing. Returns
-// false (rendering untouched) when the device or a hook cannot be used.
-bool attach(void* device, void* queue, LogFn log, bool diagnostics, const Foveation& foveation);
+struct Effects {
+ bool crop = false;
+ beamng_scissor::Margins margins[2]{}; // Left eye, right eye.
+ bool lensMask = false;
+ double lensSize = 1.15;
+ bool outline = false;                  // Drawn only while foveation is active.
+ bool any() const { return crop || lensMask || outline; }
+};
+// Installs the hooks once per process and selects this device for VRS and
+// the effects. With nothing requested it changes nothing. Returns false
+// (rendering untouched) when the device or a hook cannot be used.
+bool attach(void* device, void* queue, LogFn log, bool diagnostics, const Foveation& foveation,
+            const Effects& effects = {});
+// Called just before xrReleaseSwapchainImage for an eye image (ID3D12Resource*,
+// in RENDER_TARGET state; eye 0 = left). The game's rendering to it has been
+// submitted on the OpenXR queue, so work submitted here runs after it.
+void finishEyeImage(uint64_t texture, int eye, uint32_t dxgiFormat);
 // Known OpenXR eye swapchain textures (ID3D12Resource*), marked in reports.
 void setEyeImages(const uint64_t* images, size_t count);
 // OpenXR eye swapchain size; render targets with the same aspect ratio at

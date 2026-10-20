@@ -1,8 +1,8 @@
 > [!NOTE]
 > **BeamNG.drive 0.40** renders VR with **Direct3D 12 and OpenXR**. The launcher now starts
 > BeamNG in Direct3D 12 by default, and foveated rendering (fixed or eye-tracked) works there
-> through D3D12 variable rate shading (GPU with VRS Tier 2). Scissor crop and the lens mask
-> are still Vulkan-only (`[Renderer] API=vulkan`). Direct3D 12 support is new and experimental.
+> through D3D12 variable rate shading (GPU with VRS Tier 2), together with scissor crop, the lens
+> mask and the debug outline. Direct3D 12 support is new and experimental.
 
 # BeamNG-VRS
 

@@ -1,6 +1,8 @@
-// M8.41/M8.42: real D3D12 hooks on a WARP device (no GPU or headset): install,
-// chain to the runtime, classify render targets, and, where WARP offers VRS
-// Tier 2, create, upload and bind shading-rate images without device removal.
+// M8.41-M8.43: real D3D12 hooks on a WARP device (no GPU or headset): install,
+// chain to the runtime, classify render targets, clip scissors on eye-shaped
+// targets, black out cropped edges on a released eye image and, where WARP
+// offers VRS Tier 2, create, upload and bind shading-rate images and draw the
+// gaze outline, without device removal.
 #include "d3d12_probe.hpp"
 #include <windows.h>
 #include <d3d12.h>
@@ -9,6 +11,7 @@
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -35,8 +38,12 @@ int main(){
  assert(!beamng_d3d12::attach(device,queue,capture,false,fov)); // Nothing requested: no hooks.
  assert(lines.empty());
  fov.enabled=true;fov.gaze=true;
- assert(beamng_d3d12::attach(device,queue,capture,true,fov));
- assert(beamng_d3d12::attach(device,queue,capture,true,fov)); // Idempotent: hooks install once.
+ beamng_d3d12::Effects fx{};
+ fx.crop=true;fx.margins[0]={.25,.25,.25,0};fx.margins[1]={.25,.25,0,.25};
+ fx.lensMask=true;fx.lensSize=0.6;fx.outline=true;
+ assert(beamng_d3d12::attach(device,queue,capture,true,fov,fx));
+ assert(beamng_d3d12::attach(device,queue,capture,true,fov,fx)); // Idempotent: hooks install once.
+ assert(logged("M8.43 D3D12 effects active: crop=1"));
  assert(logged("M8.41 D3D12 VRS tier=") && logged("hooks=installed"));
  assert(logged(tier2?"M8.42 D3D12 foveation active":"M8.42 D3D12 foveation unavailable"));
  beamng_d3d12::setEyeSize(96,80);
@@ -93,6 +100,7 @@ int main(){
  for(int round=0;round<2;++round){
   assert(SUCCEEDED(allocator->Reset()) && SUCCEEDED(list->Reset(allocator,nullptr)));
   list->OMSetRenderTargets(1,&first,FALSE,nullptr);list->ClearRenderTargetView(first,black,0,nullptr);
+  const D3D12_RECT full{0,0,96,80};list->RSSetScissorRects(1,&full); // Clipped now and again for the next eye-shaped bind.
   list->OMSetRenderTargets(1,&second,FALSE,nullptr);list->ClearRenderTargetView(second,black,0,nullptr);
   list->OMSetRenderTargets(0,nullptr,FALSE,nullptr);
   assert(SUCCEEDED(list->Close()));queue->ExecuteCommandLists(1,lists);drain();
@@ -106,6 +114,42 @@ int main(){
  assert(logged("M8.41 rt 96x80 format=28 samples=1 eyeSwapchain=1"));
  assert(logged("M8.41 rt 48x40 format=28 samples=1 eyeSwapchain=0"));
  if(tier2)assert(logged("M8.42 D3D12 foveation frames=300 vrsBindsPerFrame=0.0")); // 4 VRS binds over 300 frames rounds to 0.0.
+ assert(logged("M8.43 D3D12 effects frames=300 croppedScissors=4 ")); // 2 rounds x (scissor set + half-size bind).
+
+ // Finish the left eye image: white, then cropped edges/corners black and the outline at the gaze.
+ {const float u[2]{.2f,.1f},v[2]{.8f,.9f};beamng_d3d12::setGaze(u,v,3);beamng_d3d12::frame();drain();}
+ const float white[4]{1,1,1,1};
+ assert(SUCCEEDED(allocator->Reset()) && SUCCEEDED(list->Reset(allocator,nullptr)));
+ list->ClearRenderTargetView(first,white,0,nullptr);
+ assert(SUCCEEDED(list->Close()));queue->ExecuteCommandLists(1,lists);drain();
+ beamng_d3d12::finishEyeImage(uint64_t(reinterpret_cast<uintptr_t>(eye)),0,DXGI_FORMAT_R8G8B8A8_UNORM);drain();
+ assert(logged("M8.43 eye image 0 finished: 96x80"));
+ D3D12_HEAP_PROPERTIES readHeap{D3D12_HEAP_TYPE_READBACK};
+ D3D12_RESOURCE_DESC bd{};bd.Dimension=D3D12_RESOURCE_DIMENSION_BUFFER;bd.Width=512*80;bd.Height=1;bd.DepthOrArraySize=1;
+ bd.MipLevels=1;bd.SampleDesc.Count=1;bd.Layout=D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+ ID3D12Resource* readback=nullptr;
+ assert(SUCCEEDED(device->CreateCommittedResource(&readHeap,D3D12_HEAP_FLAG_NONE,&bd,D3D12_RESOURCE_STATE_COPY_DEST,nullptr,__uuidof(ID3D12Resource),reinterpret_cast<void**>(&readback))));
+ assert(SUCCEEDED(allocator->Reset()) && SUCCEEDED(list->Reset(allocator,nullptr)));
+ D3D12_RESOURCE_BARRIER barrier{};barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;barrier.Transition.pResource=eye;
+ barrier.Transition.Subresource=D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+ barrier.Transition.StateBefore=D3D12_RESOURCE_STATE_RENDER_TARGET;barrier.Transition.StateAfter=D3D12_RESOURCE_STATE_COPY_SOURCE;
+ list->ResourceBarrier(1,&barrier);
+ D3D12_TEXTURE_COPY_LOCATION src{};src.pResource=eye;src.Type=D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+ D3D12_TEXTURE_COPY_LOCATION dst{};dst.pResource=readback;dst.Type=D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+ dst.PlacedFootprint.Footprint={DXGI_FORMAT_R8G8B8A8_UNORM,96,80,1,512};
+ list->CopyTextureRegion(&dst,0,0,0,&src,nullptr);
+ std::swap(barrier.Transition.StateBefore,barrier.Transition.StateAfter);list->ResourceBarrier(1,&barrier);
+ assert(SUCCEEDED(list->Close()));queue->ExecuteCommandLists(1,lists);drain();
+ uint8_t* pixels=nullptr;assert(SUCCEEDED(readback->Map(0,nullptr,reinterpret_cast<void**>(&pixels))));
+ auto pixel=[&](int x,int y){const uint8_t* p=pixels+y*512+x*4;return (uint32_t(p[0])<<16)|(uint32_t(p[1])<<8)|p[2];};
+ assert(pixel(48,40)==0xFFFFFF);   // Kept center.
+ assert(pixel(48,2)==0);           // Top crop (25% of 80 rows).
+ assert(pixel(48,77)==0);          // Bottom crop.
+ assert(pixel(12,40)==0);          // Left eye's outer edge (25% of 96 columns).
+ assert(pixel(70,40)==0xFFFFFF);   // The left eye keeps its nose side...
+ assert(pixel(90,24)==0);          // ...up to the lens ellipse (size 0.6).
+ if(tier2)assert(pixel(1,70)>>16==0xFF && (pixel(1,70)&0xFFFF)<0x1000); // Red outline at the gaze (u=0.2, v=0.8).
+ readback->Unmap(0,nullptr);release(readback);
  for(const auto& l:lines)std::cout<<l<<'\n';
  release(fence);release(queue);release(list);release(allocator);release(rtvs);release(half);release(eye);
  release(device);release(warp);release(factory);

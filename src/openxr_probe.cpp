@@ -1,6 +1,7 @@
 #include "windows_config.hpp"
 #include "openxr_turbo.hpp"
 #include "d3d12_probe.hpp"
+#include "lens_mask.hpp"
 #include <memory>
 // OpenXR side of BeamNG-VRS: identify eye swapchains, publish resolution and
 // projected gaze, and optionally overlap frame waiting with BeamNG's CPU work.
@@ -59,6 +60,8 @@ struct Dispatch {
  PFN_xrEndFrame endFrame{};
  PFN_xrCreateSwapchain createSwapchain{};
  PFN_xrEnumerateSwapchainImages enumerateSwapchainImages{};
+ PFN_xrAcquireSwapchainImage acquireSwapchainImage{};
+ PFN_xrReleaseSwapchainImage releaseSwapchainImage{};
  PFN_xrGetVisibilityMaskKHR getVisibilityMask{};
  bool visibilityMaskEnabled{};
  PFN_xrDestroySpace destroySpace{};
@@ -89,6 +92,10 @@ struct D3D12SwapchainImage { XrStructureType type; void* next; void* texture; };
 // M7.5a: OpenXR swapchain -> VkImage (or ID3D12Resource), then projection view -> eye.
 std::unordered_map<XrSwapchain, std::vector<uint64_t>> m75SwapchainImage;
 std::unordered_map<XrSwapchain,XrSession> swapchainSessions;
+// M8.43: D3D12 eye images are finished just before release. Acquired indices
+// are released oldest first; the eye comes from the last projection layer.
+struct M843Swapchain { int64_t format=0; int eye=-1; std::vector<uint32_t> acquired; };
+std::unordered_map<XrSwapchain,M843Swapchain> m843Swapchains;
 // Resolution is published as soon as the second matching swapchain exists;
 // waiting for xrEndFrame would be too late for initial Vulkan framebuffer creation.
 struct M814Dimensions { uint32_t width=0,height=0; };
@@ -368,7 +375,7 @@ void turboReport(const std::shared_ptr<beamng_turbo::Scheduler>& turbo){
 void eraseSessionState(XrSession session){ // Caller holds stateMutex.
  sessions.erase(session);m818Sessions.erase(session);m814PairStates.erase(session);
  for(auto it=swapchainSessions.begin();it!=swapchainSessions.end();){
-  if(it->second==session){m75SwapchainImage.erase(it->first);it=swapchainSessions.erase(it);}else ++it;
+  if(it->second==session){m75SwapchainImage.erase(it->first);m843Swapchains.erase(it->first);it=swapchainSessions.erase(it);}else ++it;
  }
 }
 }
@@ -409,7 +416,7 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeDestroySwapchain(XrSwapchain swap
  if(!c.dispatch.destroySwapchain)return XR_ERROR_FUNCTION_UNSUPPORTED;
  if(c.turbo)c.turbo->drain();
  const auto result=c.dispatch.destroySwapchain(swapchain);
- if(XR_SUCCEEDED(result)){std::lock_guard<std::mutex> lock(stateMutex);swapchainSessions.erase(swapchain);m75SwapchainImage.erase(swapchain);}
+ if(XR_SUCCEEDED(result)){std::lock_guard<std::mutex> lock(stateMutex);swapchainSessions.erase(swapchain);m75SwapchainImage.erase(swapchain);m843Swapchains.erase(swapchain);}
  return result;
 }
 // M7.4e: read-only OpenXR stereo projection diagnostics.
@@ -419,7 +426,7 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateSwapchain(XrSession session
  if(!d.createSwapchain)return XR_ERROR_FUNCTION_UNSUPPORTED;
  XrResult r=d.createSwapchain(session,ci,out);
  if(XR_SUCCEEDED(r)&&ci&&out){
-  {std::lock_guard<std::mutex> lock(stateMutex);swapchainSessions[*out]=session;}
+  {std::lock_guard<std::mutex> lock(stateMutex);swapchainSessions[*out]=session;m843Swapchains[*out].format=ci->format;}
   char msg[384]{};
   sprintf_s(msg,sizeof(msg),"M7.4e swapchain=%p dims=%ux%u array=%u faces=%u samples=%u usage=0x%llX format=%lld",
     (void*)*out,ci->width,ci->height,ci->arraySize,ci->faceCount,ci->sampleCount,
@@ -481,6 +488,37 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeEnumerateSwapchainImages(
  }
  return r;
 }
+Dispatch swapchainDispatch(XrSwapchain swapchain){ // Caller holds stateMutex.
+ auto owner=swapchainSessions.find(swapchain);
+ if(owner!=swapchainSessions.end()){auto s=sessions.find(owner->second);
+  if(s!=sessions.end()){auto i=instances.find(s->second.instance);if(i!=instances.end())return i->second;}}
+ return instances.empty()?Dispatch{}:instances.begin()->second;
+}
+extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeAcquireSwapchainImage(XrSwapchain swapchain,const XrSwapchainImageAcquireInfo* info,uint32_t* index){
+ Dispatch d{};{std::lock_guard<std::mutex> g(stateMutex);d=swapchainDispatch(swapchain);}
+ if(!d.acquireSwapchainImage)return XR_ERROR_FUNCTION_UNSUPPORTED;
+ const auto r=d.acquireSwapchainImage(swapchain,info,index);
+ if(XR_SUCCEEDED(r)&&index){std::lock_guard<std::mutex> g(stateMutex);auto it=m843Swapchains.find(swapchain);
+  if(it!=m843Swapchains.end()&&it->second.acquired.size()<8)it->second.acquired.push_back(*index);}
+ return r;
+}
+// M8.43: crop/lens/outline on D3D12 eye images; the game has submitted its
+// rendering, and the runtime reads the image only after this release.
+extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeReleaseSwapchainImage(XrSwapchain swapchain,const XrSwapchainImageReleaseInfo* info){
+ Dispatch d{};uint64_t texture=0;int eye=-1;int64_t format=0;
+ {std::lock_guard<std::mutex> g(stateMutex);d=swapchainDispatch(swapchain);
+  auto it=m843Swapchains.find(swapchain);
+  if(it!=m843Swapchains.end()&&!it->second.acquired.empty()){
+   const uint32_t index=it->second.acquired.front();it->second.acquired.erase(it->second.acquired.begin());
+   eye=it->second.eye;format=it->second.format;
+   auto images=m75SwapchainImage.find(swapchain);
+   if(images!=m75SwapchainImage.end()&&index<images->second.size())texture=images->second[index];
+  }
+ }
+ if(!d.releaseSwapchainImage)return XR_ERROR_FUNCTION_UNSUPPORTED;
+ if(texture&&eye>=0)beamng_d3d12::finishEyeImage(texture,eye,uint32_t(format));
+ return d.releaseSwapchainImage(swapchain,info);
+}
 extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeEndFrame(XrSession session,const XrFrameEndInfo* info){
  Dispatch d{};
  {std::lock_guard<std::mutex> g(stateMutex);auto s=sessions.find(session);if(s!=sessions.end()){auto i=instances.find(s->second.instance);if(i!=instances.end())d=i->second;}}
@@ -513,6 +551,7 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeEndFrame(XrSession session,const 
     const auto& extent=projection->views[0].subImage.imageRect.extent;
     if(extent.width>0 && extent.height>0)beamng_d3d12::setEyeSize(uint32_t(extent.width),uint32_t(extent.height));
     std::lock_guard<std::mutex> guard(stateMutex);
+    for(int eye=0;eye<2;++eye){auto sc=m843Swapchains.find(projection->views[eye].subImage.swapchain);if(sc!=m843Swapchains.end())sc->second.eye=eye;}
     for(int eye=0;eye<2;++eye){auto it=m75SwapchainImage.find(projection->views[eye].subImage.swapchain);
      if(it!=m75SwapchainImage.end())for(size_t j=0;j<it->second.size()&&j<3;++j)images[eye][j]=it->second[j];}
    }
@@ -543,6 +582,27 @@ float m842Size(const char* name,float fallback){
 uint8_t m842Rate(const char* name,uint8_t fallback){
  char v[16]{};if(!beamng_config::read(name,v,sizeof(v)))return fallback;
  return !strcmp(v,"1x1")?beamng_ffr::rate(1,1):!strcmp(v,"2x2")?beamng_ffr::rate(2,2):!strcmp(v,"4x4")?beamng_ffr::rate(4,4):fallback;
+}
+// M8.43: [Scissor], [LensMask] and [Debug] on D3D12, same settings as the Vulkan layer.
+double m843Fraction(const char* name,double fallback){
+ char v[32]{};const DWORD n=beamng_config::read(name,v,sizeof(v));
+ if(!n||n>=sizeof(v))return fallback;
+ char* end=nullptr;const double value=strtod(v,&end);
+ return end!=v && !*end && std::isfinite(value) ? std::clamp(value,0.0,0.49) : fallback;
+}
+beamng_d3d12::Effects m843Effects(){
+ beamng_d3d12::Effects e{};
+ e.crop=enabled("BEAMNG_VRS_SCISSOR_ENABLE");
+ const double top=m843Fraction("BEAMNG_VRS_SCISSOR_TOP",.30),bottom=m843Fraction("BEAMNG_VRS_SCISSOR_BOTTOM",.30);
+ const double left=m843Fraction("BEAMNG_VRS_SCISSOR_LEFT",0),right=m843Fraction("BEAMNG_VRS_SCISSOR_RIGHT",0);
+ e.margins[0]={top,bottom,m843Fraction("BEAMNG_VRS_SCISSOR_LEFT_EYE_LEFT",left),m843Fraction("BEAMNG_VRS_SCISSOR_LEFT_EYE_RIGHT",right)};
+ e.margins[1]={top,bottom,m843Fraction("BEAMNG_VRS_SCISSOR_RIGHT_EYE_LEFT",left),m843Fraction("BEAMNG_VRS_SCISSOR_RIGHT_EYE_RIGHT",right)};
+ e.lensMask=enabled("BEAMNG_VRS_LENS_MASK");
+ char v[32]{};const DWORD n=beamng_config::read("BEAMNG_VRS_LENS_MASK_SIZE",v,sizeof(v));
+ if(n&&n<sizeof(v)){char* end=nullptr;const double size=strtod(v,&end);
+  if(end!=v && !*end && std::isfinite(size) && size>=beamng_lens::minSize && size<=beamng_lens::maxSize)e.lensSize=size;}
+ e.outline=enabled("BEAMNG_VRS_DEBUG_OUTLINE");
+ return e;
 }
 beamng_d3d12::Foveation m842Foveation(bool gazeAvailable){
  beamng_d3d12::Foveation f{};
@@ -584,8 +644,8 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateSession(XrInstance inst,con
    if(next->type==XR_TYPE_GRAPHICS_BINDING_D3D12_KHR){
     d3d12=true;const auto* b=reinterpret_cast<const D3D12Binding*>(next);
     char msg[200]{};sprintf_s(msg,sizeof(msg),"M8.40 graphics=D3D12 device=%p queue=%p",b->device,b->queue);logLine(msg);
-    // M8.42 foveation when enabled; M8.41 render-target report in diagnostics runs.
-    beamng_d3d12::attach(b->device,b->queue,logLine,m817Verbose(),m842Foveation(d.gazeExtension));
+    // M8.42 foveation and M8.43 crop/lens mask/outline when enabled; M8.41 report in diagnostics runs.
+    beamng_d3d12::attach(b->device,b->queue,logLine,m817Verbose(),m842Foveation(d.gazeExtension),m843Effects());
    }
   }
   if(vulkan)logLine("M8.40 graphics=Vulkan");
@@ -836,6 +896,8 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeGetInstanceProcAddr(XrInstance in
  if(!strcmp(name,"xrEndFrame")){*function=reinterpret_cast<PFN_xrVoidFunction>(probeEndFrame);return XR_SUCCESS;}
  if(!strcmp(name,"xrCreateSwapchain")){*function=reinterpret_cast<PFN_xrVoidFunction>(probeCreateSwapchain);return XR_SUCCESS;}
  if(!strcmp(name,"xrEnumerateSwapchainImages")){*function=reinterpret_cast<PFN_xrVoidFunction>(probeEnumerateSwapchainImages);return XR_SUCCESS;}
+ if(!strcmp(name,"xrAcquireSwapchainImage")){if(!d.acquireSwapchainImage)return d.next(instance,name,function);*function=reinterpret_cast<PFN_xrVoidFunction>(probeAcquireSwapchainImage);return XR_SUCCESS;}
+ if(!strcmp(name,"xrReleaseSwapchainImage")){if(!d.releaseSwapchainImage)return d.next(instance,name,function);*function=reinterpret_cast<PFN_xrVoidFunction>(probeReleaseSwapchainImage);return XR_SUCCESS;}
  if(!strcmp(name,"xrWaitFrame")){*function=reinterpret_cast<PFN_xrVoidFunction>(probeWaitFrame);return XR_SUCCESS;}
  if(!strcmp(name,"xrCreateReferenceSpace")){*function=reinterpret_cast<PFN_xrVoidFunction>(probeCreateReferenceSpace);return XR_SUCCESS;}
  if(!strcmp(name,"xrDestroyInstance")){*function=reinterpret_cast<PFN_xrVoidFunction>(probeDestroyInstance);return XR_SUCCESS;}
@@ -940,6 +1002,8 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateApiLayerInstance(const XrIn
  RESOLVE_XR(destroySwapchain,"xrDestroySwapchain",PFN_xrDestroySwapchain)
  RESOLVE_XR(createSwapchain,"xrCreateSwapchain",PFN_xrCreateSwapchain)
  RESOLVE_XR(enumerateSwapchainImages,"xrEnumerateSwapchainImages",PFN_xrEnumerateSwapchainImages)
+ RESOLVE_XR(acquireSwapchainImage,"xrAcquireSwapchainImage",PFN_xrAcquireSwapchainImage)
+ RESOLVE_XR(releaseSwapchainImage,"xrReleaseSwapchainImage",PFN_xrReleaseSwapchainImage)
  RESOLVE_XR(destroySpace,"xrDestroySpace",PFN_xrDestroySpace)
  RESOLVE_XR(destroyActionSet,"xrDestroyActionSet",PFN_xrDestroyActionSet)
 #undef RESOLVE_XR

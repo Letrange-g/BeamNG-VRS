@@ -153,8 +153,8 @@ try {
     $start = New-Object System.Diagnostics.ProcessStartInfo
     $start.FileName = $GameExecutable
     $start.WorkingDirectory = Split-Path -Parent (Split-Path -Parent $GameExecutable)
-    # Direct3D 12 is BeamNG 0.40's VR default and the launcher's. The Vulkan layer
-    # (VRS, scissor, lens mask) only works with vk; d3d12 keeps the OpenXR layer.
+    # Direct3D 12 is BeamNG 0.40's VR default and the launcher's. The OpenXR layer
+    # applies the features on d3d12; the Vulkan layer applies them on vk.
     $start.Arguments = if ($script:Renderer -eq 'vulkan') { '-gfx vk' } else { '-gfx d3d12' }
     $start.UseShellExecute = $false
     # The child receives its own environment. The shell and Windows settings are untouched.
@@ -230,7 +230,7 @@ try {
     $layerReport | Where-Object { $_ -like '*disabled for BeamNG*' } | Write-Output
     [void][System.Diagnostics.Process]::Start($start)
     if ($script:Renderer -eq 'd3d12') {
-        Write-Output 'BeamNG launched in Direct3D 12 mode. Foveation uses D3D12 VRS; scissor and lens mask are Vulkan-only. Change BeamNG-VRS.ini and restart to apply settings.'
+        Write-Output 'BeamNG launched in Direct3D 12 mode. Change BeamNG-VRS.ini and restart to apply settings.'
     } else { Write-Output 'BeamNG launched in Vulkan mode. Change BeamNG-VRS.ini and restart to apply settings.' }
 } catch {
     Write-Error $_ -ErrorAction Continue
