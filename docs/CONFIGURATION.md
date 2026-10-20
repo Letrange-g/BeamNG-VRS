@@ -20,7 +20,7 @@ The release ZIP puts `BeamNG-VRS.ini` beside `Launch-BeamNG-VRS.cmd` at the extr
 | LensMask | `Enabled` | `true` | Skip rendering the image corners outside an ellipse, which the headset lenses hide. Experimental; check the edges in the headset. |
 | LensMask | `Size` | `1.15` | Kept ellipse diameter relative to eye-image width/height (0.5 to 1.5). `1.0` touches all four edges and skips about 21% of pixels; `1.41` skips none. Increase it if black corners are visible. |
 | Performance | `TurboMode` | `false` | Experimental one-frame OpenXR wait overlap. Enabled by default in 0.1.0; off by default since it showed no gain in GPU-limited tests. Restart to change. |
-| OpenXR | `DisableLayers` | empty | Comma-separated implicit OpenXR layer names, or `*`, to turn off for BeamNG only. See [Other OpenXR layers](#other-openxr-layers). |
+| OpenXR | `DisableLayers` | `*` | Implicit OpenXR layers to turn off for BeamNG only: `*` (all, default), comma-separated names, or empty to keep every layer. See [Other OpenXR layers](#other-openxr-layers). |
 | Renderer | `API` | `d3d12` | `d3d12` starts BeamNG with `-gfx d3d12`, the game's VR default since 0.40; only the OpenXR layer (turbo, gaze, logging) applies there for now. `vulkan` starts `-gfx vk`, where foveation, scissor and lens mask work. |
 | Logging | `Level` | `info` | `off`, `errors`, `info`, or `debug`. Default is brief status/errors, not verbose diagnostics. |
 | Tracking | `GracePeriodMs` | `30` | Hold the last valid gaze for this many milliseconds during temporary tracking loss (0 to 1000). |
@@ -127,6 +127,10 @@ project's layer, closest to the game, so BeamNG-VRS cannot filter what they
 receive. If one of them fails, for example because it does not support the
 game's graphics API, BeamNG cannot create its OpenXR instance or session and
 stays on the desktop.
+
+By default every implicit layer is turned off for BeamNG (`DisableLayers=*`,
+also used when the setting is omitted). To keep one you rely on, list only the
+layers to turn off, or leave the value empty to keep all of them:
 
 ```ini
 [OpenXR]

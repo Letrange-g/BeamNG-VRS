@@ -119,7 +119,8 @@ try {
     $layerDirectory = $PSScriptRoot
     $installDirectory = Split-Path -Parent $layerDirectory
     $iniPath = Join-Path $installDirectory 'BeamNG-VRS.ini'
-    $script:DisabledOpenXRLayers = @()
+    # An omitted DisableLayers turns off every implicit layer for BeamNG; an empty value keeps them all.
+    $script:DisabledOpenXRLayers = @('*')
     $script:Renderer = 'd3d12'
     if (-not (Test-Path -LiteralPath $iniPath -PathType Leaf)) {
         throw 'BeamNG-VRS.ini not found beside Launch-BeamNG-VRS.cmd. Extract the entire ZIP; when upgrading, move your saved INI beside the CMD.'

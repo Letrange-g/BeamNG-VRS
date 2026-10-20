@@ -127,6 +127,19 @@ try {
         }
         if ($env:DISABLE_XR_APILAYER_TEST_overlay) { throw 'Launcher changed the parent environment.' }
         Remove-Item -LiteralPath $result
+        # Omitted DisableLayers defaults to *; an explicit empty value keeps every layer.
+        foreach ($case in @(@("[Logging]`nLevel=info", '1'), @("[OpenXR]`nDisableLayers=", ''))) {
+            Set-Content -LiteralPath $ini -Value $case[0] -Encoding UTF8
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -OpenXRLayerRegistry $registry
+            if ($LASTEXITCODE -ne 0) { throw 'Launcher failed with default OpenXR layer handling.' }
+            $deadline = [DateTime]::UtcNow.AddSeconds(10); $content = ''
+            while ([DateTime]::UtcNow -lt $deadline) {
+                try { $content = Get-Content -LiteralPath $result -Raw; if ($content -match 'DISABLE_XR_APILAYER_TEST_off=') { break } } catch {}
+                Start-Sleep -Milliseconds 100
+            }
+            if ($content -notmatch ('(?m)^DISABLE_XR_APILAYER_TEST_overlay=' + $case[1] + '\r?$')) { throw "Unexpected default OpenXR layer handling for: $($case[0])" }
+            Remove-Item -LiteralPath $result
+        }
     } finally { Remove-Item -LiteralPath (Split-Path -Parent $registry) -Recurse -Force -ErrorAction SilentlyContinue }
     # [Renderer] API=vulkan keeps the Vulkan renderer, where the VRS layer applies.
     Set-Content -LiteralPath $ini -Value "[Renderer]`nAPI=vulkan" -Encoding UTF8
