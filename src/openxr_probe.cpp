@@ -61,6 +61,7 @@ struct Dispatch {
  PFN_xrCreateSwapchain createSwapchain{};
  PFN_xrEnumerateSwapchainImages enumerateSwapchainImages{};
  PFN_xrAcquireSwapchainImage acquireSwapchainImage{};
+ PFN_xrEnumerateViewConfigurationViews enumerateViews{};
  PFN_xrReleaseSwapchainImage releaseSwapchainImage{};
  PFN_xrGetVisibilityMaskKHR getVisibilityMask{};
  bool visibilityMaskEnabled{};
@@ -96,6 +97,12 @@ std::unordered_map<XrSwapchain,XrSession> swapchainSessions;
 // are released oldest first; the eye comes from the last projection layer.
 struct M843Swapchain { int64_t format=0; int eye=-1; std::vector<uint32_t> acquired; };
 std::unordered_map<XrSwapchain,M843Swapchain> m843Swapchains;
+// M8.44: on D3D12 the [Scissor] margins are removed from the field of view and
+// the recommended image size, so BeamNG renders only the kept part in every
+// pass. The compositor places the smaller views by their reported FOV.
+std::atomic<bool> m844Active{false};
+XrSession m844Session{XR_NULL_HANDLE}; // Guarded by stateMutex.
+std::array<beamng_scissor::Margins,2> m844Margins{};
 // Resolution is published as soon as the second matching swapchain exists;
 // waiting for xrEndFrame would be too late for initial Vulkan framebuffer creation.
 struct M814Dimensions { uint32_t width=0,height=0; };
@@ -326,7 +333,7 @@ int m817MessageLevel(const char* msg){
     strstr(msg,"M8.31 TURBO") || strstr(msg,"Next xrCreateApiLayerInstance") || strstr(msg,"Opt-in:") ||
     // D3D12 setup and first-use lines are flushed at once, so a crash right after still leaves them.
     strstr(msg,"M8.40 graphics") || strstr(msg,"hooks=") || strstr(msg,"foveation active") ||
-    strstr(msg,"M8.42 shading-rate image") || strstr(msg,"M8.43"))return 1;
+    strstr(msg,"M8.42 shading-rate image") || strstr(msg,"M8.43") || strstr(msg,"M8.44"))return 1;
  return 2;
 }
 void logLine(const char* msg) {
@@ -377,6 +384,7 @@ void turboReport(const std::shared_ptr<beamng_turbo::Scheduler>& turbo){
 }
 void eraseSessionState(XrSession session){ // Caller holds stateMutex.
  sessions.erase(session);m818Sessions.erase(session);m814PairStates.erase(session);
+ if(session==m844Session){m844Session=XR_NULL_HANDLE;m844Active=false;}
  for(auto it=swapchainSessions.begin();it!=swapchainSessions.end();){
   if(it->second==session){m75SwapchainImage.erase(it->first);m843Swapchains.erase(it->first);it=swapchainSessions.erase(it);}else ++it;
  }
@@ -647,8 +655,17 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateSession(XrInstance inst,con
    if(next->type==XR_TYPE_GRAPHICS_BINDING_D3D12_KHR){
     d3d12=true;const auto* b=reinterpret_cast<const D3D12Binding*>(next);
     char msg[200]{};sprintf_s(msg,sizeof(msg),"M8.40 graphics=D3D12 device=%p queue=%p",b->device,b->queue);logLine(msg);
-    // M8.42 foveation and M8.43 crop/lens mask/outline when enabled; M8.41 report in diagnostics runs.
-    beamng_d3d12::attach(b->device,b->queue,logLine,m817Verbose(),m842Foveation(d.gazeExtension),m843Effects());
+    // M8.42 foveation, M8.44 FOV crop and M8.43 lens mask/outline when enabled; M8.41 report in diagnostics runs.
+    auto fx=m843Effects();
+    if(fx.crop){
+     fx.crop=false;fx.fovCrop=true;
+     {std::lock_guard<std::mutex> g(stateMutex);m844Session=*session;m844Margins={fx.margins[0],fx.margins[1]};}
+     m844Active=true;
+     char m[240]{};sprintf_s(m,sizeof(m),"M8.44 FOV crop active: kept width %.0f%%/%.0f%% height %.0f%% of each eye",
+       100*(1-fx.margins[0].left-fx.margins[0].right),100*(1-fx.margins[1].left-fx.margins[1].right),100*(1-fx.margins[0].top-fx.margins[0].bottom));
+     logLine(m);
+    }else m844Active=false;
+    beamng_d3d12::attach(b->device,b->queue,logLine,m817Verbose(),m842Foveation(d.gazeExtension),fx);
    }
   }
   if(vulkan)logLine("M8.40 graphics=Vulkan");
@@ -803,11 +820,44 @@ V3 rotateQ(const XrQuaternionf& q,V3 v){
  V3 t{2.f*(u.y*v.z-u.z*v.y),2.f*(u.z*v.x-u.x*v.z),2.f*(u.x*v.y-u.y*v.x)};
  return {v.x+q.w*t.x+u.y*t.z-u.z*t.y,v.y+q.w*t.y+u.z*t.x-u.x*t.z,v.z+q.w*t.z+u.x*t.y-u.y*t.x};
 }
+// M8.44: the recommended size shrinks with the kept fraction of each eye.
+extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeEnumerateViewConfigurationViews(XrInstance instance,XrSystemId system,
+  XrViewConfigurationType type,uint32_t capacity,uint32_t* count,XrViewConfigurationView* views){
+ Dispatch d{};std::array<beamng_scissor::Margins,2> margins{};
+ {std::lock_guard<std::mutex> g(stateMutex);auto it=instances.find(instance);if(it!=instances.end())d=it->second;margins=m844Margins;}
+ if(!d.enumerateViews)return XR_ERROR_FUNCTION_UNSUPPORTED;
+ const XrResult r=d.enumerateViews(instance,system,type,capacity,count,views);
+ if(XR_SUCCEEDED(r)&&m844Active&&views&&count&&*count>=2&&capacity>=2&&type==XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO){
+  for(int i=0;i<2;++i){
+   auto& v=views[i];const auto& m=margins[i];
+   v.recommendedImageRectWidth=std::max<uint32_t>(16,uint32_t(std::lround(v.recommendedImageRectWidth*(1.0-m.left-m.right))));
+   v.recommendedImageRectHeight=std::max<uint32_t>(16,uint32_t(std::lround(v.recommendedImageRectHeight*(1.0-m.top-m.bottom))));
+  }
+  char msg[200]{};sprintf_s(msg,sizeof(msg),"M8.44 FOV crop recommended size L=%ux%u R=%ux%u",
+    views[0].recommendedImageRectWidth,views[0].recommendedImageRectHeight,views[1].recommendedImageRectWidth,views[1].recommendedImageRectHeight);
+  logLine(msg);
+ }
+ return r;
+}
+// Image rows and columns are linear in the tangent of the view angle.
+void m844CropFov(XrFovf& fov,const beamng_scissor::Margins& m){
+ const double l=tan(fov.angleLeft),r=tan(fov.angleRight),u=tan(fov.angleUp),dn=tan(fov.angleDown);
+ fov.angleLeft=float(atan(l+m.left*(r-l)));fov.angleRight=float(atan(r-m.right*(r-l)));
+ fov.angleUp=float(atan(u-m.top*(u-dn)));fov.angleDown=float(atan(dn+m.bottom*(u-dn)));
+}
 extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeLocateViews(XrSession session,const XrViewLocateInfo* info,XrViewState* state,uint32_t capacity,uint32_t* count,XrView* views){
- Dispatch d{};GazeSession gs{};
- {std::lock_guard<std::mutex> g(stateMutex);auto it=sessions.find(session);if(it!=sessions.end()){gs=it->second;d=instances[it->second.instance];}else if(!instances.empty())d=instances.begin()->second;}
+ Dispatch d{};GazeSession gs{};bool crop=false;std::array<beamng_scissor::Margins,2> margins{};
+ {std::lock_guard<std::mutex> g(stateMutex);auto it=sessions.find(session);if(it!=sessions.end()){gs=it->second;d=instances[it->second.instance];}else if(!instances.empty())d=instances.begin()->second;
+  crop=m844Active&&session==m844Session;margins=m844Margins;}
  if(!d.locateViews)return XR_ERROR_FUNCTION_UNSUPPORTED;
  XrResult r=d.locateViews(session,info,state,capacity,count,views);
+ // Everything below, the gaze projection included, then sees the kept views.
+ if(crop&&XR_SUCCEEDED(r)&&info&&info->viewConfigurationType==XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO&&views&&count&&*count>=2&&capacity>=2){
+  for(int i=0;i<2;++i)m844CropFov(views[i].fov,margins[i]);
+  static std::atomic<bool> logged{false};
+  if(!logged.exchange(true)){char msg[240]{};sprintf_s(msg,sizeof(msg),"M8.44 FOV crop L=(%.3f,%.3f,%.3f,%.3f) rad",
+    views[0].fov.angleLeft,views[0].fov.angleRight,views[0].fov.angleUp,views[0].fov.angleDown);logLine(msg);}
+ }
  if(XR_SUCCEEDED(r)&&info&&views&&count&&*count>=2&&capacity>=2)
    m818Publish(session,d,views);
  // Capacity queries do not invalidate a previous sample. An actual failed
@@ -891,6 +941,7 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeGetInstanceProcAddr(XrInstance in
  if(!strcmp(name,"xrAttachSessionActionSets")){*function=reinterpret_cast<PFN_xrVoidFunction>(probeAttachSessionActionSets);return XR_SUCCESS;}
  if(!strcmp(name,"xrSyncActions")){*function=reinterpret_cast<PFN_xrVoidFunction>(probeSyncActions);return XR_SUCCESS;}
  if(!strcmp(name,"xrLocateViews")){*function=reinterpret_cast<PFN_xrVoidFunction>(probeLocateViews);return XR_SUCCESS;}
+ if(!strcmp(name,"xrEnumerateViewConfigurationViews")){if(!d.enumerateViews)return d.next(instance,name,function);*function=reinterpret_cast<PFN_xrVoidFunction>(probeEnumerateViewConfigurationViews);return XR_SUCCESS;}
  if(!strcmp(name,"xrBeginFrame")){if(!d.beginFrame)return d.next(instance,name,function);*function=reinterpret_cast<PFN_xrVoidFunction>(probeBeginFrame);return XR_SUCCESS;}
  if(!strcmp(name,"xrBeginSession")){if(!d.beginSession)return d.next(instance,name,function);*function=reinterpret_cast<PFN_xrVoidFunction>(probeBeginSession);return XR_SUCCESS;}
  if(!strcmp(name,"xrEndSession")){if(!d.endSession)return d.next(instance,name,function);*function=reinterpret_cast<PFN_xrVoidFunction>(probeEndSession);return XR_SUCCESS;}
@@ -1006,6 +1057,7 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateApiLayerInstance(const XrIn
  RESOLVE_XR(createSwapchain,"xrCreateSwapchain",PFN_xrCreateSwapchain)
  RESOLVE_XR(enumerateSwapchainImages,"xrEnumerateSwapchainImages",PFN_xrEnumerateSwapchainImages)
  RESOLVE_XR(acquireSwapchainImage,"xrAcquireSwapchainImage",PFN_xrAcquireSwapchainImage)
+ RESOLVE_XR(enumerateViews,"xrEnumerateViewConfigurationViews",PFN_xrEnumerateViewConfigurationViews)
  RESOLVE_XR(releaseSwapchainImage,"xrReleaseSwapchainImage",PFN_xrReleaseSwapchainImage)
  RESOLVE_XR(destroySpace,"xrDestroySpace",PFN_xrDestroySpace)
  RESOLVE_XR(destroyActionSet,"xrDestroyActionSet",PFN_xrDestroyActionSet)

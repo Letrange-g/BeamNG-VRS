@@ -43,7 +43,7 @@ int main(){
  fx.lensMask=true;fx.lensSize=0.6;fx.outline=true;
  assert(beamng_d3d12::attach(device,queue,capture,true,fov,fx));
  assert(beamng_d3d12::attach(device,queue,capture,true,fov,fx)); // Idempotent: hooks install once.
- assert(logged("M8.43 D3D12 effects active: crop=1"));
+ assert(logged("M8.43 D3D12 effects active: fovCrop=0 crop=1"));
  assert(logged("M8.41 D3D12 VRS tier=") && logged("hooks=installed"));
  assert(logged(tier2?"M8.42 D3D12 foveation active":"M8.42 D3D12 foveation unavailable"));
  beamng_d3d12::setEyeSize(96,80);

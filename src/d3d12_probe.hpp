@@ -36,6 +36,10 @@ struct Effects {
  bool lensMask = false;
  double lensSize = 1.15;
  bool outline = false;                  // Drawn only while foveation is active.
+ // M8.44: the OpenXR layer already removed the margins from the field of view,
+ // so eye images are the kept part only; crop is then off and margins place the
+ // lens ellipse, which stays relative to the full eye image.
+ bool fovCrop = false;
  bool any() const { return crop || lensMask || outline; }
 };
 // Installs the hooks once per process and selects this device for VRS and

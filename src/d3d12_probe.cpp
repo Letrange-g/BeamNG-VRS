@@ -364,6 +364,16 @@ uint8_t d3d12Rate(uint8_t vulkan){ // Vulkan: width bits 0-1, height bits 2-3; D
  return uint8_t(((vulkan&3)<<2)|((vulkan>>2)&3));
 }
 
+// The lens ellipse in normalized eye-image coordinates. With M8.44 the image is
+// the kept part of the full eye, so the ellipse moves and grows accordingly.
+struct Ellipse { double cx,cy,a,b; };
+Ellipse lensEllipse(int eye){
+ const auto& m=effects.margins[eye];
+ const double kw=effects.fovCrop?std::max(.02,1.0-m.left-m.right):1.0,kh=effects.fovCrop?std::max(.02,1.0-m.top-m.bottom):1.0;
+ const double ox=effects.fovCrop?m.left:0.0,oy=effects.fovCrop?m.top:0.0;
+ return {(.5-ox)/kw,(.5-oy)/kh,effects.lensSize*.5/kw,effects.lensSize*.5/kh};
+}
+
 std::vector<uint8_t> pattern(uint32_t w,uint32_t h,const float u[2],const float v[2]){
  const UINT tile=tileSize();
  beamng_ffr::Pattern eyes[2];
@@ -371,14 +381,19 @@ std::vector<uint8_t> pattern(uint32_t w,uint32_t h,const float u[2],const float 
    config.middleRate,config.outerRate,config.shape);
  std::vector<uint8_t> combined;beamng_ffr::combineFiner(eyes[0].texels,eyes[1].texels,combined);
  // M8.43: tiles entirely outside the lens ellipse are blacked out at the end; shade them coarsest.
+ // Shared targets serve both eyes, so a tile must lie outside both eyes' ellipses.
  if(effects.lensMask){
   const uint32_t tx=(w+tile-1)/tile,ty=(h+tile-1)/tile;
-  const double cx=w/2.0,cy=h/2.0,a=effects.lensSize*w/2.0,b=effects.lensSize*h/2.0;
   for(uint32_t y=0;y<ty;++y)for(uint32_t x=0;x<tx;++x){
-   const double nx=std::clamp(cx,double(x*tile),double(std::min(w,(x+1)*tile)));
-   const double ny=std::clamp(cy,double(y*tile),double(std::min(h,(y+1)*tile)));
-   const double dx=(nx-cx)/a,dy=(ny-cy)/b;
-   if(dx*dx+dy*dy>=1.0 && size_t(y)*tx+x<combined.size())combined[size_t(y)*tx+x]=coarsestRate;
+   const double x0=double(x*tile)/w,x1=double(std::min(w,(x+1)*tile))/w;
+   const double y0=double(y*tile)/h,y1=double(std::min(h,(y+1)*tile))/h;
+   bool outside=true;
+   for(int e=0;e<2&&outside;++e){
+    const auto el=lensEllipse(e);
+    const double dx=(std::clamp(el.cx,x0,x1)-el.cx)/el.a,dy=(std::clamp(el.cy,y0,y1)-el.cy)/el.b;
+    outside=dx*dx+dy*dy>=1.0;
+   }
+   if(outside && size_t(y)*tx+x<combined.size())combined[size_t(y)*tx+x]=coarsestRate;
   }
  }
  for(auto& t:combined)t=d3d12Rate(t);
@@ -472,8 +487,8 @@ bool startEffects(ID3D12Device* device,ID3D12CommandQueue* queue,const Effects& 
  fxDevice=device;fxQueue=queue;
  cropping=e.crop;finishing=e.crop||e.lensMask||e.outline;
  char msg[300]{};
- sprintf_s(msg,"M8.43 D3D12 effects active: crop=%d top=%.2f/%.2f bottom=%.2f/%.2f left=%.2f/%.2f right=%.2f/%.2f lensMask=%d size=%.2f outline=%d",
-   int(e.crop),e.margins[0].top,e.margins[1].top,e.margins[0].bottom,e.margins[1].bottom,
+ sprintf_s(msg,"M8.43 D3D12 effects active: fovCrop=%d crop=%d top=%.2f/%.2f bottom=%.2f/%.2f left=%.2f/%.2f right=%.2f/%.2f lensMask=%d size=%.2f outline=%d",
+   int(e.fovCrop),int(e.crop),e.margins[0].top,e.margins[1].top,e.margins[0].bottom,e.margins[1].bottom,
    e.margins[0].left,e.margins[1].left,e.margins[0].right,e.margins[1].right,int(e.lensMask),e.lensSize,int(e.outline));
  log(msg);
  return true;
@@ -492,8 +507,14 @@ const Rects& blackRects(uint32_t w,uint32_t h,int eye){
  if(inserted){
   if(effects.crop)for(const auto& r:beamng_scissor::make(w,h,effects.margins[eye]).outside)
    addRect(it->second,LONG(r.x),LONG(r.y),LONG(r.x+r.width),LONG(r.y+r.height),LONG(w),LONG(h));
-  if(effects.lensMask)for(const auto& r:beamng_lens::outside(w,h,effects.lensSize,lensBand))
-   addRect(it->second,LONG(r.x),LONG(r.y),LONG(r.x+r.width),LONG(r.y+r.height),LONG(w),LONG(h));
+  // With M8.44 the image is the kept part of the full eye: build the mask for
+  // the full eye and shift it into this image.
+  const auto& mg=effects.margins[eye];
+  const double kw=effects.fovCrop?std::max(.02,1.0-mg.left-mg.right):1.0,kh=effects.fovCrop?std::max(.02,1.0-mg.top-mg.bottom):1.0;
+  const uint32_t fw=uint32_t(std::lround(w/kw)),fh=uint32_t(std::lround(h/kh));
+  const LONG ox=effects.fovCrop?LONG(std::lround(mg.left*fw)):0,oy=effects.fovCrop?LONG(std::lround(mg.top*fh)):0;
+  if(effects.lensMask)for(const auto& r:beamng_lens::outside(fw,fh,effects.lensSize,lensBand))
+   addRect(it->second,LONG(r.x)-ox,LONG(r.y)-oy,LONG(r.x+r.width)-ox,LONG(r.y+r.height)-oy,LONG(w),LONG(h));
  }
  return it->second;
 }

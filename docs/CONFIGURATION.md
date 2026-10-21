@@ -133,16 +133,20 @@ the finer rate of the two eyes; the sharp region is the union of both eyes' regi
 
 `[Scissor]`, `[LensMask]` and `[Debug]` also work with Direct3D 12 (`M8.43` lines):
 
-- **Scissor**: the game's scissor rectangles on those eye-shaped targets are
-  clipped, so cropped edges are not rendered. BeamNG 0.40 sets its scissors
-  through a path the layer does not see, so when an eye-shaped target is bound
-  the layer also sets the crop as the scissor itself (and opens it fully again
-  when a different target is bound). Because the targets serve both eyes,
+- **Scissor** (`M8.44` FOV crop): the margins are removed from the field of view
+  that `xrLocateViews` reports and from the recommended eye-image size, so BeamNG
+  renders only the kept part of each eye in every pass, compute and FSR
+  included. The headset compositor places the smaller views by their reported
+  field of view, so nothing moves; the removed area is simply not shown. Each
+  eye uses its own margins (`LeftEyeLeft` and so on). Clipping the game's
+  scissors saved nothing on D3D12, because BeamNG 0.40 sets its scissors through
+  a path the layer does not see. Because the targets serve both eyes,
   rendering keeps what either eye needs (with the defaults, only `Top` and
   `Bottom` save work there); each eye's own edges, `LeftEyeLeft` included, are
   then cleared to black on its final image.
 - **LensMask**: tiles entirely outside the lens ellipse get the coarsest
   shading rate, and the corners are cleared to black on each final eye image.
+  The ellipse stays relative to the full eye image when Scissor crops the view.
   Unlike Vulkan, there is no depth stamp, so geometry there is still drawn at
   the coarse rate.
 - **DrawOutline**: the red 1x1 and orange 2x2 boundaries are drawn on each final
@@ -150,7 +154,7 @@ the finer rate of the two eyes; the sharp region is the union of both eyes' regi
   render size. It needs foveation to be enabled.
 
 A GPU without VRS Tier 2 keeps normal rendering and logs
-`M8.42 D3D12 foveation unavailable`; the scissor crop and the black lens corners still work. `Diagnose-BeamNG-VRS.cmd` also logs the VRS
+`M8.42 D3D12 foveation unavailable`; the FOV crop and the black lens corners still work. `Diagnose-BeamNG-VRS.cmd` also logs the VRS
 tier and the render-target sizes the game binds per frame (`M8.41` lines).
 
 ## Other OpenXR layers
