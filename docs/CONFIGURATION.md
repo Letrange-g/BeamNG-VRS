@@ -134,7 +134,10 @@ the finer rate of the two eyes; the sharp region is the union of both eyes' regi
 `[Scissor]`, `[LensMask]` and `[Debug]` also work with Direct3D 12 (`M8.43` lines):
 
 - **Scissor**: the game's scissor rectangles on those eye-shaped targets are
-  clipped, so cropped edges are not rendered. Because the targets serve both eyes,
+  clipped, so cropped edges are not rendered. BeamNG 0.40 sets its scissors
+  through a path the layer does not see, so when an eye-shaped target is bound
+  the layer also sets the crop as the scissor itself (and opens it fully again
+  when a different target is bound). Because the targets serve both eyes,
   rendering keeps what either eye needs (with the defaults, only `Top` and
   `Bottom` save work there); each eye's own edges, `LeftEyeLeft` included, are
   then cleared to black on its final image.

@@ -75,10 +75,11 @@ Effects effects{};
 std::atomic<bool> cropping{false},finishing{false};
 ID3D12Device* fxDevice=nullptr;ID3D12CommandQueue* fxQueue=nullptr;
 // Game scissors per command list, so a later eye-target bind can clip them.
-struct ListCrop { D3D12_RECT game[D3D12_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]{}; UINT count=0; D3D12_RECT keep{}; bool active=false; };
+// assumed: no game scissor was seen on this list, so the crop itself was set as its scissor.
+struct ListCrop { D3D12_RECT game[D3D12_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]{}; UINT count=0; D3D12_RECT keep{}; bool active=false,assumed=false; };
 std::mutex cropMutex;
 std::unordered_map<ID3D12GraphicsCommandList*,ListCrop> cropLists;
-std::atomic<uint64_t> croppedScissors{0},scissorCalls{0},eyeBindsWithoutScissor{0};
+std::atomic<uint64_t> croppedScissors{0},scissorCalls{0},eyeBindsWithoutScissor{0},assumedScissors{0};
 // Eye-image finishing: a small ring of lists on the OpenXR queue.
 struct Post { ID3D12CommandAllocator* allocator=nullptr; ID3D12GraphicsCommandList* list=nullptr; uint64_t value=0; };
 std::mutex postMutex;
@@ -173,7 +174,13 @@ void bind(ID3D12GraphicsCommandList* list,SIZE_T first,UINT count,bool renderPas
   c.active=target;
   if(target)c.keep=cropKeep(t.width,t.height);
   if(target && !c.count)eyeBindsWithoutScissor.fetch_add(1,std::memory_order_relaxed);
-  if(target||was)applyScissors(list,c);
+  if(c.count){c.assumed=false;if(target||was)applyScissors(list,c);}
+  // BeamNG 0.40 sets its scissors through a path these hooks do not see, so
+  // the crop is set right after the eye-target bind (engines set the scissor
+  // after the target, which then replaces ours if they set one). Leaving the
+  // eye target opens the scissor fully again.
+  else if(target){nextRSSetScissorRects(list,1,&c.keep);c.assumed=true;assumedScissors.fetch_add(1,std::memory_order_relaxed);}
+  else if(c.assumed){const D3D12_RECT all{0,0,D3D12_VIEWPORT_BOUNDS_MAX,D3D12_VIEWPORT_BOUNDS_MAX};nextRSSetScissorRects(list,1,&all);c.assumed=false;}
  }
  if(!diagnostics && !foveating)return;
  std::lock_guard<std::mutex> g(statsMutex);
@@ -235,7 +242,7 @@ void STDMETHODCALLTYPE hookRSSetScissorRects(ID3D12GraphicsCommandList* list,UIN
  }
  std::lock_guard<std::mutex> g(cropMutex);
  auto& c=cropLists[list];
- c.count=count;std::copy(rects,rects+count,c.game);
+ c.count=count;c.assumed=false;std::copy(rects,rects+count,c.game);
  if(c.active)applyScissors(list,c);
  else nextRSSetScissorRects(list,count,rects);
 }
@@ -647,7 +654,7 @@ void frame(){
    sprintf_s(msg,"M8.43 ERROR: D3D12 device removed reason=0x%08lX (eyeImagesFinished=%llu)",reason,(unsigned long long)finished.load());log(msg);}
  }
  if(foveating)updateFoveation();
- std::vector<std::pair<Key,uint64_t>> top;uint64_t unknown=0,om=0,pass=0,vrs=0,cropped=0,calls=0,bare=0;unsigned n=0;
+ std::vector<std::pair<Key,uint64_t>> top;uint64_t unknown=0,om=0,pass=0,vrs=0,cropped=0,calls=0,bare=0,assumed=0;unsigned n=0;
  {
   std::lock_guard<std::mutex> g(statsMutex);
   ++frames;
@@ -659,10 +666,11 @@ void frame(){
   cropped=croppedScissors.exchange(0,std::memory_order_relaxed);
   calls=scissorCalls.exchange(0,std::memory_order_relaxed);
   bare=eyeBindsWithoutScissor.exchange(0,std::memory_order_relaxed);
+  assumed=assumedScissors.exchange(0,std::memory_order_relaxed);
  }
- char msg[256]{};
- if(fxDevice){sprintf_s(msg,"M8.43 D3D12 effects frames=%u croppedScissors=%llu (%.1f per frame) scissorCallsPerFrame=%.1f eyeBindsWithoutScissorPerFrame=%.1f eyeImagesFinished=%llu skippedBusy=%llu",
-   n,(unsigned long long)cropped,double(cropped)/n,double(calls)/n,double(bare)/n,(unsigned long long)finished.load(),(unsigned long long)finishBusy.load());log(msg);}
+ char msg[384]{};
+ if(fxDevice){sprintf_s(msg,"M8.43 D3D12 effects frames=%u croppedScissors=%llu (%.1f per frame) scissorCallsPerFrame=%.1f eyeBindsWithoutScissorPerFrame=%.1f cropScissorsSetPerFrame=%.1f eyeImagesFinished=%llu skippedBusy=%llu",
+   n,(unsigned long long)cropped,double(cropped)/n,double(calls)/n,double(bare)/n,double(assumed)/n,(unsigned long long)finished.load(),(unsigned long long)finishBusy.load());log(msg);}
  if(foveating){sprintf_s(msg,"M8.42 D3D12 foveation frames=%u vrsBindsPerFrame=%.1f",n,double(vrs)/n);log(msg);}
  if(!diagnostics)return;
  std::sort(top.begin(),top.end(),[](const auto& a,const auto& b){return a.second>b.second;});
