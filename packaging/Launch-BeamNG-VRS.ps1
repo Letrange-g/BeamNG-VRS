@@ -149,6 +149,7 @@ function Test-BeamNGIni {
         'tracking.gazerefreshms' = @(2, 50, $true)
         'lensmask.size' = @(0.5, 1.5, $false)
         'renderer.renderscale' = @(0.25, 1.0, $false)
+        'renderer.vrdrawdistance' = @(100, 10000, $false)
     }
     foreach ($line in ($text -split "`n")) {
         ++$lineNumber
