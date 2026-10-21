@@ -349,30 +349,34 @@ void STDMETHODCALLTYPE hookExecute(ID3D12CommandQueue* queue,UINT count,ID3D12Co
 
 // The OpenXR binding's queue must be a direct queue, which timestamps support.
 void startGpuTiming(ID3D12Device* device,ID3D12CommandQueue* queue){
+ char msg[200]{};
+ auto fail=[&](const char* step,HRESULT hr){
+  sprintf_s(msg,"M8.47 D3D12 GPU timing WARNING: %s failed hr=0x%08lX; timing off",step,hr);log(msg);};
  UINT64 frequency=0;
- if(FAILED(ID3D12CommandQueue_GetTimestampFrequency(queue,&frequency)) || !frequency){log("M8.47 D3D12 GPU timing unavailable: no timestamp frequency");return;}
+ HRESULT hr=ID3D12CommandQueue_GetTimestampFrequency(queue,&frequency);
+ if(FAILED(hr) || !frequency){fail("GetTimestampFrequency",hr);return;}
  D3D12_QUERY_HEAP_DESC qd{};qd.Type=D3D12_QUERY_HEAP_TYPE_TIMESTAMP;qd.Count=2*stampSlots;
+ if(FAILED(hr=ID3D12Device_CreateQueryHeap(device,&qd,IID_ID3D12QueryHeap,reinterpret_cast<void**>(&stampHeap)))){fail("CreateQueryHeap",hr);return;}
  D3D12_HEAP_PROPERTIES heap{};heap.Type=D3D12_HEAP_TYPE_READBACK;
  D3D12_RESOURCE_DESC bd{};bd.Dimension=D3D12_RESOURCE_DIMENSION_BUFFER;bd.Width=UINT64(16)*stampSlots;bd.Height=1;
  bd.DepthOrArraySize=1;bd.MipLevels=1;bd.Format=DXGI_FORMAT_UNKNOWN;bd.SampleDesc.Count=1;bd.Layout=D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+ if(FAILED(hr=ID3D12Device_CreateCommittedResource(device,&heap,D3D12_HEAP_FLAG_NONE,&bd,D3D12_RESOURCE_STATE_COPY_DEST,nullptr,IID_ID3D12Resource,reinterpret_cast<void**>(&stampReadback)))){fail("readback buffer",hr);return;}
  void* mapped=nullptr;
- bool ok=SUCCEEDED(ID3D12Device_CreateQueryHeap(device,&qd,IID_ID3D12QueryHeap,reinterpret_cast<void**>(&stampHeap))) &&
-   SUCCEEDED(ID3D12Device_CreateCommittedResource(device,&heap,D3D12_HEAP_FLAG_NONE,&bd,D3D12_RESOURCE_STATE_COPY_DEST,nullptr,IID_ID3D12Resource,reinterpret_cast<void**>(&stampReadback))) &&
-   SUCCEEDED(ID3D12Resource_Map(stampReadback,0,nullptr,&mapped));
- for(UINT i=0;ok && i<stampSlots;++i){auto& st=stamps[i];
-  ok=SUCCEEDED(ID3D12Device_CreateCommandAllocator(device,D3D12_COMMAND_LIST_TYPE_DIRECT,IID_ID3D12CommandAllocator,reinterpret_cast<void**>(&st.allocator))) &&
-     SUCCEEDED(ID3D12Device_CreateCommandList(device,0,D3D12_COMMAND_LIST_TYPE_DIRECT,st.allocator,nullptr,IID_ID3D12GraphicsCommandList,reinterpret_cast<void**>(&st.begin))) &&
-     SUCCEEDED(ID3D12Device_CreateCommandList(device,0,D3D12_COMMAND_LIST_TYPE_DIRECT,st.allocator,nullptr,IID_ID3D12GraphicsCommandList,reinterpret_cast<void**>(&st.end)));
-  if(ok){ID3D12GraphicsCommandList_Close(st.begin);ID3D12GraphicsCommandList_Close(st.end);}
+ if(FAILED(hr=ID3D12Resource_Map(stampReadback,0,nullptr,&mapped))){fail("Map",hr);return;}
+ // Leaked on failure: a few small objects, once per process.
+ for(UINT i=0;i<stampSlots;++i){auto& st=stamps[i];
+  if(FAILED(hr=ID3D12Device_CreateCommandAllocator(device,D3D12_COMMAND_LIST_TYPE_DIRECT,IID_ID3D12CommandAllocator,reinterpret_cast<void**>(&st.allocator))) ||
+     FAILED(hr=ID3D12Device_CreateCommandList(device,0,D3D12_COMMAND_LIST_TYPE_DIRECT,st.allocator,nullptr,IID_ID3D12GraphicsCommandList,reinterpret_cast<void**>(&st.begin)))){fail("timestamp lists",hr);return;}
+  ID3D12GraphicsCommandList_Close(st.begin); // The allocator records one list at a time.
+  if(FAILED(hr=ID3D12Device_CreateCommandList(device,0,D3D12_COMMAND_LIST_TYPE_DIRECT,st.allocator,nullptr,IID_ID3D12GraphicsCommandList,reinterpret_cast<void**>(&st.end)))){fail("timestamp lists",hr);return;}
+  ID3D12GraphicsCommandList_Close(st.end);
  }
  ID3D12Fence* fence=nullptr;
- ok=ok&&SUCCEEDED(ID3D12Device_CreateFence(device,0,D3D12_FENCE_FLAG_NONE,IID_ID3D12Fence,reinterpret_cast<void**>(&fence)));
- // Leaked on failure: a few small objects, once per process.
- if(!ok){log("M8.47 D3D12 GPU timing WARNING: timestamp objects could not be created");return;}
+ if(FAILED(hr=ID3D12Device_CreateFence(device,0,D3D12_FENCE_FLAG_NONE,IID_ID3D12Fence,reinterpret_cast<void**>(&fence)))){fail("CreateFence",hr);return;}
  stampMapped=static_cast<const uint64_t*>(mapped);ticksPerMs=double(frequency)/1000.0;
  ID3D12CommandQueue_AddRef(queue);gameQueue=queue;
  if(!patch(&queue->lpVtbl->ExecuteCommandLists,decltype(ID3D12CommandQueueVtbl::ExecuteCommandLists)(&hookExecute),nextExecute)){
-  log("M8.47 D3D12 GPU timing WARNING: ExecuteCommandLists hook failed");return;
+  fail("ExecuteCommandLists hook",E_FAIL);return;
  }
  {std::lock_guard<std::mutex> g(stampMutex);stampFence=fence;}
  log("M8.47 D3D12 GPU timing active (Ctrl+Shift+V pauses VRS for an A/B)");

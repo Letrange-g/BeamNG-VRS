@@ -126,6 +126,7 @@ int main(){
  assert(logged("M8.41 rt 48x40 format=28 samples=1 eyeSwapchain=0"));
  if(tier2)assert(logged("M8.42 D3D12 foveation frames=300 vrsBindsPerFrame=0.0 (laterTarget=0.00 depthOnly=0.01)")); // 6 VRS binds, 2 depth-only, over 300 frames.
  assert(logged("M8.43 D3D12 effects frames=300 croppedScissors=4 "));
+ for(const auto& l:lines)if(l.find("M8.47")!=std::string::npos)std::cerr<<l<<"\n"; // Shown when an assert below fails.
  assert(logged("M8.47 D3D12 GPU timing active"));
  assert(logged("M8.47 D3D12 GPU frames=300 busy="));
  assert(logged(tier2?" vrs=on skipped=0":" vrs=off skipped=0")); // 2 rounds x (scissor set + half-size bind).
