@@ -56,7 +56,7 @@ std::atomic<uint32_t> eyeWidth{0},eyeHeight{0};
 
 std::mutex statsMutex;
 std::unordered_map<Key,uint64_t,KeyHash> binds;
-uint64_t unknownBinds=0,omBinds=0,passBinds=0,vrsBinds=0;
+uint64_t unknownBinds=0,omBinds=0,passBinds=0,vrsBinds=0,vrsLaterTarget=0,vrsDepthOnly=0;
 unsigned frames=0,reports=0;
 
 // Foveation device state; touched only from attach() and frame() (OpenXR frame thread).
@@ -91,6 +91,7 @@ constexpr size_t clearBatch=4;
 constexpr uint32_t lensBand=64; // Rows per black lens-corner band; taller bands mean fewer rectangles.
 
 decltype(ID3D12DeviceVtbl::CreateRenderTargetView) nextCreateRtv=nullptr;
+decltype(ID3D12DeviceVtbl::CreateDepthStencilView) nextCreateDsv=nullptr;
 decltype(ID3D12GraphicsCommandListVtbl::OMSetRenderTargets) nextOMSetRenderTargets=nullptr;
 decltype(ID3D12GraphicsCommandList4Vtbl::BeginRenderPass) nextBeginRenderPass=nullptr;
 decltype(ID3D12GraphicsCommandListVtbl::RSSetScissorRects) nextRSSetScissorRects=nullptr;
@@ -136,17 +137,26 @@ void applyScissors(ID3D12GraphicsCommandList* list,const ListCrop& c){
 }
 
 // The first render target decides the shading-rate image for the whole bind.
-void bind(ID3D12GraphicsCommandList* list,SIZE_T first,UINT count,bool renderPass,const SIZE_T* all){
- Target t{};bool known=false,eye=false,eligible=false;ID3D12Resource* image=nullptr;
+// M8.46: VRS follows the first eye-shaped render target of the bind, or the
+// eye-shaped depth buffer of a depth-only pass (depth prepass, alpha-tested foliage).
+void bind(ID3D12GraphicsCommandList* list,SIZE_T first,UINT count,bool renderPass,const SIZE_T* all,SIZE_T depth){
+ Target t{},v{};bool known=false,eye=false,eligible=false;ID3D12Resource* image=nullptr;int source=0;
  {
   std::shared_lock<std::shared_mutex> g(targetsMutex);
   if(count){
    auto it=targets.find(first);
    if(it!=targets.end()){t=it->second;known=true;eye=eyeImages.count(t.resource)!=0;}
   }
-  eligible=foveating && known && t.samples==1 && t.device==vrsDevice && eyeShaped(t.width,t.height);
+  const auto fits=[&](const Target& c){return c.samples==1 && c.device==vrsDevice && eyeShaped(c.width,c.height);};
+  if(foveating){
+   if(known && fits(t)){v=t;eligible=true;}
+   for(UINT i=1;i<count && !eligible;++i){auto it=targets.find(all[i]);
+    if(it!=targets.end() && fits(it->second)){v=it->second;eligible=true;source=1;}}
+   if(!eligible && !count && depth){auto it=targets.find(depth);
+    if(it!=targets.end() && fits(it->second)){v=it->second;eligible=true;source=2;}}
+  }
   if(eligible){
-   auto r=rateImages.find({t.width,t.height});
+   auto r=rateImages.find({v.width,v.height});
    if(r!=rateImages.end()&&r->second.ready)image=r->second.texture;
   }
  }
@@ -161,7 +171,7 @@ void bind(ID3D12GraphicsCommandList* list,SIZE_T first,UINT count,bool renderPas
    ID3D12GraphicsCommandList5_RSSetShadingRateImage(list5,nullptr);
    ID3D12GraphicsCommandList5_RSSetShadingRate(list5,D3D12_SHADING_RATE_1X1,nullptr);
    if(eligible){
-    std::unique_lock<std::shared_mutex> g(targetsMutex);wantedSizes.insert(sizeKey(t.width,t.height));
+    std::unique_lock<std::shared_mutex> g(targetsMutex);wantedSizes.insert(sizeKey(v.width,v.height));
    }
   }
  }
@@ -184,7 +194,7 @@ void bind(ID3D12GraphicsCommandList* list,SIZE_T first,UINT count,bool renderPas
  }
  if(!diagnostics && !foveating)return;
  std::lock_guard<std::mutex> g(statsMutex);
- if(image)++vrsBinds;
+ if(image){++vrsBinds;if(source==1)++vrsLaterTarget;else if(source==2)++vrsDepthOnly;}
  if(!diagnostics)return;
  for(UINT i=0;i<count;++i){
   Target ti{};bool k=false,e=false;
@@ -222,7 +232,7 @@ void STDMETHODCALLTYPE hookOMSetRenderTargets(ID3D12GraphicsCommandList* list,UI
  SIZE_T handles[D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT]{};
  const UINT n=rts?std::min<UINT>(count,D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT):0;
  for(UINT i=0;i<n;++i)handles[i]=singleRange?rts[0].ptr+SIZE_T(i)*rtvIncrement:rts[i].ptr;
- bind(list,handles[0],n,false,handles);
+ bind(list,handles[0],n,false,handles,depth?depth->ptr:0);
 }
 
 void STDMETHODCALLTYPE hookBeginRenderPass(ID3D12GraphicsCommandList4* list,UINT count,
@@ -231,7 +241,7 @@ void STDMETHODCALLTYPE hookBeginRenderPass(ID3D12GraphicsCommandList4* list,UINT
  SIZE_T handles[D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT]{};
  const UINT n=rts?std::min<UINT>(count,D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT):0;
  for(UINT i=0;i<n;++i)handles[i]=rts[i].cpuDescriptor.ptr;
- bind(reinterpret_cast<ID3D12GraphicsCommandList*>(list),handles[0],n,true,handles);
+ bind(reinterpret_cast<ID3D12GraphicsCommandList*>(list),handles[0],n,true,handles,depth?depth->cpuDescriptor.ptr:0);
  nextBeginRenderPass(list,count,rts,depth,flags);
 }
 
@@ -265,6 +275,26 @@ template<class T> bool patch(const T* constSlot,T hook,T& next){
  return true;
 }
 
+void STDMETHODCALLTYPE hookCreateDsv(ID3D12Device* device,ID3D12Resource* resource,
+  const D3D12_DEPTH_STENCIL_VIEW_DESC* desc,D3D12_CPU_DESCRIPTOR_HANDLE destination){
+ nextCreateDsv(device,resource,desc,destination);
+ // DSV and RTV heaps never share addresses, so both live in one map.
+ D3D12_RESOURCE_DESC rd{};
+ if(resource)ID3D12Resource_GetDesc(resource,&rd);
+ if(!resource || rd.Dimension!=D3D12_RESOURCE_DIMENSION_TEXTURE2D){
+  std::unique_lock<std::shared_mutex> g(targetsMutex);targets.erase(destination.ptr);return;
+ }
+ UINT mip=0;
+ if(desc && desc->ViewDimension==D3D12_DSV_DIMENSION_TEXTURE2D)mip=desc->Texture2D.MipSlice;
+ else if(desc && desc->ViewDimension==D3D12_DSV_DIMENSION_TEXTURE2DARRAY)mip=desc->Texture2DArray.MipSlice;
+ Target t{};
+ t.width=std::max<uint32_t>(1,uint32_t(rd.Width>>mip));t.height=std::max<uint32_t>(1,rd.Height>>mip);
+ t.format=uint32_t(desc && desc->Format!=DXGI_FORMAT_UNKNOWN?desc->Format:rd.Format);t.samples=rd.SampleDesc.Count;
+ t.resource=uint64_t(reinterpret_cast<uintptr_t>(resource));t.device=device;
+ std::unique_lock<std::shared_mutex> g(targetsMutex);
+ targets[destination.ptr]=t;
+}
+
 bool install(ID3D12Device* device){
  char msg[256]{};
  rtvIncrement=ID3D12Device_GetDescriptorHandleIncrementSize(device,D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
@@ -283,6 +313,8 @@ bool install(ID3D12Device* device){
  ID3D12GraphicsCommandList_Close(list);
  bool ok=patch(&device->lpVtbl->CreateRenderTargetView,
    decltype(ID3D12DeviceVtbl::CreateRenderTargetView)(&hookCreateRtv),nextCreateRtv);
+ ok=ok&&patch(&device->lpVtbl->CreateDepthStencilView,
+   decltype(ID3D12DeviceVtbl::CreateDepthStencilView)(&hookCreateDsv),nextCreateDsv);
  ok=ok&&patch(&list->lpVtbl->OMSetRenderTargets,
    decltype(ID3D12GraphicsCommandListVtbl::OMSetRenderTargets)(&hookOMSetRenderTargets),nextOMSetRenderTargets);
  ok=ok&&patch(&list->lpVtbl->RSSetScissorRects,
@@ -685,15 +717,15 @@ void frame(){
    sprintf_s(msg,"M8.43 ERROR: D3D12 device removed reason=0x%08lX (eyeImagesFinished=%llu)",reason,(unsigned long long)finished.load());log(msg);}
  }
  if(foveating)updateFoveation();
- std::vector<std::pair<Key,uint64_t>> top;uint64_t unknown=0,om=0,pass=0,vrs=0,cropped=0,calls=0,bare=0,assumed=0;unsigned n=0;
+ std::vector<std::pair<Key,uint64_t>> top;uint64_t unknown=0,om=0,pass=0,vrs=0,later=0,depthOnly=0,cropped=0,calls=0,bare=0,assumed=0;unsigned n=0;
  {
   std::lock_guard<std::mutex> g(statsMutex);
   ++frames;
   // First report after warm-up, then a few more; reports cover the frames since the last one.
   if(reports>=4 || frames<(reports?900u:300u))return;
   ++reports;n=frames;frames=0;
-  top.assign(binds.begin(),binds.end());unknown=unknownBinds;om=omBinds;pass=passBinds;vrs=vrsBinds;
-  binds.clear();unknownBinds=omBinds=passBinds=vrsBinds=0;
+  top.assign(binds.begin(),binds.end());unknown=unknownBinds;om=omBinds;pass=passBinds;vrs=vrsBinds;later=vrsLaterTarget;depthOnly=vrsDepthOnly;
+  binds.clear();unknownBinds=omBinds=passBinds=vrsBinds=vrsLaterTarget=vrsDepthOnly=0;
   cropped=croppedScissors.exchange(0,std::memory_order_relaxed);
   calls=scissorCalls.exchange(0,std::memory_order_relaxed);
   bare=eyeBindsWithoutScissor.exchange(0,std::memory_order_relaxed);
@@ -702,7 +734,7 @@ void frame(){
  char msg[384]{};
  if(fxDevice){sprintf_s(msg,"M8.43 D3D12 effects frames=%u croppedScissors=%llu (%.1f per frame) scissorCallsPerFrame=%.1f eyeBindsWithoutScissorPerFrame=%.1f cropScissorsSetPerFrame=%.1f eyeImagesFinished=%llu skippedBusy=%llu",
    n,(unsigned long long)cropped,double(cropped)/n,double(calls)/n,double(bare)/n,double(assumed)/n,(unsigned long long)finished.load(),(unsigned long long)finishBusy.load());log(msg);}
- if(foveating){sprintf_s(msg,"M8.42 D3D12 foveation frames=%u vrsBindsPerFrame=%.1f",n,double(vrs)/n);log(msg);}
+ if(foveating){sprintf_s(msg,"M8.42 D3D12 foveation frames=%u vrsBindsPerFrame=%.1f (laterTarget=%.2f depthOnly=%.2f)",n,double(vrs)/n,double(later)/n,double(depthOnly)/n);log(msg);}
  if(!diagnostics)return;
  std::sort(top.begin(),top.end(),[](const auto& a,const auto& b){return a.second>b.second;});
  sprintf_s(msg,"M8.41 D3D12 render targets frames=%u bindsPerFrame=%.1f renderPassPerFrame=%.1f unknownPerFrame=%.1f",

@@ -65,6 +65,16 @@ int main(){
  auto second=first;second.ptr+=device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
  device->CreateRenderTargetView(eye,nullptr,first);
  device->CreateRenderTargetView(half,nullptr,second);
+ // M8.46: an eye-shaped depth buffer drives VRS for depth-only passes.
+ ID3D12Resource* depthBuffer=nullptr;
+ {D3D12_RESOURCE_DESC rd{};rd.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;rd.Width=96;rd.Height=80;
+  rd.DepthOrArraySize=1;rd.MipLevels=1;rd.Format=DXGI_FORMAT_D32_FLOAT;rd.SampleDesc.Count=1;rd.Flags=D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+  assert(SUCCEEDED(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&rd,D3D12_RESOURCE_STATE_DEPTH_WRITE,nullptr,__uuidof(ID3D12Resource),reinterpret_cast<void**>(&depthBuffer))));}
+ D3D12_DESCRIPTOR_HEAP_DESC dd{D3D12_DESCRIPTOR_HEAP_TYPE_DSV,1};
+ ID3D12DescriptorHeap* dsvs=nullptr;
+ assert(SUCCEEDED(device->CreateDescriptorHeap(&dd,__uuidof(ID3D12DescriptorHeap),reinterpret_cast<void**>(&dsvs))));
+ const auto dsv=dsvs->GetCPUDescriptorHandleForHeapStart();
+ device->CreateDepthStencilView(depthBuffer,nullptr,dsv);
  const uint64_t images[6]{uint64_t(reinterpret_cast<uintptr_t>(eye))};
  beamng_d3d12::setEyeImages(images,6);
 
@@ -102,6 +112,7 @@ int main(){
   list->OMSetRenderTargets(1,&first,FALSE,nullptr);list->ClearRenderTargetView(first,black,0,nullptr);
   const D3D12_RECT full{0,0,96,80};list->RSSetScissorRects(1,&full); // Clipped now and again for the next eye-shaped bind.
   list->OMSetRenderTargets(1,&second,FALSE,nullptr);list->ClearRenderTargetView(second,black,0,nullptr);
+  list->OMSetRenderTargets(0,nullptr,FALSE,&dsv);list->ClearDepthStencilView(dsv,D3D12_CLEAR_FLAG_DEPTH,1.f,0,0,nullptr);
   list->OMSetRenderTargets(0,nullptr,FALSE,nullptr);
   assert(SUCCEEDED(list->Close()));queue->ExecuteCommandLists(1,lists);drain();
   const float u[2]{.2f,.1f},v[2]{.8f,.9f};beamng_d3d12::setGaze(u,v,3);
@@ -113,7 +124,7 @@ int main(){
  assert(logged("M8.41 D3D12 render targets frames=300"));
  assert(logged("M8.41 rt 96x80 format=28 samples=1 eyeSwapchain=1"));
  assert(logged("M8.41 rt 48x40 format=28 samples=1 eyeSwapchain=0"));
- if(tier2)assert(logged("M8.42 D3D12 foveation frames=300 vrsBindsPerFrame=0.0")); // 4 VRS binds over 300 frames rounds to 0.0.
+ if(tier2)assert(logged("M8.42 D3D12 foveation frames=300 vrsBindsPerFrame=0.0 (laterTarget=0.00 depthOnly=0.01)")); // 6 VRS binds, 2 depth-only, over 300 frames.
  assert(logged("M8.43 D3D12 effects frames=300 croppedScissors=4 ")); // 2 rounds x (scissor set + half-size bind).
 
  // Finish the left eye image: white, then cropped edges/corners black and the outline at the gaze.
@@ -151,7 +162,7 @@ int main(){
  if(tier2)assert(pixel(1,70)>>16==0xFF && (pixel(1,70)&0xFFFF)<0x1000); // Red outline at the gaze (u=0.2, v=0.8).
  readback->Unmap(0,nullptr);release(readback);
  for(const auto& l:lines)std::cout<<l<<'\n';
- release(fence);release(queue);release(list);release(allocator);release(rtvs);release(half);release(eye);
+ release(fence);release(queue);release(list);release(allocator);release(rtvs);release(dsvs);release(depthBuffer);release(half);release(eye);
  release(device);release(warp);release(factory);
  std::cout<<"D3D12 probe: WARP device hooks, binds, eye classification, report and "<<(tier2?"VRS image upload/bind/gaze update":"VRS-unavailable fallback")<<" passed\n";
 }

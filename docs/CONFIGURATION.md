@@ -126,7 +126,9 @@ scene at half the headset resolution before upscaling it. With `[Renderer]
 API=d3d12` (default) the OpenXR layer receives the game's D3D12 device and applies
 a shading-rate image (VRS Tier 2, 16-pixel tiles on tested GPUs) to every render
 target with the eye image's shape at 25-100% of its size, so both the internal
-render size and the full-size passes are covered. The same `[Foveation]` sizes,
+render size and the full-size passes are covered. Passes whose eye-shaped target
+is not the first one, and depth-only passes on an eye-shaped depth buffer (`M8.46`),
+are covered too. The same `[Foveation]` sizes,
 shape and rates apply, and `[Tracking]` gaze settings move the sharp region with
 eye tracking. Both eyes share the game's intermediate targets, so each tile uses
 the finer rate of the two eyes; the sharp region is the union of both eyes' regions.
