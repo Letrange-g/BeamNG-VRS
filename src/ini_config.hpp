@@ -134,8 +134,6 @@ inline void setting(Values& out, const std::string& section, const std::string& 
  else if(id == "renderer.api") out["BEAMNG_VRS_RENDERER"] = choice(value, {"vulkan", "d3d12"});
  // Launcher-only (M8.48): BeamNG's VR upscale render scale, applied by a small Lua mod.
  else if(id == "renderer.renderscale") { number(value, 0.25, 1.0); out["BEAMNG_VRS_RENDER_SCALE"] = value; }
- // Launcher-only (M8.49, experimental): VR far distance, applied by the same mod.
- else if(id == "renderer.farclip") { number(value, 100, 10000); out["BEAMNG_VRS_FAR_CLIP"] = value; }
  else throw std::runtime_error("unknown section or setting");
 }
 

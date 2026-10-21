@@ -145,10 +145,10 @@ try {
     $userFolder = Join-Path $temp 'user folder'
     [void](New-Item -ItemType Directory -Path $userFolder -Force)
     $modLua = Join-Path $userFolder 'mods\unpacked\beamng_vrs\lua\ge\extensions\beamngVrs.lua'
-    Set-Content -LiteralPath $ini -Value "[Renderer]`nRenderScale=0.8`nFarClip=2000" -Encoding UTF8
+    Set-Content -LiteralPath $ini -Value "[Renderer]`nRenderScale=0.8" -Encoding UTF8
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder
     if ($LASTEXITCODE -ne 0) { throw 'Launcher failed with RenderScale.' }
-    if (-not (Test-Path -LiteralPath $modLua) -or (Get-Content -LiteralPath $modLua -Raw) -notmatch 'local scale = 0\.8\r?\n' -or (Get-Content -LiteralPath $modLua -Raw) -notmatch 'local farClip = 2000\r?\n' -or
+    if (-not (Test-Path -LiteralPath $modLua) -or (Get-Content -LiteralPath $modLua -Raw) -notmatch 'local scale = 0\.8\r?\n' -or
         -not (Test-Path -LiteralPath (Join-Path $userFolder 'mods\unpacked\beamng_vrs\scripts\beamng_vrs\modScript.lua'))) { throw 'RenderScale mod was not written.' }
     $deadline = [DateTime]::UtcNow.AddSeconds(10); $content = ''
     while ([DateTime]::UtcNow -lt $deadline) {
