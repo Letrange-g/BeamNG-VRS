@@ -97,6 +97,7 @@ inline Values defaults() {
  out["BEAMNG_VRS_LENS_MASK"] = "1";
  out["BEAMNG_VRS_LENS_MASK_SIZE"] = "1.15";
  out["BEAMNG_VRS_LOG_LEVEL"] = "1";
+ out["BEAMNG_VRS_RENDERER"] = "d3d12";
  return out;
 }
 inline void setting(Values& out, const std::string& section, const std::string& key, std::string value) {
@@ -128,6 +129,13 @@ inline void setting(Values& out, const std::string& section, const std::string& 
     {"righteyeleft", "RIGHT_EYE_LEFT"}, {"righteyeright", "RIGHT_EYE_RIGHT"}};
   out["BEAMNG_VRS_SCISSOR_" + names.at(key)] = value;
  } else if(id == "openxr.disablelayers") openxrLayerList(value);
+ // Launcher-only: selects BeamNG's -gfx argument (default d3d12, BeamNG 0.40's VR
+ // default). d3d12 features come from the OpenXR layer, vulkan ones from the Vulkan layer.
+ else if(id == "renderer.api") out["BEAMNG_VRS_RENDERER"] = choice(value, {"vulkan", "d3d12"});
+ // Launcher-only (M8.48): BeamNG's VR upscale render scale, applied by a small Lua mod.
+ else if(id == "renderer.renderscale") { number(value, 0.25, 1.0); out["BEAMNG_VRS_RENDER_SCALE"] = value; }
+ // Removed (M8.49 had no effect in VR): accepted and ignored so older INIs still launch.
+ else if(id == "renderer.farclip") {}
  else throw std::runtime_error("unknown section or setting");
 }
 
@@ -144,7 +152,7 @@ inline Values parse(std::istream& input) {
    if(line[0] == '[') {
     if(line.back() != ']') throw std::runtime_error("invalid section header");
     section = lower(trim(line.substr(1, line.size() - 2)));
-    if(section != "foveation" && section != "debug" && section != "scissor" && section != "tracking" && section != "performance" && section != "logging" && section != "lensmask" && section != "openxr")
+    if(section != "foveation" && section != "debug" && section != "scissor" && section != "tracking" && section != "performance" && section != "logging" && section != "lensmask" && section != "openxr" && section != "renderer")
      throw std::runtime_error("unknown section");
     continue;
    }

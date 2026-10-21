@@ -4,6 +4,8 @@ param(
     [switch]$CheckOnly,
     [switch]$Diagnostics,
     [switch]$ValidateOnly,
+    # BeamNG user folder for the RenderScale mod; tests use a scratch folder.
+    [string]$UserFolder = (Join-Path $env:LOCALAPPDATA 'BeamNG\BeamNG.drive\current'),
     # Implicit OpenXR layer registry keys; tests replace them with a scratch key.
     [string[]]$OpenXRLayerRegistry = @('HKLM:\SOFTWARE\Khronos\OpenXR\1\ApiLayers\Implicit',
                                        'HKCU:\SOFTWARE\Khronos\OpenXR\1\ApiLayers\Implicit')
@@ -16,7 +18,8 @@ function Assert-IniNumber {
             [Globalization.CultureInfo]::InvariantCulture, [ref]$number) -or
         [double]::IsNaN($number) -or [double]::IsInfinity($number) -or
         $number -lt $Low -or $number -gt $High -or ($Integer -and $Value -cnotmatch '^[0-9]+$')) {
-        throw 'value is outside the allowed range'
+        $inv = [Globalization.CultureInfo]::InvariantCulture
+        throw "value '$Value' is outside the allowed range ($($Low.ToString($inv)) to $($High.ToString($inv)))"
     }
     return $number
 }
@@ -52,6 +55,77 @@ function Get-OpenXRImplicitLayers {
         }
     }
 }
+# M8.48: BeamNG 0.40 forces FSR at 50% in VR. Each eye view ('oxrView0'/'oxrView1')
+# exposes upscaleRenderScale to Lua, so a small unpacked mod sets it whenever the
+# VR views appear (entering VR recreates them) and every 2 s puts it back if the
+# game changed it. Setting it recreates FSR, so it is only set when it differs.
+# (M8.49 tried a VR far clip the same way: BeamNG ignores frusta set from Lua.)
+function Update-VRMod {
+    param([string]$UserFolder, $Scale)
+    $mod = Join-Path $UserFolder 'mods\unpacked\beamng_vrs'
+    $marker = Join-Path $mod 'beamng_vrs.txt'
+    if ($null -eq $Scale) {
+        # Only a folder this launcher wrote is removed.
+        if (Test-Path -LiteralPath $marker -PathType Leaf) { Remove-Item -LiteralPath $mod -Recurse -Force }
+        return
+    }
+    if (-not (Test-Path -LiteralPath $UserFolder -PathType Container)) {
+        Write-Warning "BeamNG user folder not found at $UserFolder; [Renderer] RenderScale is not applied."
+        return
+    }
+    if ((Test-Path -LiteralPath $mod) -and -not (Test-Path -LiteralPath $marker -PathType Leaf)) {
+        Write-Warning "$mod exists but was not written by BeamNG-VRS; [Renderer] RenderScale is not applied."
+        return
+    }
+    $scaleText = ([double]$Scale).ToString('0.###', [Globalization.CultureInfo]::InvariantCulture)
+    $utf8 = New-Object Text.UTF8Encoding($false)
+    $files = @{
+        'beamng_vrs.txt' = "Written by Launch-BeamNG-VRS at every start from BeamNG-VRS.ini. Remove RenderScale there to delete it.`r`n"
+        'scripts\beamng_vrs\modScript.lua' = "load('beamngVrs')`r`nsetExtensionUnloadMode('beamngVrs', 'manual')`r`n"
+        'lua\ge\extensions\beamngVrs.lua' = @"
+-- Written by Launch-BeamNG-VRS from BeamNG-VRS.ini ([Renderer] RenderScale).
+local M = {}
+local scale = $scaleText
+local present = {}
+local sinceCheck = 0
+local function apply(name, view, why)
+  view.upscaleRenderScale = scale
+  log('I', 'beamngVrs', 'BeamNG-VRS render scale ' .. scale .. ' on ' .. name .. ' (' .. why .. ')')
+end
+local function onUpdate(dtReal)
+  local manager = RenderViewManagerInstance
+  if not manager then return end
+  sinceCheck = sinceCheck + (dtReal or 0)
+  local check = sinceCheck >= 2
+  if check then sinceCheck = 0 end
+  for _, name in ipairs({'oxrView0', 'oxrView1'}) do
+    local ok, view = pcall(function() return manager:getView(name) end)
+    if ok and view then
+      if not present[name] then
+        present[name] = true
+        apply(name, view, 'VR started')
+      elseif check then
+        local current = view.upscaleRenderScale
+        if type(current) == 'number' and math.abs(current - scale) > 0.001 then
+          apply(name, view, 'game had set ' .. string.format('%.2f', current))
+        end
+      end
+    else present[name] = nil end
+  end
+end
+local function onClientPostStartMission() present = {} end
+M.onUpdate = onUpdate
+M.onClientPostStartMission = onClientPostStartMission
+return M
+"@
+    }
+    foreach ($relative in $files.Keys) {
+        $path = Join-Path $mod $relative
+        [void](New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force)
+        [IO.File]::WriteAllText($path, $files[$relative], $utf8)
+    }
+    Write-Output "VR render scale $scaleText applied through $mod"
+}
 function Test-BeamNGIni {
     param([string]$Path)
     $encoding = New-Object Text.UTF8Encoding($false, $true)
@@ -74,6 +148,7 @@ function Test-BeamNGIni {
         'tracking.graceperiodms' = @(0, 1000, $true)
         'tracking.gazerefreshms' = @(2, 50, $true)
         'lensmask.size' = @(0.5, 1.5, $false)
+        'renderer.renderscale' = @(0.25, 1.0, $false)
     }
     foreach ($line in ($text -split "`n")) {
         ++$lineNumber
@@ -83,7 +158,7 @@ function Test-BeamNGIni {
             if ($line.StartsWith('[')) {
                 if (-not $line.EndsWith(']')) { throw 'invalid section header' }
                 $section = $line.Substring(1, $line.Length - 2).Trim($whitespace).ToLowerInvariant()
-                if (@('foveation', 'debug', 'scissor', 'lensmask', 'tracking', 'performance', 'logging', 'openxr') -cnotcontains $section) { throw 'unknown section' }
+                if (@('foveation', 'debug', 'scissor', 'lensmask', 'tracking', 'performance', 'logging', 'openxr', 'renderer') -cnotcontains $section) { throw 'unknown section' }
                 continue
             }
             $equals = $line.IndexOf('=')
@@ -97,16 +172,25 @@ function Test-BeamNGIni {
                 $range = $ranges[$id]
                 $number = Assert-IniNumber -Value $value -Low $range[0] -High $range[1] -Integer $range[2]
                 if ($sizes.ContainsKey($id)) { $sizes[$id] = $number }
+                if ($id -eq 'renderer.renderscale') { $script:RenderScale = $number }
             } elseif ($id -eq 'foveation.shape') {
                 if (@('circle', 'square', 'ellipse') -cnotcontains $value.ToLowerInvariant()) { throw 'unsupported setting value' }
             } elseif ($id -eq 'logging.level') {
                 if (@('off', 'errors', 'info', 'debug') -cnotcontains $value.ToLowerInvariant()) { throw 'unsupported setting value' }
             } elseif ($id -eq 'debug.drawoutline' -or $id -eq 'scissor.enabled' -or $id -eq 'foveation.enabled' -or $id -eq 'foveation.allpasses' -or $id -eq 'lensmask.enabled' -or $id -eq 'performance.turbomode') {
                 if (@('0', '1', 'false', 'true') -cnotcontains $value.ToLowerInvariant()) { throw 'expected 0, 1, false or true' }
+            } elseif ($id -eq 'renderer.api') {
+                if (@('vulkan', 'd3d12') -cnotcontains $value.ToLowerInvariant()) { throw 'unsupported setting value' }
+                $script:Renderer = $value.ToLowerInvariant()
             } elseif ($id -eq 'openxr.disablelayers') {
                 $script:DisabledOpenXRLayers = @(ConvertTo-OpenXRLayerList -Value $value)
+            } elseif ($id -eq 'renderer.farclip') {
+                Write-Warning "INI line ${lineNumber} [Renderer]: FarClip was removed (BeamNG ignores it in VR); this line is ignored and can be deleted."
             } else { throw 'unknown section or setting' }
-        } catch { throw "INI line ${lineNumber}: $($_.Exception.Message)" }
+        } catch {
+            $where = if ($section) { " [$section]" } else { '' }
+            throw "INI line ${lineNumber}${where}: $line : $($_.Exception.Message)"
+        }
     }
     if ($seen.Count -eq 0) { throw 'INI contains no settings' }
     if ($sizes['foveation.size1x1'] -gt $sizes['foveation.size2x2']) { throw 'Size1x1 must not exceed Size2x2' }
@@ -116,7 +200,10 @@ try {
     $layerDirectory = $PSScriptRoot
     $installDirectory = Split-Path -Parent $layerDirectory
     $iniPath = Join-Path $installDirectory 'BeamNG-VRS.ini'
-    $script:DisabledOpenXRLayers = @()
+    # An omitted DisableLayers turns off every implicit layer for BeamNG; an empty value keeps them all.
+    $script:DisabledOpenXRLayers = @('*')
+    $script:Renderer = 'd3d12'
+    $script:RenderScale = $null
     if (-not (Test-Path -LiteralPath $iniPath -PathType Leaf)) {
         throw 'BeamNG-VRS.ini not found beside Launch-BeamNG-VRS.cmd. Extract the entire ZIP; when upgrading, move your saved INI beside the CMD.'
     }
@@ -148,7 +235,9 @@ try {
     $start = New-Object System.Diagnostics.ProcessStartInfo
     $start.FileName = $GameExecutable
     $start.WorkingDirectory = Split-Path -Parent (Split-Path -Parent $GameExecutable)
-    $start.Arguments = '-gfx vk'
+    # Direct3D 12 is BeamNG 0.40's VR default and the launcher's. The OpenXR layer
+    # applies the features on d3d12; the Vulkan layer applies them on vk.
+    $start.Arguments = if ($script:Renderer -eq 'vulkan') { '-gfx vk' } else { '-gfx d3d12' }
     $start.UseShellExecute = $false
     # The child receives its own environment. The shell and Windows settings are untouched.
     # Old testing scripts must not silently override the user's INI settings.
@@ -193,8 +282,10 @@ try {
     }
     if ($CheckOnly) {
         $layerReport | Write-Output
+        if ($null -ne $script:RenderScale) { Write-Output 'VR render scale will be applied through the BeamNG user folder.' }
         Write-Output 'Release files and game executable found. No game started.'; return
     }
+    Update-VRMod -UserFolder $UserFolder -Scale $(if ($script:Renderer -eq 'd3d12') { $script:RenderScale } else { $null })
     if ($Diagnostics) {
         $start.EnvironmentVariables['VK_LOADER_DEBUG'] = 'error,warn,layer'
         # The OpenXR loader then reports the layer chain and which layer failed xrCreateInstance.
@@ -222,7 +313,9 @@ try {
     }
     $layerReport | Where-Object { $_ -like '*disabled for BeamNG*' } | Write-Output
     [void][System.Diagnostics.Process]::Start($start)
-    Write-Output 'BeamNG launched in Vulkan mode. Change BeamNG-VRS.ini and restart to apply settings.'
+    if ($script:Renderer -eq 'd3d12') {
+        Write-Output 'BeamNG launched in Direct3D 12 mode. Change BeamNG-VRS.ini and restart to apply settings.'
+    } else { Write-Output 'BeamNG launched in Vulkan mode. Change BeamNG-VRS.ini and restart to apply settings.' }
 } catch {
     Write-Error $_ -ErrorAction Continue
     exit 1

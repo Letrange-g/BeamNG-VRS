@@ -1,4 +1,4 @@
-BeamNG-VRS 0.2.0 - portable Windows x64
+BeamNG-VRS 0.3.0 - portable Windows x64
 
 INSTALL
 1. Close BeamNG.
@@ -6,7 +6,8 @@ INSTALL
    Extraction directly inside Bin64 also works.
    Keep the BeamNG-VRS folder and Launch-BeamNG-VRS.cmd together.
 3. Edit BeamNG-VRS.ini beside Launch-BeamNG-VRS.cmd in Notepad if desired.
-4. Start Launch-BeamNG-VRS.cmd. It launches BeamNG in Vulkan mode.
+4. Start Launch-BeamNG-VRS.cmd. It launches BeamNG in Direct3D 12 mode
+   (set [Renderer] API=vulkan in the INI for the Vulkan VRS features).
 5. Enable VR in BeamNG as usual. Restart the game after every settings change.
 
 SETTINGS

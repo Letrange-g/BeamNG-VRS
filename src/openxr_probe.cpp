@@ -1,5 +1,7 @@
 #include "windows_config.hpp"
 #include "openxr_turbo.hpp"
+#include "d3d12_probe.hpp"
+#include "lens_mask.hpp"
 #include <memory>
 // OpenXR side of BeamNG-VRS: identify eye swapchains, publish resolution and
 // projected gaze, and optionally overlap frame waiting with BeamNG's CPU work.
@@ -58,6 +60,9 @@ struct Dispatch {
  PFN_xrEndFrame endFrame{};
  PFN_xrCreateSwapchain createSwapchain{};
  PFN_xrEnumerateSwapchainImages enumerateSwapchainImages{};
+ PFN_xrAcquireSwapchainImage acquireSwapchainImage{};
+ PFN_xrEnumerateViewConfigurationViews enumerateViews{};
+ PFN_xrReleaseSwapchainImage releaseSwapchainImage{};
  PFN_xrGetVisibilityMaskKHR getVisibilityMask{};
  bool visibilityMaskEnabled{};
  PFN_xrDestroySpace destroySpace{};
@@ -81,9 +86,23 @@ struct GazeSession {
  std::shared_ptr<beamng_turbo::Scheduler> turbo;
 };
 std::unordered_map<XrSession, GazeSession> sessions;
-// M7.5a: OpenXR swapchain -> VkImage, then projection view -> eye.
+// M8.40: BeamNG 0.40 defaults to Direct3D 12. Mirror the two D3D12 OpenXR
+// structs so this layer needs no d3d12.h; only the COM pointers are recorded.
+struct D3D12Binding { XrStructureType type; const void* next; void* device; void* queue; };
+struct D3D12SwapchainImage { XrStructureType type; void* next; void* texture; };
+// M7.5a: OpenXR swapchain -> VkImage (or ID3D12Resource), then projection view -> eye.
 std::unordered_map<XrSwapchain, std::vector<uint64_t>> m75SwapchainImage;
 std::unordered_map<XrSwapchain,XrSession> swapchainSessions;
+// M8.43: D3D12 eye images are finished just before release. Acquired indices
+// are released oldest first; the eye comes from the last projection layer.
+struct M843Swapchain { int64_t format=0; int eye=-1; std::vector<uint32_t> acquired; };
+std::unordered_map<XrSwapchain,M843Swapchain> m843Swapchains;
+// M8.44: on D3D12 the [Scissor] margins are removed from the field of view and
+// the recommended image size, so BeamNG renders only the kept part in every
+// pass. The compositor places the smaller views by their reported FOV.
+std::atomic<bool> m844Active{false};
+XrSession m844Session{XR_NULL_HANDLE}; // Guarded by stateMutex.
+std::array<beamng_scissor::Margins,2> m844Margins{};
 // Resolution is published as soon as the second matching swapchain exists;
 // waiting for xrEndFrame would be too late for initial Vulkan framebuffer creation.
 struct M814Dimensions { uint32_t width=0,height=0; };
@@ -311,7 +330,10 @@ int m817MessageLevel(const char* msg){
     strstr(msg,"FATAL") || strstr(msg,"result=-"))return 0;
  if(strstr(msg,"M8.14 XR_EYE_RESOLUTION") || strstr(msg,"M8.17") || strstr(msg,"M8.18") ||
     strstr(msg,"Runtime advertises") || strstr(msg,"System supports") ||
-    strstr(msg,"M8.31 TURBO") || strstr(msg,"Next xrCreateApiLayerInstance") || strstr(msg,"Opt-in:"))return 1;
+    strstr(msg,"M8.31 TURBO") || strstr(msg,"Next xrCreateApiLayerInstance") || strstr(msg,"Opt-in:") ||
+    // D3D12 setup and first-use lines are flushed at once, so a crash right after still leaves them.
+    strstr(msg,"M8.40 graphics") || strstr(msg,"hooks=") || strstr(msg,"foveation active") ||
+    strstr(msg,"M8.42 shading-rate image") || strstr(msg,"foveation frames") || strstr(msg,"M8.43") || strstr(msg,"M8.44") || strstr(msg,"M8.47"))return 1;
  return 2;
 }
 void logLine(const char* msg) {
@@ -362,8 +384,9 @@ void turboReport(const std::shared_ptr<beamng_turbo::Scheduler>& turbo){
 }
 void eraseSessionState(XrSession session){ // Caller holds stateMutex.
  sessions.erase(session);m818Sessions.erase(session);m814PairStates.erase(session);
+ if(session==m844Session){m844Session=XR_NULL_HANDLE;m844Active=false;}
  for(auto it=swapchainSessions.begin();it!=swapchainSessions.end();){
-  if(it->second==session){m75SwapchainImage.erase(it->first);it=swapchainSessions.erase(it);}else ++it;
+  if(it->second==session){m75SwapchainImage.erase(it->first);m843Swapchains.erase(it->first);it=swapchainSessions.erase(it);}else ++it;
  }
 }
 }
@@ -404,7 +427,7 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeDestroySwapchain(XrSwapchain swap
  if(!c.dispatch.destroySwapchain)return XR_ERROR_FUNCTION_UNSUPPORTED;
  if(c.turbo)c.turbo->drain();
  const auto result=c.dispatch.destroySwapchain(swapchain);
- if(XR_SUCCEEDED(result)){std::lock_guard<std::mutex> lock(stateMutex);swapchainSessions.erase(swapchain);m75SwapchainImage.erase(swapchain);}
+ if(XR_SUCCEEDED(result)){std::lock_guard<std::mutex> lock(stateMutex);swapchainSessions.erase(swapchain);m75SwapchainImage.erase(swapchain);m843Swapchains.erase(swapchain);}
  return result;
 }
 // M7.4e: read-only OpenXR stereo projection diagnostics.
@@ -414,7 +437,7 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateSwapchain(XrSession session
  if(!d.createSwapchain)return XR_ERROR_FUNCTION_UNSUPPORTED;
  XrResult r=d.createSwapchain(session,ci,out);
  if(XR_SUCCEEDED(r)&&ci&&out){
-  {std::lock_guard<std::mutex> lock(stateMutex);swapchainSessions[*out]=session;}
+  {std::lock_guard<std::mutex> lock(stateMutex);swapchainSessions[*out]=session;m843Swapchains[*out].format=ci->format;}
   char msg[384]{};
   sprintf_s(msg,sizeof(msg),"M7.4e swapchain=%p dims=%ux%u array=%u faces=%u samples=%u usage=0x%llX format=%lld",
     (void*)*out,ci->width,ci->height,ci->arraySize,ci->faceCount,ci->sampleCount,
@@ -461,9 +484,51 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeEnumerateSwapchainImages(
     {std::lock_guard<std::mutex> guard(stateMutex); {auto& entries=m75SwapchainImage[swapchain];if(entries.size()<=i)entries.resize(i+1);entries[i]=static_cast<uint64_t>(reinterpret_cast<uintptr_t>(vi->image));}}
     ++reported;
    }
-  }else{logLine("M7.4f swapchain images are not Vulkan KHR type");++reported;}
+  }else if(*count && images[0].type==XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR){
+   for(uint32_t i=0;i<*count&&reported<160;++i){
+    const auto* di=&reinterpret_cast<const D3D12SwapchainImage*>(images)[i];
+    if(di->type!=XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR)break;
+    char msg[256]{};
+    sprintf_s(msg,sizeof(msg),"M8.40 swapchain=%p imageIndex=%u ID3D12Resource=%p",
+      (void*)swapchain,i,di->texture);
+    logLine(msg);
+    {std::lock_guard<std::mutex> guard(stateMutex); {auto& entries=m75SwapchainImage[swapchain];if(entries.size()<=i)entries.resize(i+1);entries[i]=static_cast<uint64_t>(reinterpret_cast<uintptr_t>(di->texture));}}
+    ++reported;
+   }
+  }else{logLine("M7.4f swapchain images are neither Vulkan nor D3D12 KHR type");++reported;}
  }
  return r;
+}
+Dispatch swapchainDispatch(XrSwapchain swapchain){ // Caller holds stateMutex.
+ auto owner=swapchainSessions.find(swapchain);
+ if(owner!=swapchainSessions.end()){auto s=sessions.find(owner->second);
+  if(s!=sessions.end()){auto i=instances.find(s->second.instance);if(i!=instances.end())return i->second;}}
+ return instances.empty()?Dispatch{}:instances.begin()->second;
+}
+extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeAcquireSwapchainImage(XrSwapchain swapchain,const XrSwapchainImageAcquireInfo* info,uint32_t* index){
+ Dispatch d{};{std::lock_guard<std::mutex> g(stateMutex);d=swapchainDispatch(swapchain);}
+ if(!d.acquireSwapchainImage)return XR_ERROR_FUNCTION_UNSUPPORTED;
+ const auto r=d.acquireSwapchainImage(swapchain,info,index);
+ if(XR_SUCCEEDED(r)&&index){std::lock_guard<std::mutex> g(stateMutex);auto it=m843Swapchains.find(swapchain);
+  if(it!=m843Swapchains.end()&&it->second.acquired.size()<8)it->second.acquired.push_back(*index);}
+ return r;
+}
+// M8.43: crop/lens/outline on D3D12 eye images; the game has submitted its
+// rendering, and the runtime reads the image only after this release.
+extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeReleaseSwapchainImage(XrSwapchain swapchain,const XrSwapchainImageReleaseInfo* info){
+ Dispatch d{};uint64_t texture=0;int eye=-1;int64_t format=0;
+ {std::lock_guard<std::mutex> g(stateMutex);d=swapchainDispatch(swapchain);
+  auto it=m843Swapchains.find(swapchain);
+  if(it!=m843Swapchains.end()&&!it->second.acquired.empty()){
+   const uint32_t index=it->second.acquired.front();it->second.acquired.erase(it->second.acquired.begin());
+   eye=it->second.eye;format=it->second.format;
+   auto images=m75SwapchainImage.find(swapchain);
+   if(images!=m75SwapchainImage.end()&&index<images->second.size())texture=images->second[index];
+  }
+ }
+ if(!d.releaseSwapchainImage)return XR_ERROR_FUNCTION_UNSUPPORTED;
+ if(texture&&eye>=0)beamng_d3d12::finishEyeImage(texture,eye,uint32_t(format));
+ return d.releaseSwapchainImage(swapchain,info);
 }
 extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeEndFrame(XrSession session,const XrFrameEndInfo* info){
  Dispatch d{};
@@ -493,7 +558,11 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeEndFrame(XrSession session,const 
    if(!layer || layer->type!=XR_TYPE_COMPOSITION_LAYER_PROJECTION)continue;
    const auto* projection=reinterpret_cast<const XrCompositionLayerProjection*>(layer);
    if(projection->viewCount>=2 && projection->views){
+    // The projection rect is the eye image the game renders, unlike UI swapchain pairs.
+    const auto& extent=projection->views[0].subImage.imageRect.extent;
+    if(extent.width>0 && extent.height>0)beamng_d3d12::setEyeSize(uint32_t(extent.width),uint32_t(extent.height));
     std::lock_guard<std::mutex> guard(stateMutex);
+    for(int eye=0;eye<2;++eye){auto sc=m843Swapchains.find(projection->views[eye].subImage.swapchain);if(sc!=m843Swapchains.end())sc->second.eye=eye;}
     for(int eye=0;eye<2;++eye){auto it=m75SwapchainImage.find(projection->views[eye].subImage.swapchain);
      if(it!=m75SwapchainImage.end())for(size_t j=0;j<it->second.size()&&j<3;++j)images[eye][j]=it->second[j];}
    }
@@ -501,9 +570,11 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeEndFrame(XrSession session,const 
   }
   if(images[0][0] && images[1][0] && images[0][0]!=images[1][0]){
    m75Publish(images);
+   beamng_d3d12::setEyeImages(&images[0][0],6);
    static unsigned n=0;if(m817Verbose() && (++n%180)==1){char b[256]{};sprintf_s(b,"M7.5a OpenXR eyeImages L=%p R=%p",(void*)(uintptr_t)images[0][0],(void*)(uintptr_t)images[1][0]);logLine(b);}
   }
  }
+ beamng_d3d12::frame();
  const auto c=frameContext(session);
  return c.turbo?c.turbo->end(info):d.endFrame(session,info);
 }
@@ -512,6 +583,58 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeGetInstanceProcAddr(XrInstance in
 // extensions, and resolve only downstream pointers (never our own interceptors).
 extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateApiLayerInstance(const XrInstanceCreateInfo* info,const XrApiLayerCreateInfo* layerInfo,XrInstance* instance);
 
+// M8.42: D3D12 foveation uses the same [Foveation]/[Tracking] settings as the Vulkan layer.
+float m842Size(const char* name,float fallback){
+ char v[32]{};const DWORD n=beamng_config::read(name,v,sizeof(v));
+ if(!n||n>=sizeof(v))return fallback;
+ char* end=nullptr;const float value=strtof(v,&end);
+ return end!=v && !*end && std::isfinite(value) && value>=0.f && value<=1.f ? value : fallback;
+}
+uint8_t m842Rate(const char* name,uint8_t fallback){
+ char v[16]{};if(!beamng_config::read(name,v,sizeof(v)))return fallback;
+ return !strcmp(v,"1x1")?beamng_ffr::rate(1,1):!strcmp(v,"2x2")?beamng_ffr::rate(2,2):!strcmp(v,"4x4")?beamng_ffr::rate(4,4):fallback;
+}
+// M8.43: [Scissor], [LensMask] and [Debug] on D3D12, same settings as the Vulkan layer.
+double m843Fraction(const char* name,double fallback){
+ char v[32]{};const DWORD n=beamng_config::read(name,v,sizeof(v));
+ if(!n||n>=sizeof(v))return fallback;
+ char* end=nullptr;const double value=strtod(v,&end);
+ return end!=v && !*end && std::isfinite(value) ? std::clamp(value,0.0,0.49) : fallback;
+}
+beamng_d3d12::Effects m843Effects(){
+ beamng_d3d12::Effects e{};
+ e.crop=enabled("BEAMNG_VRS_SCISSOR_ENABLE");
+ const double top=m843Fraction("BEAMNG_VRS_SCISSOR_TOP",.30),bottom=m843Fraction("BEAMNG_VRS_SCISSOR_BOTTOM",.30);
+ const double left=m843Fraction("BEAMNG_VRS_SCISSOR_LEFT",0),right=m843Fraction("BEAMNG_VRS_SCISSOR_RIGHT",0);
+ e.margins[0]={top,bottom,m843Fraction("BEAMNG_VRS_SCISSOR_LEFT_EYE_LEFT",left),m843Fraction("BEAMNG_VRS_SCISSOR_LEFT_EYE_RIGHT",right)};
+ e.margins[1]={top,bottom,m843Fraction("BEAMNG_VRS_SCISSOR_RIGHT_EYE_LEFT",left),m843Fraction("BEAMNG_VRS_SCISSOR_RIGHT_EYE_RIGHT",right)};
+ e.lensMask=enabled("BEAMNG_VRS_LENS_MASK");
+ char v[32]{};const DWORD n=beamng_config::read("BEAMNG_VRS_LENS_MASK_SIZE",v,sizeof(v));
+ if(n&&n<sizeof(v)){char* end=nullptr;const double size=strtod(v,&end);
+  if(end!=v && !*end && std::isfinite(size) && size>=beamng_lens::minSize && size<=beamng_lens::maxSize)e.lensSize=size;}
+ e.outline=enabled("BEAMNG_VRS_DEBUG_OUTLINE");
+ return e;
+}
+beamng_d3d12::Foveation m842Foveation(bool gazeAvailable){
+ beamng_d3d12::Foveation f{};
+ f.enabled=enabled("BEAMNG_VRS_ENABLE_FEATURES");
+ char mode[16]{};
+ f.gaze=gazeAvailable && enabled("BEAMNG_EYE_SAMPLE") &&
+   (!beamng_config::read("BEAMNG_VRS_FOVEATION_MODE",mode,sizeof(mode)) || !strcmp(mode,"eye"));
+ f.center=m842Size("BEAMNG_VRS_CENTER_RADIUS",.25f);
+ f.middle=std::max(f.center,m842Size("BEAMNG_VRS_MID_RADIUS",.55f));
+ f.middleRate=m842Rate("BEAMNG_VRS_MID_RATE",beamng_ffr::rate(2,2));
+ f.outerRate=m842Rate("BEAMNG_VRS_OUTER_RATE",beamng_ffr::rate(4,4));
+ char shape[16]{};
+ if(beamng_config::read("BEAMNG_VRS_SHAPE",shape,sizeof(shape)))
+  f.shape=!_stricmp(shape,"square")?beamng_ffr::Shape::Square:!_stricmp(shape,"ellipse")?beamng_ffr::Shape::Ellipse:beamng_ffr::Shape::Circle;
+ char grace[16]{};
+ if(beamng_config::read("BEAMNG_VRS_GAZE_GRACE_MS",grace,sizeof(grace))){
+  char* end=nullptr;const unsigned long ms=strtoul(grace,&end,10);
+  if(end!=grace && !*end && ms<=1000)f.graceMs=uint32_t(ms);
+ }
+ return f;
+}
 // M7.2b diagnostic gaze action. Failures never block BeamNG's original calls.
 extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateSession(XrInstance inst,const XrSessionCreateInfo* ci,XrSession* session){
  Dispatch d{}; {std::lock_guard<std::mutex> g(stateMutex);auto it=instances.find(inst);if(it==instances.end())return XR_ERROR_HANDLE_INVALID;d=it->second;}
@@ -526,14 +649,33 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateSession(XrInstance inst,con
  logResult("M7.2b xrCreateSession",r);
  if(XR_SUCCEEDED(r) && session){
   GazeSession gs{};gs.instance=inst;
-  bool vulkan=false;
-  if(ci)for(auto* next=reinterpret_cast<const XrBaseInStructure*>(ci->next);next;next=next->next)
+  bool vulkan=false,d3d12=false;
+  if(ci)for(auto* next=reinterpret_cast<const XrBaseInStructure*>(ci->next);next;next=next->next){
    if(next->type==XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR)vulkan=true;
+   if(next->type==XR_TYPE_GRAPHICS_BINDING_D3D12_KHR){
+    d3d12=true;const auto* b=reinterpret_cast<const D3D12Binding*>(next);
+    char msg[200]{};sprintf_s(msg,sizeof(msg),"M8.40 graphics=D3D12 device=%p queue=%p",b->device,b->queue);logLine(msg);
+    // M8.42 foveation, M8.44 FOV crop and M8.43 lens mask/outline when enabled; M8.41 report in diagnostics runs.
+    auto fx=m843Effects();
+    if(fx.crop){
+     fx.crop=false;fx.fovCrop=true;
+     {std::lock_guard<std::mutex> g(stateMutex);m844Session=*session;m844Margins={fx.margins[0],fx.margins[1]};}
+     m844Active=true;
+     char m[240]{};sprintf_s(m,sizeof(m),"M8.44 FOV crop active: kept width %.0f%%/%.0f%% height %.0f%% of each eye",
+       100*(1-fx.margins[0].left-fx.margins[0].right),100*(1-fx.margins[1].left-fx.margins[1].right),100*(1-fx.margins[0].top-fx.margins[0].bottom));
+     logLine(m);
+    }else m844Active=false;
+    beamng_d3d12::attach(b->device,b->queue,logLine,m817Verbose(),m842Foveation(d.gazeExtension),fx);
+   }
+  }
+  if(vulkan)logLine("M8.40 graphics=Vulkan");
+  else if(!d3d12)logLine("M8.40 graphics=other (only gaze and eye resolution are available)");
+  // Frame timing is graphics-API neutral; D3D12 still needs in-headset validation.
   if(enabled("BEAMNG_VRS_TURBO_MODE")){
-   if(vulkan && d.waitFrame && d.beginFrame && d.endFrame && d.beginSession && d.endSession && d.destroySession && d.destroySwapchain){
+   if((vulkan||d3d12) && d.waitFrame && d.beginFrame && d.endFrame && d.beginSession && d.endSession && d.destroySession && d.destroySwapchain){
     try {gs.turbo=std::make_shared<beamng_turbo::Scheduler>(*session,d.waitFrame,d.beginFrame,d.endFrame,true);}
     catch(...) {logLine("M8.31 TURBO WARNING: scheduler allocation failed; retaining normal timing");}
-   }else logLine("M8.31 TURBO unavailable: requires Vulkan session and complete frame/lifecycle callbacks");
+   }else logLine("M8.31 TURBO unavailable: requires Vulkan or D3D12 session and complete frame/lifecycle callbacks");
   }
   if(d.gazeExtension && enabled("BEAMNG_EYE_SAMPLE") && d.createReferenceSpace){
    XrReferenceSpaceCreateInfo si{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
@@ -678,11 +820,44 @@ V3 rotateQ(const XrQuaternionf& q,V3 v){
  V3 t{2.f*(u.y*v.z-u.z*v.y),2.f*(u.z*v.x-u.x*v.z),2.f*(u.x*v.y-u.y*v.x)};
  return {v.x+q.w*t.x+u.y*t.z-u.z*t.y,v.y+q.w*t.y+u.z*t.x-u.x*t.z,v.z+q.w*t.z+u.x*t.y-u.y*t.x};
 }
+// M8.44: the recommended size shrinks with the kept fraction of each eye.
+extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeEnumerateViewConfigurationViews(XrInstance instance,XrSystemId system,
+  XrViewConfigurationType type,uint32_t capacity,uint32_t* count,XrViewConfigurationView* views){
+ Dispatch d{};std::array<beamng_scissor::Margins,2> margins{};
+ {std::lock_guard<std::mutex> g(stateMutex);auto it=instances.find(instance);if(it!=instances.end())d=it->second;margins=m844Margins;}
+ if(!d.enumerateViews)return XR_ERROR_FUNCTION_UNSUPPORTED;
+ const XrResult r=d.enumerateViews(instance,system,type,capacity,count,views);
+ if(XR_SUCCEEDED(r)&&m844Active&&views&&count&&*count>=2&&capacity>=2&&type==XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO){
+  for(int i=0;i<2;++i){
+   auto& v=views[i];const auto& m=margins[i];
+   v.recommendedImageRectWidth=std::max<uint32_t>(16,uint32_t(std::lround(v.recommendedImageRectWidth*(1.0-m.left-m.right))));
+   v.recommendedImageRectHeight=std::max<uint32_t>(16,uint32_t(std::lround(v.recommendedImageRectHeight*(1.0-m.top-m.bottom))));
+  }
+  char msg[200]{};sprintf_s(msg,sizeof(msg),"M8.44 FOV crop recommended size L=%ux%u R=%ux%u",
+    views[0].recommendedImageRectWidth,views[0].recommendedImageRectHeight,views[1].recommendedImageRectWidth,views[1].recommendedImageRectHeight);
+  logLine(msg);
+ }
+ return r;
+}
+// Image rows and columns are linear in the tangent of the view angle.
+void m844CropFov(XrFovf& fov,const beamng_scissor::Margins& m){
+ const double l=tan(fov.angleLeft),r=tan(fov.angleRight),u=tan(fov.angleUp),dn=tan(fov.angleDown);
+ fov.angleLeft=float(atan(l+m.left*(r-l)));fov.angleRight=float(atan(r-m.right*(r-l)));
+ fov.angleUp=float(atan(u-m.top*(u-dn)));fov.angleDown=float(atan(dn+m.bottom*(u-dn)));
+}
 extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeLocateViews(XrSession session,const XrViewLocateInfo* info,XrViewState* state,uint32_t capacity,uint32_t* count,XrView* views){
- Dispatch d{};GazeSession gs{};
- {std::lock_guard<std::mutex> g(stateMutex);auto it=sessions.find(session);if(it!=sessions.end()){gs=it->second;d=instances[it->second.instance];}else if(!instances.empty())d=instances.begin()->second;}
+ Dispatch d{};GazeSession gs{};bool crop=false;std::array<beamng_scissor::Margins,2> margins{};
+ {std::lock_guard<std::mutex> g(stateMutex);auto it=sessions.find(session);if(it!=sessions.end()){gs=it->second;d=instances[it->second.instance];}else if(!instances.empty())d=instances.begin()->second;
+  crop=m844Active&&session==m844Session;margins=m844Margins;}
  if(!d.locateViews)return XR_ERROR_FUNCTION_UNSUPPORTED;
  XrResult r=d.locateViews(session,info,state,capacity,count,views);
+ // Everything below, the gaze projection included, then sees the kept views.
+ if(crop&&XR_SUCCEEDED(r)&&info&&info->viewConfigurationType==XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO&&views&&count&&*count>=2&&capacity>=2){
+  for(int i=0;i<2;++i)m844CropFov(views[i].fov,margins[i]);
+  static std::atomic<bool> logged{false};
+  if(!logged.exchange(true)){char msg[240]{};sprintf_s(msg,sizeof(msg),"M8.44 FOV crop L=(%.3f,%.3f,%.3f,%.3f) rad",
+    views[0].fov.angleLeft,views[0].fov.angleRight,views[0].fov.angleUp,views[0].fov.angleDown);logLine(msg);}
+ }
  if(XR_SUCCEEDED(r)&&info&&views&&count&&*count>=2&&capacity>=2)
    m818Publish(session,d,views);
  // Capacity queries do not invalidate a previous sample. An actual failed
@@ -712,6 +887,7 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeLocateViews(XrSession session,con
   if(std::isfinite(u[i])&&std::isfinite(v[i]))mask|=(1u<<i);
  }
  publishProjectedGaze(u,v,mask,poseTick,info->displayTime);
+ beamng_d3d12::setGaze(u,v,mask);
  if(gazeShared){
   auto* s=gazeShared;InterlockedIncrement(&s->sequence);MemoryBarrier();
   for(int i=0;i<2;++i){s->eyeU[i]=u[i];s->eyeV[i]=v[i];}
@@ -765,6 +941,7 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeGetInstanceProcAddr(XrInstance in
  if(!strcmp(name,"xrAttachSessionActionSets")){*function=reinterpret_cast<PFN_xrVoidFunction>(probeAttachSessionActionSets);return XR_SUCCESS;}
  if(!strcmp(name,"xrSyncActions")){*function=reinterpret_cast<PFN_xrVoidFunction>(probeSyncActions);return XR_SUCCESS;}
  if(!strcmp(name,"xrLocateViews")){*function=reinterpret_cast<PFN_xrVoidFunction>(probeLocateViews);return XR_SUCCESS;}
+ if(!strcmp(name,"xrEnumerateViewConfigurationViews")){if(!d.enumerateViews)return d.next(instance,name,function);*function=reinterpret_cast<PFN_xrVoidFunction>(probeEnumerateViewConfigurationViews);return XR_SUCCESS;}
  if(!strcmp(name,"xrBeginFrame")){if(!d.beginFrame)return d.next(instance,name,function);*function=reinterpret_cast<PFN_xrVoidFunction>(probeBeginFrame);return XR_SUCCESS;}
  if(!strcmp(name,"xrBeginSession")){if(!d.beginSession)return d.next(instance,name,function);*function=reinterpret_cast<PFN_xrVoidFunction>(probeBeginSession);return XR_SUCCESS;}
  if(!strcmp(name,"xrEndSession")){if(!d.endSession)return d.next(instance,name,function);*function=reinterpret_cast<PFN_xrVoidFunction>(probeEndSession);return XR_SUCCESS;}
@@ -773,6 +950,8 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeGetInstanceProcAddr(XrInstance in
  if(!strcmp(name,"xrEndFrame")){*function=reinterpret_cast<PFN_xrVoidFunction>(probeEndFrame);return XR_SUCCESS;}
  if(!strcmp(name,"xrCreateSwapchain")){*function=reinterpret_cast<PFN_xrVoidFunction>(probeCreateSwapchain);return XR_SUCCESS;}
  if(!strcmp(name,"xrEnumerateSwapchainImages")){*function=reinterpret_cast<PFN_xrVoidFunction>(probeEnumerateSwapchainImages);return XR_SUCCESS;}
+ if(!strcmp(name,"xrAcquireSwapchainImage")){if(!d.acquireSwapchainImage)return d.next(instance,name,function);*function=reinterpret_cast<PFN_xrVoidFunction>(probeAcquireSwapchainImage);return XR_SUCCESS;}
+ if(!strcmp(name,"xrReleaseSwapchainImage")){if(!d.releaseSwapchainImage)return d.next(instance,name,function);*function=reinterpret_cast<PFN_xrVoidFunction>(probeReleaseSwapchainImage);return XR_SUCCESS;}
  if(!strcmp(name,"xrWaitFrame")){*function=reinterpret_cast<PFN_xrVoidFunction>(probeWaitFrame);return XR_SUCCESS;}
  if(!strcmp(name,"xrCreateReferenceSpace")){*function=reinterpret_cast<PFN_xrVoidFunction>(probeCreateReferenceSpace);return XR_SUCCESS;}
  if(!strcmp(name,"xrDestroyInstance")){*function=reinterpret_cast<PFN_xrVoidFunction>(probeDestroyInstance);return XR_SUCCESS;}
@@ -877,6 +1056,9 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateApiLayerInstance(const XrIn
  RESOLVE_XR(destroySwapchain,"xrDestroySwapchain",PFN_xrDestroySwapchain)
  RESOLVE_XR(createSwapchain,"xrCreateSwapchain",PFN_xrCreateSwapchain)
  RESOLVE_XR(enumerateSwapchainImages,"xrEnumerateSwapchainImages",PFN_xrEnumerateSwapchainImages)
+ RESOLVE_XR(acquireSwapchainImage,"xrAcquireSwapchainImage",PFN_xrAcquireSwapchainImage)
+ RESOLVE_XR(enumerateViews,"xrEnumerateViewConfigurationViews",PFN_xrEnumerateViewConfigurationViews)
+ RESOLVE_XR(releaseSwapchainImage,"xrReleaseSwapchainImage",PFN_xrReleaseSwapchainImage)
  RESOLVE_XR(destroySpace,"xrDestroySpace",PFN_xrDestroySpace)
  RESOLVE_XR(destroyActionSet,"xrDestroyActionSet",PFN_xrDestroyActionSet)
 #undef RESOLVE_XR

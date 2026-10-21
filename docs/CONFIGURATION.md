@@ -20,7 +20,9 @@ The release ZIP puts `BeamNG-VRS.ini` beside `Launch-BeamNG-VRS.cmd` at the extr
 | LensMask | `Enabled` | `true` | Skip rendering the image corners outside an ellipse, which the headset lenses hide. Experimental; check the edges in the headset. |
 | LensMask | `Size` | `1.15` | Kept ellipse diameter relative to eye-image width/height (0.5 to 1.5). `1.0` touches all four edges and skips about 21% of pixels; `1.41` skips none. Increase it if black corners are visible. |
 | Performance | `TurboMode` | `false` | Experimental one-frame OpenXR wait overlap. Enabled by default in 0.1.0; off by default since it showed no gain in GPU-limited tests. Restart to change. |
-| OpenXR | `DisableLayers` | empty | Comma-separated implicit OpenXR layer names, or `*`, to turn off for BeamNG only. See [Other OpenXR layers](#other-openxr-layers). |
+| OpenXR | `DisableLayers` | `*` | Implicit OpenXR layers to turn off for BeamNG only: `*` (all, default), comma-separated names, or empty to keep every layer. See [Other OpenXR layers](#other-openxr-layers). |
+| Renderer | `API` | `d3d12` | `d3d12` starts BeamNG with `-gfx d3d12`, the game's VR default since 0.40. Foveation (fixed or eye-tracked) uses D3D12 VRS Tier 2 there; scissor, lens mask and outline also work, and `AllPasses` does not apply. `vulkan` starts `-gfx vk` with the original Vulkan layer. See [Direct3D 12](#direct3d-12). |
+| Renderer | `RenderScale` | (game: `0.5`) | Direct3D 12 only: VR render scale before FSR upscaling, `0.25` to `1.0`, applied by a launcher-written Lua mod. See [VR render scale](#direct3d-12). |
 | Logging | `Level` | `info` | `off`, `errors`, `info`, or `debug`. Default is brief status/errors, not verbose diagnostics. |
 | Tracking | `GracePeriodMs` | `30` | Hold the last valid gaze for this many milliseconds during temporary tracking loss (0 to 1000). |
 | Tracking | `GazeRefreshMs` | `8` | Minimum CPU gaze polling interval (2 to 50 ms). This does not measure eye-to-display latency. |
@@ -118,6 +120,70 @@ control applies to this project's two DLLs, not BeamNG, SteamVR or other layers.
 Normal launch uses the INI. Disabling logs may reduce some overhead but no FPS
 increase is established. Invalid INI errors still appear in the launcher.
 
+## Direct3D 12
+
+BeamNG 0.40 renders VR with Direct3D 12 and, by default, draws most of each eye's
+scene at half the headset resolution before upscaling it. With `[Renderer]
+API=d3d12` (default) the OpenXR layer receives the game's D3D12 device and applies
+a shading-rate image (VRS Tier 2, 16-pixel tiles on tested GPUs) to every render
+target with the eye image's shape at 12.5-100% of its size, so both the internal
+render size and the full-size passes are covered. Passes whose eye-shaped target
+is not the first one, and depth-only passes on an eye-shaped depth buffer (`M8.46`),
+are covered too. The same `[Foveation]` sizes,
+shape and rates apply, and `[Tracking]` gaze settings move the sharp region with
+eye tracking. Both eyes share the game's intermediate targets, so each tile uses
+the finer rate of the two eyes; the sharp region is the union of both eyes' regions.
+
+**VR render scale (`M8.48`):** BeamNG 0.40 renders VR at 50% and upscales with
+FSR 3. `[Renderer] RenderScale=` (0.25-1.0) changes that: the launcher writes a
+small Lua mod to `%LOCALAPPDATA%\BeamNG\BeamNG.drive\current\mods\unpacked\beamng_vrs`
+that sets `upscaleRenderScale` on BeamNG's two VR views (`oxrView0`, `oxrView1`)
+whenever they appear, and puts it back within 2 seconds if the game lowers it. Comment the line out to restore the game's value; the
+launcher then deletes the mod folder (only if it wrote it). Foveation, the FOV
+crop and the lens mask follow the new size on their own.
+
+BeamNG's VR views use a fixed 10000 m far distance and ignore the level's
+visible distance. A Lua far clip (`M8.49`) was tried and has no effect: BeamNG
+does not use frusta set from Lua for VR. A leftover `FarClip=` line is ignored with a warning.
+
+**Measuring the gain (`M8.47`):** the log shows the GPU time of the game's
+render queue every 900 frames, for example `M8.47 D3D12 GPU frames=900
+busy=6.10 ms/frame (mod=0.05) submissions=12.0/frame vrs=on`;
+`mod` is this mod's own GPU work (shading-rate uploads, lens mask, outline). The
+debug outline costs GPU time, so turn `DrawOutline` off for measurements. Press **Ctrl+Shift+V** in VR
+to pause or resume VRS without restarting; the debug outline disappears while it
+is paused, and the next report (300 frames later) says `vrs=paused`. Compare the
+two `busy` values in the same scene. Work on other queues (async compute) is not
+counted.
+
+`[Scissor]`, `[LensMask]` and `[Debug]` also work with Direct3D 12 (`M8.43` lines):
+
+- **Scissor** (`M8.44` FOV crop): the margins are removed from the field of view
+  that `xrLocateViews` reports and from the recommended eye-image size, so BeamNG
+  renders only the kept part of each eye in every pass, compute and FSR
+  included. The headset compositor places the smaller views by their reported
+  field of view, so nothing moves; the removed area is simply not shown.
+  `[Foveation]` sizes stay relative to the full eye (`M8.45`), so the sharp
+  area covers the same part of the lens with or without the crop. Each
+  eye uses its own margins (`LeftEyeLeft` and so on). Clipping the game's
+  scissors saved nothing on D3D12, because BeamNG 0.40 sets its scissors through
+  a path the layer does not see. Because the targets serve both eyes,
+  rendering keeps what either eye needs (with the defaults, only `Top` and
+  `Bottom` save work there); each eye's own edges, `LeftEyeLeft` included, are
+  then cleared to black on its final image.
+- **LensMask**: tiles entirely outside the lens ellipse get the coarsest
+  shading rate, and the corners are cleared to black on each final eye image.
+  The ellipse stays relative to the full eye image when Scissor crops the view.
+  Unlike Vulkan, there is no depth stamp, so geometry there is still drawn at
+  the coarse rate.
+- **DrawOutline**: the red 1x1 and orange 2x2 boundaries are drawn on each final
+  eye image at that eye's gaze position, on the tile grid of the game's internal
+  render size. It needs foveation to be enabled.
+
+A GPU without VRS Tier 2 keeps normal rendering and logs
+`M8.42 D3D12 foveation unavailable`; the FOV crop and the black lens corners still work. `Diagnose-BeamNG-VRS.cmd` also logs the VRS
+tier and the render-target sizes the game binds per frame (`M8.41` lines).
+
 ## Other OpenXR layers
 
 Overlays, toolkits and streaming add-ons often install *implicit* OpenXR API
@@ -126,6 +192,10 @@ project's layer, closest to the game, so BeamNG-VRS cannot filter what they
 receive. If one of them fails, for example because it does not support the
 game's graphics API, BeamNG cannot create its OpenXR instance or session and
 stays on the desktop.
+
+By default every implicit layer is turned off for BeamNG (`DisableLayers=*`,
+also used when the setting is omitted). To keep one you rely on, list only the
+layers to turn off, or leave the value empty to keep all of them:
 
 ```ini
 [OpenXR]

@@ -26,10 +26,10 @@ function Test-LaunchLayout {
         try { $content = Get-Content -LiteralPath $result -Raw; if ($content -match 'XR_ENABLE_API_LAYERS=.*probe') { break } } catch {}
         Start-Sleep -Milliseconds 100
     }
-    if ($content -notmatch 'arguments=-gfx vk' -or
+    if ($content -notmatch 'arguments=-gfx d3d12' -or
         $content -notmatch 'VK_INSTANCE_LAYERS=VK_LAYER_test_existing;VK_LAYER_BEAMNG_vrs' -or
         $content -notmatch 'XR_ENABLE_API_LAYERS=XR_APILAYER_test_existing;XR_APILAYER_BEAMNG_eye_probe') {
-        throw 'The child did not receive Vulkan arguments and layer activation.'
+        throw 'The child did not receive default D3D12 arguments and layer activation.'
     }
     $vulkanPathName = if ($env:VK_LAYER_PATH) { 'VK_LAYER_PATH' } else { 'VK_ADD_LAYER_PATH' }
     $existingPath = [Environment]::GetEnvironmentVariable($vulkanPathName, 'Process')
@@ -127,7 +127,57 @@ try {
         }
         if ($env:DISABLE_XR_APILAYER_TEST_overlay) { throw 'Launcher changed the parent environment.' }
         Remove-Item -LiteralPath $result
+        # Omitted DisableLayers defaults to *; an explicit empty value keeps every layer.
+        foreach ($case in @(@("[Logging]`nLevel=info", '1'), @("[OpenXR]`nDisableLayers=", ''))) {
+            Set-Content -LiteralPath $ini -Value $case[0] -Encoding UTF8
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -OpenXRLayerRegistry $registry
+            if ($LASTEXITCODE -ne 0) { throw 'Launcher failed with default OpenXR layer handling.' }
+            $deadline = [DateTime]::UtcNow.AddSeconds(10); $content = ''
+            while ([DateTime]::UtcNow -lt $deadline) {
+                try { $content = Get-Content -LiteralPath $result -Raw; if ($content -match 'DISABLE_XR_APILAYER_TEST_off=') { break } } catch {}
+                Start-Sleep -Milliseconds 100
+            }
+            if ($content -notmatch ('(?m)^DISABLE_XR_APILAYER_TEST_overlay=' + $case[1] + '\r?$')) { throw "Unexpected default OpenXR layer handling for: $($case[0])" }
+            Remove-Item -LiteralPath $result
+        }
     } finally { Remove-Item -LiteralPath (Split-Path -Parent $registry) -Recurse -Force -ErrorAction SilentlyContinue }
+    # M8.48: RenderScale writes the Lua mod into the user folder; omitting it removes the mod.
+    $userFolder = Join-Path $temp 'user folder'
+    [void](New-Item -ItemType Directory -Path $userFolder -Force)
+    $modLua = Join-Path $userFolder 'mods\unpacked\beamng_vrs\lua\ge\extensions\beamngVrs.lua'
+    Set-Content -LiteralPath $ini -Value "[Renderer]`nRenderScale=0.8" -Encoding UTF8
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder
+    if ($LASTEXITCODE -ne 0) { throw 'Launcher failed with RenderScale.' }
+    if (-not (Test-Path -LiteralPath $modLua) -or (Get-Content -LiteralPath $modLua -Raw) -notmatch 'local scale = 0\.8\r?\n' -or
+        -not (Test-Path -LiteralPath (Join-Path $userFolder 'mods\unpacked\beamng_vrs\scripts\beamng_vrs\modScript.lua'))) { throw 'RenderScale mod was not written.' }
+    $deadline = [DateTime]::UtcNow.AddSeconds(10); $content = ''
+    while ([DateTime]::UtcNow -lt $deadline) {
+        try { $content = Get-Content -LiteralPath $result -Raw; if ($content -match 'XR_ENABLE_API_LAYERS=.*probe') { break } } catch {}
+        Start-Sleep -Milliseconds 100
+    }
+    Remove-Item -LiteralPath $result
+    Set-Content -LiteralPath $ini -Value "[Logging]`nLevel=info" -Encoding UTF8
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder
+    if ($LASTEXITCODE -ne 0 -or (Test-Path -LiteralPath (Join-Path $userFolder 'mods\unpacked\beamng_vrs'))) { throw 'RenderScale mod was not removed.' }
+    $deadline = [DateTime]::UtcNow.AddSeconds(10); $content = ''
+    while ([DateTime]::UtcNow -lt $deadline) {
+        try { $content = Get-Content -LiteralPath $result -Raw; if ($content -match 'XR_ENABLE_API_LAYERS=.*probe') { break } } catch {}
+        Start-Sleep -Milliseconds 100
+    }
+    Remove-Item -LiteralPath $result
+    # [Renderer] API=vulkan keeps the Vulkan renderer, where the VRS layer applies.
+    Set-Content -LiteralPath $ini -Value "[Renderer]`nAPI=vulkan" -Encoding UTF8
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher
+    if ($LASTEXITCODE -ne 0) { throw 'Launcher failed with the Vulkan renderer.' }
+    $deadline = [DateTime]::UtcNow.AddSeconds(10); $content = ''
+    while ([DateTime]::UtcNow -lt $deadline) {
+        try { $content = Get-Content -LiteralPath $result -Raw; if ($content -match 'XR_ENABLE_API_LAYERS=.*probe') { break } } catch {}
+        Start-Sleep -Milliseconds 100
+    }
+    if ($content -notmatch '(?m)^arguments=-gfx vk\r?$' -or $content -notmatch 'VK_INSTANCE_LAYERS=.*VK_LAYER_BEAMNG_vrs') {
+        throw 'The child did not receive Vulkan arguments and layer activation.'
+    }
+    Remove-Item -LiteralPath $result
     # The public launcher must not silently edit/use an obsolete nested INI.
     Move-Item -LiteralPath $ini -Destination $layers
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -CheckOnly
@@ -140,7 +190,7 @@ try {
     Set-Content -LiteralPath $ini -Value "[Debug]`nDrawOutline=typo" -Encoding UTF8
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher
     if ($LASTEXITCODE -eq 0 -or (Test-Path -LiteralPath $result)) { throw 'Invalid INI started the game.' }
-    Write-Output 'Launcher integration passed: root/Bin64 layouts, root INI, both executable names, working directory, Vulkan discovery, diagnostic capture, arguments, child environment, CheckOnly, implicit OpenXR layer disabling, missing INI/executable and invalid INI.'
+    Write-Output 'Launcher integration passed: root/Bin64 layouts, root INI, both executable names, working directory, Vulkan discovery, diagnostic capture, arguments, child environment, CheckOnly, implicit OpenXR layer disabling, RenderScale mod, D3D12 default and Vulkan renderer, missing INI/executable and invalid INI.'
 } finally {
     foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $before[$name], 'Process') }
     Remove-Item -LiteralPath $temp -Recurse -Force
