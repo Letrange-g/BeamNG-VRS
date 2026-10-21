@@ -1,20 +1,22 @@
-> [!NOTE]
-> **BeamNG.drive 0.40** renders VR with **Direct3D 12 and OpenXR**. The launcher now starts
-> BeamNG in Direct3D 12 by default, and foveated rendering (fixed or eye-tracked) works there
-> through D3D12 variable rate shading (GPU with VRS Tier 2), together with scissor crop, the lens
-> mask and the debug outline. Direct3D 12 support is new and experimental.
-
 # BeamNG-VRS
 
-Foveated rendering for **BeamNG.drive VR** (Direct3D 12 or Vulkan), plus optional edge cropping in Vulkan.
+Foveated rendering for **BeamNG.drive VR** (Direct3D 12 or Vulkan), plus edge cropping and a lens-corner mask.
 Keep more detail where you look and reduce rendering work around the edges.
 Works with a fixed center or supported eye tracking.
 
-**Windows x64 · Release 0.2.0.** Performance varies by headset, GPU and scene.
+**Windows x64 · Release 0.3.0 · built for BeamNG.drive 0.40.** Performance varies by headset, GPU and scene.
+
+## What's new since 0.2
+
+- **Moved to Direct3D 12 VR.** BeamNG 0.40 renders VR with Direct3D 12, and the launcher now
+  starts it that way. Foveation (fixed or eye-tracked) needs a GPU with D3D12 VRS Tier 2.
+  Vulkan still works with `[Renderer] API=vulkan`.
+- **New option to force the VR render scale.** BeamNG 0.40 renders VR at 50%;
+  `[Renderer] RenderScale` (0.25 to 1.0) sets your own. 1.0 is much sharper but costs more GPU.
 
 ## Install
 
-1. [Download the Windows ZIP](https://github.com/Letrange-g/BeamNG-VRS/releases/download/v0.2.0/BeamNG-VRS-0.2.0-windows-x64.zip) (not the source-code ZIP).
+1. [Download the Windows ZIP](https://github.com/Letrange-g/BeamNG-VRS/releases/download/v0.3.0/BeamNG-VRS-0.3.0-windows-x64.zip) (not the source-code ZIP).
 2. Close BeamNG and extract the whole ZIP into the game folder, beside `Bin64`.
 3. Double-click `Launch-BeamNG-VRS.cmd`, then enable VR in the game.
 
@@ -30,6 +32,7 @@ Windows PowerShell is included in Windows 10/11; the package adds no EXE.
 - **Shape:** `circle` (default), `ellipse`, or `square`.
 - **DrawOutline:** shows the quality-region borders for checking settings. Leave `false` for gameplay.
 - **Scissor:** crops image edges to save rendering work. Enabled by default; check the edges in your headset.
+- **RenderScale:** Direct3D 12 VR render scale, `0.25` to `1.0`. Off by default (game uses `0.5`).
 - **LensMask:** skips the image corners hidden by the lenses. Enabled by default (`Size=1.15`); increase `Size` if you see black corners.
 
 If fine detail shimmers with VRS, try BeamNG's MSAA setting, or disable foveation
@@ -73,11 +76,12 @@ The comparison videos have debug outlines enabled. Turn them off when comparing 
 ## Update or remove
 
 Back up your INI, extract the new ZIP, then restore your settings in the INI beside
-the launch CMD. Update the launcher and both DLLs together. Older `Left`/`Right`
+the launch CMD, so you get the new `[OpenXR]` and `[Renderer]` sections. Update the launcher and both DLLs together. Older `Left`/`Right`
 settings still work; the four new controls let you adjust each eye separately.
 
 Launch BeamNG normally to stop using VRS. To uninstall, remove the `BeamNG-VRS`
-folder, `BeamNG-VRS.ini`, both CMD files and `READ-ME-FIRST.txt`.
+folder, `BeamNG-VRS.ini`, both CMD files and `READ-ME-FIRST.txt`. If you used `RenderScale`, also delete
+`mods\unpacked\beamng_vrs` in your BeamNG user folder.
 
 [Help and requirements](docs/TECHNICAL.md) · [Performance notes](docs/PERFORMANCE.md) ·
 [Source guide](docs/SOURCE-GUIDE.md) · [Build from source](docs/BUILDING.md) · [Report an issue safely](docs/SECURITY.md)
