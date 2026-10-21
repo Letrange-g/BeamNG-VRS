@@ -41,6 +41,8 @@ int main() {
  std::istringstream scale("[Renderer]\nRenderScale=0.75\n");
  assert(parse(scale).at("BEAMNG_VRS_RENDER_SCALE")=="0.75");
  assert(!defaults.count("BEAMNG_VRS_RENDER_SCALE"));
+ std::istringstream far("[Renderer]\nFarClip=2000\n");
+ assert(parse(far).at("BEAMNG_VRS_FAR_CLIP")=="2000");
  std::istringstream finalOnly("[Foveation]\nAllPasses=false\n");
  assert(parse(finalOnly).at("BEAMNG_VRS_ALL_PASSES")=="0");
  std::istringstream independent("[Foveation]\nEnabled=false\n[Scissor]\nEnabled=true\n[Performance]\nTurboMode=true\n");
@@ -130,7 +132,7 @@ int main() {
      "[Tracking]\nGazeRefreshMs=8.5", "[Tracking]\nGazeRefreshMs=8.0",
      "[Foveation]\nShape=triangle", "[Debug]\nDrawOutline=1 ; inline comment",
      "[OpenXR]\nDisableLayers=XR layer", "[OpenXR]\nDisableLayers=A,,B", "[OpenXR]\nDisableLayers=A,", "[OpenXR]\nDisableLayers=A,*",
-     "[OpenXR]\nDisableLayers=A\ndisablelayers=B", "[OpenXR]\nTypo=1", "[Renderer]\nAPI=dx12", "[Renderer]\nRenderScale=1.5", "[Renderer]\nRenderScale=0.2", "[Renderer]\nRenderScale=auto", "[Renderer]\nAPI=vulkan\napi=d3d12", "[Debug", "DrawOutline=1", "# empty\n"}) {
+     "[OpenXR]\nDisableLayers=A\ndisablelayers=B", "[OpenXR]\nTypo=1", "[Renderer]\nAPI=dx12", "[Renderer]\nRenderScale=1.5", "[Renderer]\nRenderScale=0.2", "[Renderer]\nRenderScale=auto", "[Renderer]\nFarClip=50", "[Renderer]\nFarClip=20000", "[Renderer]\nAPI=vulkan\napi=d3d12", "[Debug", "DrawOutline=1", "# empty\n"}) {
   bool rejected = false;
   try { std::istringstream input(bad); (void)parse(input); } catch(const std::runtime_error&) { rejected = true; }
   assert(rejected);

@@ -4,7 +4,7 @@ param(
     [switch]$CheckOnly,
     [switch]$Diagnostics,
     [switch]$ValidateOnly,
-    # BeamNG user folder for the RenderScale mod; tests use a scratch folder.
+    # BeamNG user folder for the RenderScale/FarClip mod; tests use a scratch folder.
     [string]$UserFolder = (Join-Path $env:LOCALAPPDATA 'BeamNG\BeamNG.drive\current'),
     # Implicit OpenXR layer registry keys; tests replace them with a scratch key.
     [string[]]$OpenXRLayerRegistry = @('HKLM:\SOFTWARE\Khronos\OpenXR\1\ApiLayers\Implicit',
@@ -58,49 +58,76 @@ function Get-OpenXRImplicitLayers {
 # exposes upscaleRenderScale to Lua, so a small unpacked mod sets it whenever the
 # VR views appear (entering VR recreates them). Setting it again recreates FSR,
 # so it is set once per appearance, not every frame.
-function Update-RenderScaleMod {
-    param([string]$UserFolder, $Scale)
+# M8.49 (experimental): the VR views use a 10000 m far distance and ignore
+# LevelInfo. Lua can only build symmetric frusta, so FarClip gives each view a
+# square frustum that covers its own, cut at FarClip, every frame.
+function Update-VRMod {
+    param([string]$UserFolder, $Scale, $FarClip)
     $mod = Join-Path $UserFolder 'mods\unpacked\beamng_vrs'
     $marker = Join-Path $mod 'beamng_vrs.txt'
-    if ($null -eq $Scale) {
+    if ($null -eq $Scale -and $null -eq $FarClip) {
         # Only a folder this launcher wrote is removed.
         if (Test-Path -LiteralPath $marker -PathType Leaf) { Remove-Item -LiteralPath $mod -Recurse -Force }
         return
     }
     if (-not (Test-Path -LiteralPath $UserFolder -PathType Container)) {
-        Write-Warning "BeamNG user folder not found at $UserFolder; [Renderer] RenderScale is not applied."
+        Write-Warning "BeamNG user folder not found at $UserFolder; [Renderer] RenderScale/FarClip are not applied."
         return
     }
     if ((Test-Path -LiteralPath $mod) -and -not (Test-Path -LiteralPath $marker -PathType Leaf)) {
-        Write-Warning "$mod exists but was not written by BeamNG-VRS; [Renderer] RenderScale is not applied."
+        Write-Warning "$mod exists but was not written by BeamNG-VRS; [Renderer] RenderScale/FarClip are not applied."
         return
     }
-    $value = ([double]$Scale).ToString('0.###', [Globalization.CultureInfo]::InvariantCulture)
+    $invariant = [Globalization.CultureInfo]::InvariantCulture
+    $scaleText = if ($null -eq $Scale) { 'nil' } else { ([double]$Scale).ToString('0.###', $invariant) }
+    $farText = if ($null -eq $FarClip) { 'nil' } else { ([double]$FarClip).ToString('0.#', $invariant) }
     $utf8 = New-Object Text.UTF8Encoding($false)
     $files = @{
-        'beamng_vrs.txt' = "Written by Launch-BeamNG-VRS at every start from BeamNG-VRS.ini. Remove RenderScale there to delete it.`r`n"
+        'beamng_vrs.txt' = "Written by Launch-BeamNG-VRS at every start from BeamNG-VRS.ini. Remove RenderScale and FarClip there to delete it.`r`n"
         'scripts\beamng_vrs\modScript.lua' = "load('beamngVrs')`r`nsetExtensionUnloadMode('beamngVrs', 'manual')`r`n"
         'lua\ge\extensions\beamngVrs.lua' = @"
--- Written by Launch-BeamNG-VRS from BeamNG-VRS.ini ([Renderer] RenderScale).
+-- Written by Launch-BeamNG-VRS from BeamNG-VRS.ini ([Renderer] RenderScale, FarClip).
 local M = {}
-local scale = $value
+local scale = $scaleText
+local farClip = $farText
 local present = {}
-local function onUpdate()
+local reported = false
+local function eachView(fn)
   local manager = RenderViewManagerInstance
   if not manager then return end
   for _, name in ipairs({'oxrView0', 'oxrView1'}) do
     local ok, view = pcall(function() return manager:getView(name) end)
-    if ok and view then
-      if not present[name] then
-        present[name] = true
-        view.upscaleRenderScale = scale
-        log('I', 'beamngVrs', 'BeamNG-VRS render scale ' .. scale .. ' on ' .. name)
-      end
-    else present[name] = nil end
+    if ok and view then fn(name, view) else present[name] = nil end
   end
+end
+local function onUpdate()
+  if not scale then return end
+  eachView(function(name, view)
+    if not present[name] then
+      present[name] = true
+      view.upscaleRenderScale = scale
+      log('I', 'beamngVrs', 'BeamNG-VRS render scale ' .. scale .. ' on ' .. name)
+    end
+  end)
+end
+local function onPreRender()
+  if not farClip then return end
+  eachView(function(name, view)
+    local f = view.frustum
+    if not f or f:getFarDist() <= farClip + 1 then return end
+    local near = f:getNearDist()
+    local half = math.max(math.abs(f:getNearLeft()), math.abs(f:getNearRight()), math.abs(f:getNearTop()), math.abs(f:getNearBottom()))
+    if near <= 0 or half <= 0 then return end
+    view.frustum = Frustum.construct(false, 2 * math.atan(half / near), 1, near, farClip)
+    if not reported then
+      reported = true
+      log('I', 'beamngVrs', 'BeamNG-VRS experimental far clip ' .. farClip .. ' m on ' .. name)
+    end
+  end)
 end
 local function onClientPostStartMission() present = {} end
 M.onUpdate = onUpdate
+M.onPreRender = onPreRender
 M.onClientPostStartMission = onClientPostStartMission
 return M
 "@
@@ -110,7 +137,7 @@ return M
         [void](New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force)
         [IO.File]::WriteAllText($path, $files[$relative], $utf8)
     }
-    Write-Output "VR render scale $value applied through $mod"
+    Write-Output "VR render scale $scaleText, far clip $farText applied through $mod"
 }
 function Test-BeamNGIni {
     param([string]$Path)
@@ -135,6 +162,7 @@ function Test-BeamNGIni {
         'tracking.gazerefreshms' = @(2, 50, $true)
         'lensmask.size' = @(0.5, 1.5, $false)
         'renderer.renderscale' = @(0.25, 1.0, $false)
+        'renderer.farclip' = @(100, 10000, $false)
     }
     foreach ($line in ($text -split "`n")) {
         ++$lineNumber
@@ -159,6 +187,7 @@ function Test-BeamNGIni {
                 $number = Assert-IniNumber -Value $value -Low $range[0] -High $range[1] -Integer $range[2]
                 if ($sizes.ContainsKey($id)) { $sizes[$id] = $number }
                 if ($id -eq 'renderer.renderscale') { $script:RenderScale = $number }
+                if ($id -eq 'renderer.farclip') { $script:FarClip = $number }
             } elseif ($id -eq 'foveation.shape') {
                 if (@('circle', 'square', 'ellipse') -cnotcontains $value.ToLowerInvariant()) { throw 'unsupported setting value' }
             } elseif ($id -eq 'logging.level') {
@@ -185,6 +214,7 @@ try {
     $script:DisabledOpenXRLayers = @('*')
     $script:Renderer = 'd3d12'
     $script:RenderScale = $null
+    $script:FarClip = $null
     if (-not (Test-Path -LiteralPath $iniPath -PathType Leaf)) {
         throw 'BeamNG-VRS.ini not found beside Launch-BeamNG-VRS.cmd. Extract the entire ZIP; when upgrading, move your saved INI beside the CMD.'
     }
@@ -263,10 +293,11 @@ try {
     }
     if ($CheckOnly) {
         $layerReport | Write-Output
-        if ($null -ne $script:RenderScale) { Write-Output "VR render scale $($script:RenderScale) will be applied through the BeamNG user folder." }
+        if ($null -ne $script:RenderScale -or $null -ne $script:FarClip) { Write-Output 'VR render scale/far clip will be applied through the BeamNG user folder.' }
         Write-Output 'Release files and game executable found. No game started.'; return
     }
-    Update-RenderScaleMod -UserFolder $UserFolder -Scale $(if ($script:Renderer -eq 'd3d12') { $script:RenderScale } else { $null })
+    if ($script:Renderer -eq 'd3d12') { Update-VRMod -UserFolder $UserFolder -Scale $script:RenderScale -FarClip $script:FarClip }
+    else { Update-VRMod -UserFolder $UserFolder -Scale $null -FarClip $null }
     if ($Diagnostics) {
         $start.EnvironmentVariables['VK_LOADER_DEBUG'] = 'error,warn,layer'
         # The OpenXR loader then reports the layer chain and which layer failed xrCreateInstance.
