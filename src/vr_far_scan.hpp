@@ -112,6 +112,9 @@ inline Report scan(const Image& image, const FunctionAt& functionAt, size_t maxF
  std::vector<size_t> strings;
  for(const auto& text : anchorStrings()) {
   for(size_t hit : find(image, image.data, text.data(), text.size())) {
+   // Code may point at the hit itself when the byte before it happens to be
+   // printable (an adjacent constant), so keep both candidate starts.
+   strings.push_back(hit);
    strings.push_back(stringStart(image, hit));
    ++report.anchors;
   }

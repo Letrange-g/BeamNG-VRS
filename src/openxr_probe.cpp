@@ -10,6 +10,7 @@
 #include <windows.h>
 #include "beamng_gaze_shared.hpp"
 #include "m819_visibility_geometry.hpp"
+#include "vr_far_scan.hpp"
 #ifndef XR_USE_GRAPHICS_API_VULKAN
 #define XR_USE_GRAPHICS_API_VULKAN
 #endif
@@ -333,7 +334,7 @@ int m817MessageLevel(const char* msg){
     strstr(msg,"M8.31 TURBO") || strstr(msg,"Next xrCreateApiLayerInstance") || strstr(msg,"Opt-in:") ||
     // D3D12 setup and first-use lines are flushed at once, so a crash right after still leaves them.
     strstr(msg,"M8.40 graphics") || strstr(msg,"hooks=") || strstr(msg,"foveation active") ||
-    strstr(msg,"M8.42 shading-rate image") || strstr(msg,"foveation frames") || strstr(msg,"M8.43") || strstr(msg,"M8.44") || strstr(msg,"M8.47"))return 1;
+    strstr(msg,"M8.42 shading-rate image") || strstr(msg,"foveation frames") || strstr(msg,"M8.43") || strstr(msg,"M8.44") || strstr(msg,"M8.47") || strstr(msg,"M8.50"))return 1;
  return 2;
 }
 void logLine(const char* msg) {
@@ -600,6 +601,16 @@ double m843Fraction(const char* name,double fallback){
  if(!n||n>=sizeof(v))return fallback;
  char* end=nullptr;const double value=strtod(v,&end);
  return end!=v && !*end && std::isfinite(value) ? std::clamp(value,0.0,0.49) : fallback;
+}
+// M8.50: [Renderer] VRDrawDistance replaces the 10000 m far distance of the game's VR views.
+void m850VrDrawDistance(){
+ static std::once_flag once;
+ std::call_once(once,[]{
+  char v[32]{};const DWORD n=beamng_config::read("BEAMNG_VRS_VR_DRAW_DISTANCE",v,sizeof(v));
+  if(!n||n>=sizeof(v))return;
+  char* end=nullptr;const double distance=strtod(v,&end);
+  if(end!=v && !*end && std::isfinite(distance) && distance>0)beamng_far::patchRunningGame(logLine,distance);
+ });
 }
 beamng_d3d12::Effects m843Effects(){
  beamng_d3d12::Effects e{};
@@ -1029,6 +1040,7 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateApiLayerInstance(const XrIn
   logResult("Next xrCreateApiLayerInstance retry",r);
  }
  if(XR_FAILED(r))return r;
+ m850VrDrawDistance();
  Dispatch d{};d.next=next->nextGetInstanceProcAddr;d.gazeExtension=appGaze||(force && runtimeGaze);d.visibilityMaskEnabled=appVisibilityMask||injectedMask;
  PFN_xrVoidFunction fn{};
  if(XR_SUCCEEDED(d.next(*instance,"xrGetSystemProperties",&fn)))d.getSystemProperties=reinterpret_cast<PFN_xrGetSystemProperties>(fn);
