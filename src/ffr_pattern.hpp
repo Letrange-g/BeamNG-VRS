@@ -33,15 +33,19 @@ inline uint8_t rate(uint32_t x, uint32_t y) {
 // Ellipse is the deliberate viewport-relative variant: width=size*width,
 // height=size*height. The exact same test drives static VRS, gaze VRS and
 // the red preview so the debug boundary is not misleading.
+// M8.45: keptU/keptV are the fractions of the full eye that the image shows
+// (D3D12 FOV crop). Sizes stay relative to the full eye, so the sharp area
+// covers the same part of the lens with or without the crop.
 inline bool inside(float u, float v, float gazeU, float gazeV,
                    uint32_t pixelWidth, uint32_t pixelHeight,
-                   float size, Shape shape) {
+                   float size, Shape shape, float keptU=1.f, float keptV=1.f) {
  if(size<=0.f || !pixelWidth || !pixelHeight)return false;
  const float du=u-gazeU, dv=v-gazeV;
- const float halfHeight=.5f*float(pixelHeight)*size;
+ const float halfHeight=.5f*float(pixelHeight)*size/keptV;
  if(shape==Shape::Ellipse) {
   const float bound=.5f*size;
-  return du*du+dv*dv<=bound*bound;
+  const float eu=du*keptU, ev=dv*keptV;
+  return eu*eu+ev*ev<=bound*bound;
  }
  const float dx=du*float(pixelWidth),dy=dv*float(pixelHeight);
  if(shape==Shape::Square)return std::max(std::fabs(dx),std::fabs(dy))<=halfHeight;
@@ -78,7 +82,9 @@ inline Pattern makeGaze(uint32_t pixelWidth, uint32_t pixelHeight,
                         uint32_t tileWidth, uint32_t tileHeight,
                         float gazeU, float gazeV, float centerSize, float middleSize,
                         uint8_t middleRate=rate(2,2), uint8_t outerRate=rate(4,4),
-                        Shape shape=Shape::Circle) {
+                        Shape shape=Shape::Circle, float keptU=1.f, float keptV=1.f) {
+ if (!(keptU>0.f && keptU<=1.f && keptV>0.f && keptV<=1.f))
+   throw std::invalid_argument("invalid kept eye fraction");
  if (!pixelWidth || !pixelHeight || !tileWidth || !tileHeight ||
      !std::isfinite(centerSize) || !std::isfinite(middleSize) ||
      centerSize<0.f || middleSize<centerSize || middleSize>1.f ||
@@ -99,7 +105,7 @@ inline Pattern makeGaze(uint32_t pixelWidth, uint32_t pixelHeight,
   auto fillRegion=[&](float size,uint8_t value){
    if(size==0.f)return;
    const auto [begin,end]=detail::rowSpan(p.width,nearest,[&](uint32_t x){
-    return inside(columns[x],v,gazeU,gazeV,pixelWidth,pixelHeight,size,shape);
+    return inside(columns[x],v,gazeU,gazeV,pixelWidth,pixelHeight,size,shape,keptU,keptV);
    });
    auto row=p.texels.begin()+size_t(y)*p.width;
    std::fill(row+begin,row+end,value);

@@ -137,7 +137,9 @@ the finer rate of the two eyes; the sharp region is the union of both eyes' regi
   that `xrLocateViews` reports and from the recommended eye-image size, so BeamNG
   renders only the kept part of each eye in every pass, compute and FSR
   included. The headset compositor places the smaller views by their reported
-  field of view, so nothing moves; the removed area is simply not shown. Each
+  field of view, so nothing moves; the removed area is simply not shown.
+  `[Foveation]` sizes stay relative to the full eye (`M8.45`), so the sharp
+  area covers the same part of the lens with or without the crop. Each
   eye uses its own margins (`LeftEyeLeft` and so on). Clipping the game's
   scissors saved nothing on D3D12, because BeamNG 0.40 sets its scissors through
   a path the layer does not see. Because the targets serve both eyes,

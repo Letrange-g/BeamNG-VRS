@@ -302,6 +302,14 @@ bool install(ID3D12Device* device){
  return ok;
 }
 
+// M8.45: the fraction of the full eye the image shows, so foveation sizes stay
+// relative to the full eye (the lens) with the M8.44 FOV crop.
+std::pair<float,float> kept(int eye){
+ if(!effects.fovCrop)return {1.f,1.f};
+ const auto& m=effects.margins[eye];
+ return {float(std::max(.02,1.0-m.left-m.right)),float(std::max(.02,1.0-m.top-m.bottom))};
+}
+
 // VRS Tier 2 with the image tile size the patterns are built for.
 bool startFoveation(ID3D12Device* device,ID3D12CommandQueue* queue,const Foveation& f){
  D3D12_FEATURE_DATA_D3D12_OPTIONS6 options{};
@@ -328,9 +336,9 @@ bool startFoveation(ID3D12Device* device,ID3D12CommandQueue* queue,const Foveati
  }
  ID3D12Device_AddRef(device);ID3D12CommandQueue_AddRef(queue); // Our resources must not outlive them.
  vrsDevice=device;vrsQueue=queue;
- sprintf_s(msg,"M8.42 D3D12 foveation active: tier=2 tile=%u gaze=%d center=%.2f middle=%.2f rates=%u/%u shape=%s",
+ sprintf_s(msg,"M8.42 D3D12 foveation active: tier=2 tile=%u gaze=%d center=%.2f middle=%.2f rates=%u/%u shape=%s keptEye=%.2fx%.2f",
    options.ShadingRateImageTileSize,int(config.gaze),config.center,config.middle,
-   unsigned(config.middleRate),unsigned(config.outerRate),beamng_ffr::shapeName(config.shape));
+   unsigned(config.middleRate),unsigned(config.outerRate),beamng_ffr::shapeName(config.shape),kept(0).first,kept(0).second);
  log(msg);
  return true;
 }
@@ -377,8 +385,9 @@ Ellipse lensEllipse(int eye){
 std::vector<uint8_t> pattern(uint32_t w,uint32_t h,const float u[2],const float v[2]){
  const UINT tile=tileSize();
  beamng_ffr::Pattern eyes[2];
- for(int i=0;i<2;++i)eyes[i]=beamng_ffr::makeGaze(w,h,tile,tile,u[i],v[i],config.center,config.middle,
-   config.middleRate,config.outerRate,config.shape);
+ for(int i=0;i<2;++i){const auto [ku,kv]=kept(i);
+  eyes[i]=beamng_ffr::makeGaze(w,h,tile,tile,u[i],v[i],config.center,config.middle,
+   config.middleRate,config.outerRate,config.shape,ku,kv);}
  std::vector<uint8_t> combined;beamng_ffr::combineFiner(eyes[0].texels,eyes[1].texels,combined);
  // M8.43: tiles entirely outside the lens ellipse are blacked out at the end; shade them coarsest.
  // Shared targets serve both eyes, so a tile must lie outside both eyes' ellipses.
@@ -520,8 +529,9 @@ const Rects& blackRects(uint32_t w,uint32_t h,int eye){
 }
 // Same tile classification as the shading-rate image the scene is rendered with
 // (the smallest eye-shaped one, normally the FSR input), scaled to the eye image.
-void outlineRects(uint32_t w,uint32_t h,float cu,float cv,float size,Rects& out){
+void outlineRects(uint32_t w,uint32_t h,int eye,float cu,float cv,float size,Rects& out){
  if(size<=0.f)return;
+ const auto [ku,kv]=kept(eye);
  uint32_t sw=w,sh=h;
  {std::shared_lock<std::shared_mutex> g(targetsMutex);
   for(const auto& [s,img]:rateImages)if(img.ready && s.first<sw){sw=s.first;sh=s.second;}}
@@ -530,9 +540,9 @@ void outlineRects(uint32_t w,uint32_t h,float cu,float cv,float size,Rects& out)
  const LONG thick=std::max<LONG>(2,LONG(std::lround(1.5*sx)));
  const auto inside=[&](int x,int y){
   if(x<0||y<0||x>=int(cols)||y>=int(rows))return false;
-  return beamng_ffr::inside(beamng_ffr::tileUV(uint32_t(x),tile,sw),beamng_ffr::tileUV(uint32_t(y),tile,sh),cu,cv,sw,sh,size,config.shape);
+  return beamng_ffr::inside(beamng_ffr::tileUV(uint32_t(x),tile,sw),beamng_ffr::tileUV(uint32_t(y),tile,sh),cu,cv,sw,sh,size,config.shape,ku,kv);
  };
- const float halfV=.5f*size,halfU=config.shape==beamng_ffr::Shape::Ellipse?halfV:halfV*float(sh)/float(sw);
+ const float halfV=.5f*size/kv,halfU=config.shape==beamng_ffr::Shape::Ellipse?.5f*size/ku:halfV*float(sh)/float(sw);
  const int x0=std::max(0,int((cu-halfU)*cols)-2),x1=std::min(int(cols),int((cu+halfU)*cols)+3);
  const int y0=std::max(0,int((cv-halfV)*rows)-2),y1=std::min(int(rows),int((cv+halfV)*rows)+3);
  for(int y=y0;y<y1;++y)for(int x=x0;x<x1;++x){
@@ -604,10 +614,10 @@ void finishEyeImageImpl(uint64_t texture,int eye,uint32_t format){
  Rects red,orange;
  if(effects.outline && foveating){
   float cu,cv;{std::lock_guard<std::mutex> g(gazeMutex);cu=heldU[eye];cv=heldV[eye];}
-  outlineRects(w,h,cu,cv,config.center,red);
+  outlineRects(w,h,eye,cu,cv,config.center,red);
   // Orange marks the outer edge of the 2x2 band, as in the Vulkan outline.
   if(config.middle>config.center && config.middleRate==beamng_ffr::rate(2,2) && config.outerRate==beamng_ffr::rate(4,4))
-   outlineRects(w,h,cu,cv,config.middle,orange);
+   outlineRects(w,h,eye,cu,cv,config.middle,orange);
  }
  if(black.empty() && red.empty() && orange.empty())return;
  std::lock_guard<std::mutex> g(postMutex);
