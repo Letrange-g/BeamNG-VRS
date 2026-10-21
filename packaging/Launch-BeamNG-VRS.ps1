@@ -184,6 +184,8 @@ function Test-BeamNGIni {
                 $script:Renderer = $value.ToLowerInvariant()
             } elseif ($id -eq 'openxr.disablelayers') {
                 $script:DisabledOpenXRLayers = @(ConvertTo-OpenXRLayerList -Value $value)
+            } elseif ($id -eq 'renderer.farclip') {
+                Write-Warning "INI line ${lineNumber} [Renderer]: FarClip was removed (BeamNG ignores it in VR); this line is ignored and can be deleted."
             } else { throw 'unknown section or setting' }
         } catch {
             $where = if ($section) { " [$section]" } else { '' }

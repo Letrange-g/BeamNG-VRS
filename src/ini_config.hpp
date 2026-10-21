@@ -134,6 +134,8 @@ inline void setting(Values& out, const std::string& section, const std::string& 
  else if(id == "renderer.api") out["BEAMNG_VRS_RENDERER"] = choice(value, {"vulkan", "d3d12"});
  // Launcher-only (M8.48): BeamNG's VR upscale render scale, applied by a small Lua mod.
  else if(id == "renderer.renderscale") { number(value, 0.25, 1.0); out["BEAMNG_VRS_RENDER_SCALE"] = value; }
+ // Removed (M8.49 had no effect in VR): accepted and ignored so older INIs still launch.
+ else if(id == "renderer.farclip") {}
  else throw std::runtime_error("unknown section or setting");
 }
 

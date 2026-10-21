@@ -144,7 +144,7 @@ crop and the lens mask follow the new size on their own.
 
 BeamNG's VR views use a fixed 10000 m far distance and ignore the level's
 visible distance. A Lua far clip (`M8.49`) was tried and has no effect: BeamNG
-does not use frusta set from Lua for VR.
+does not use frusta set from Lua for VR. A leftover `FarClip=` line is ignored with a warning.
 
 **Measuring the gain (`M8.47`):** the log shows the GPU time of the game's
 render queue every 900 frames, for example `M8.47 D3D12 GPU frames=900
