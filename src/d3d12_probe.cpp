@@ -78,7 +78,7 @@ ID3D12Device* fxDevice=nullptr;ID3D12CommandQueue* fxQueue=nullptr;
 struct ListCrop { D3D12_RECT game[D3D12_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]{}; UINT count=0; D3D12_RECT keep{}; bool active=false; };
 std::mutex cropMutex;
 std::unordered_map<ID3D12GraphicsCommandList*,ListCrop> cropLists;
-std::atomic<uint64_t> croppedScissors{0};
+std::atomic<uint64_t> croppedScissors{0},scissorCalls{0},eyeBindsWithoutScissor{0};
 // Eye-image finishing: a small ring of lists on the OpenXR queue.
 struct Post { ID3D12CommandAllocator* allocator=nullptr; ID3D12GraphicsCommandList* list=nullptr; uint64_t value=0; };
 std::mutex postMutex;
@@ -86,6 +86,8 @@ Post posts[6]{};ID3D12Fence* postFence=nullptr;uint64_t postValue=0;
 ID3D12DescriptorHeap* postRtvs=nullptr;D3D12_CPU_DESCRIPTOR_HANDLE postRtvStart{};std::unordered_map<uint64_t,UINT> postSlots;UINT nextPostSlot=0;
 std::atomic<uint64_t> finished{0},finishBusy{0};
 constexpr UINT postRtvCount=16;
+constexpr size_t clearBatch=4;
+constexpr uint32_t lensBand=64; // Rows per black lens-corner band; taller bands mean fewer rectangles.
 
 decltype(ID3D12DeviceVtbl::CreateRenderTargetView) nextCreateRtv=nullptr;
 decltype(ID3D12GraphicsCommandListVtbl::OMSetRenderTargets) nextOMSetRenderTargets=nullptr;
@@ -170,6 +172,7 @@ void bind(ID3D12GraphicsCommandList* list,SIZE_T first,UINT count,bool renderPas
   const bool was=c.active;
   c.active=target;
   if(target)c.keep=cropKeep(t.width,t.height);
+  if(target && !c.count)eyeBindsWithoutScissor.fetch_add(1,std::memory_order_relaxed);
   if(target||was)applyScissors(list,c);
  }
  if(!diagnostics && !foveating)return;
@@ -226,6 +229,7 @@ void STDMETHODCALLTYPE hookBeginRenderPass(ID3D12GraphicsCommandList4* list,UINT
 }
 
 void STDMETHODCALLTYPE hookRSSetScissorRects(ID3D12GraphicsCommandList* list,UINT count,const D3D12_RECT* rects){
+ if(cropping)scissorCalls.fetch_add(1,std::memory_order_relaxed);
  if(!cropping || !rects || !count || count>D3D12_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE){
   nextRSSetScissorRects(list,count,rects);return;
  }
@@ -481,7 +485,7 @@ const Rects& blackRects(uint32_t w,uint32_t h,int eye){
  if(inserted){
   if(effects.crop)for(const auto& r:beamng_scissor::make(w,h,effects.margins[eye]).outside)
    addRect(it->second,LONG(r.x),LONG(r.y),LONG(r.x+r.width),LONG(r.y+r.height),LONG(w),LONG(h));
-  if(effects.lensMask)for(const auto& r:beamng_lens::outside(w,h,effects.lensSize))
+  if(effects.lensMask)for(const auto& r:beamng_lens::outside(w,h,effects.lensSize,lensBand))
    addRect(it->second,LONG(r.x),LONG(r.y),LONG(r.x+r.width),LONG(r.y+r.height),LONG(w),LONG(h));
  }
  return it->second;
@@ -594,19 +598,30 @@ void finishEyeImageImpl(uint64_t texture,int eye,uint32_t format){
   nextCreateRtv(fxDevice,resource,&vd,target);
  }
  rtv.ptr+=SIZE_T(slot->second)*rtvIncrement;
- if(FAILED(ID3D12CommandAllocator_Reset(p->allocator)) || FAILED(ID3D12GraphicsCommandList_Reset(p->list,p->allocator,nullptr)))return;
+ const bool first=finished.load(std::memory_order_relaxed)==0;
+ char msg[220]{};
+ if(first){sprintf_s(msg,"M8.43 first eye image: black=%zu outline=%zu rtvSlot=%u",black.size(),red.size()+orange.size(),slot->second);log(msg);}
+ HRESULT hr=ID3D12CommandAllocator_Reset(p->allocator);
+ if(SUCCEEDED(hr))hr=ID3D12GraphicsCommandList_Reset(p->list,p->allocator,nullptr);
+ if(FAILED(hr)){sprintf_s(msg,"M8.43 WARNING: eye image list reset failed hr=0x%08lX",hr);log(msg);return;}
  const float blackColor[4]{0,0,0,1},redColor[4]{1,.016f,.016f,1},orangeColor[4]{1,.55f,.05f,1};
  // ClearRenderTargetView ignores scissors and needs no render-target binding.
- if(!black.empty())ID3D12GraphicsCommandList_ClearRenderTargetView(p->list,rtv,blackColor,UINT(black.size()),black.data());
- if(!orange.empty())ID3D12GraphicsCommandList_ClearRenderTargetView(p->list,rtv,orangeColor,UINT(orange.size()),orange.data());
- if(!red.empty())ID3D12GraphicsCommandList_ClearRenderTargetView(p->list,rtv,redColor,UINT(red.size()),red.data());
- if(FAILED(ID3D12GraphicsCommandList_Close(p->list)))return;
+ // Hundreds of rectangles in one call took BeamNG down on a headset GPU while
+ // three did not, so rectangles go in small batches.
+ const auto clear=[&](const float color[4],const Rects& rects){
+  for(size_t i=0;i<rects.size();i+=clearBatch)
+   ID3D12GraphicsCommandList_ClearRenderTargetView(p->list,rtv,color,UINT(std::min(clearBatch,rects.size()-i)),rects.data()+i);
+ };
+ clear(blackColor,black);clear(orangeColor,orange);clear(redColor,red);
+ hr=ID3D12GraphicsCommandList_Close(p->list);
+ if(FAILED(hr)){sprintf_s(msg,"M8.43 WARNING: eye image list close failed hr=0x%08lX",hr);log(msg);return;}
+ if(first)log("M8.43 first eye image: recorded, submitting");
  ID3D12CommandList* lists[]{reinterpret_cast<ID3D12CommandList*>(p->list)};
  ID3D12CommandQueue_ExecuteCommandLists(fxQueue,1,lists);
  ID3D12CommandQueue_Signal(fxQueue,postFence,++postValue);
  p->value=postValue;
  if(finished.fetch_add(1,std::memory_order_relaxed)<2){
-  char msg[200]{};sprintf_s(msg,"M8.43 eye image %d finished: %ux%u black=%zu outline=%zu",eye,w,h,black.size(),red.size()+orange.size());log(msg);
+  sprintf_s(msg,"M8.43 eye image %d finished: %ux%u black=%zu outline=%zu",eye,w,h,black.size(),red.size()+orange.size());log(msg);
  }
 }
 }
@@ -624,8 +639,15 @@ void finishEyeImage(uint64_t texture,int eye,uint32_t format){
 
 void frame(){
  if(!hooked)return;
+ // M8.43: report a lost device once, with its reason, before the game shuts down.
+ static unsigned checks=0;static bool removedLogged=false;
+ if(ID3D12Device* d=fxDevice?fxDevice:vrsDevice; d && !removedLogged && (++checks%8)==1){
+  const HRESULT reason=ID3D12Device_GetDeviceRemovedReason(d);
+  if(FAILED(reason)){removedLogged=true;char msg[160]{};
+   sprintf_s(msg,"M8.43 ERROR: D3D12 device removed reason=0x%08lX (eyeImagesFinished=%llu)",reason,(unsigned long long)finished.load());log(msg);}
+ }
  if(foveating)updateFoveation();
- std::vector<std::pair<Key,uint64_t>> top;uint64_t unknown=0,om=0,pass=0,vrs=0,cropped=0;unsigned n=0;
+ std::vector<std::pair<Key,uint64_t>> top;uint64_t unknown=0,om=0,pass=0,vrs=0,cropped=0,calls=0,bare=0;unsigned n=0;
  {
   std::lock_guard<std::mutex> g(statsMutex);
   ++frames;
@@ -635,10 +657,12 @@ void frame(){
   top.assign(binds.begin(),binds.end());unknown=unknownBinds;om=omBinds;pass=passBinds;vrs=vrsBinds;
   binds.clear();unknownBinds=omBinds=passBinds=vrsBinds=0;
   cropped=croppedScissors.exchange(0,std::memory_order_relaxed);
+  calls=scissorCalls.exchange(0,std::memory_order_relaxed);
+  bare=eyeBindsWithoutScissor.exchange(0,std::memory_order_relaxed);
  }
  char msg[256]{};
- if(fxDevice){sprintf_s(msg,"M8.43 D3D12 effects frames=%u croppedScissors=%llu (%.1f per frame) eyeImagesFinished=%llu skippedBusy=%llu",
-   n,(unsigned long long)cropped,double(cropped)/n,(unsigned long long)finished.load(),(unsigned long long)finishBusy.load());log(msg);}
+ if(fxDevice){sprintf_s(msg,"M8.43 D3D12 effects frames=%u croppedScissors=%llu (%.1f per frame) scissorCallsPerFrame=%.1f eyeBindsWithoutScissorPerFrame=%.1f eyeImagesFinished=%llu skippedBusy=%llu",
+   n,(unsigned long long)cropped,double(cropped)/n,double(calls)/n,double(bare)/n,(unsigned long long)finished.load(),(unsigned long long)finishBusy.load());log(msg);}
  if(foveating){sprintf_s(msg,"M8.42 D3D12 foveation frames=%u vrsBindsPerFrame=%.1f",n,double(vrs)/n);log(msg);}
  if(!diagnostics)return;
  std::sort(top.begin(),top.end(),[](const auto& a,const auto& b){return a.second>b.second;});
