@@ -141,6 +141,30 @@ try {
             Remove-Item -LiteralPath $result
         }
     } finally { Remove-Item -LiteralPath (Split-Path -Parent $registry) -Recurse -Force -ErrorAction SilentlyContinue }
+    # M8.48: RenderScale writes the Lua mod into the user folder; omitting it removes the mod.
+    $userFolder = Join-Path $temp 'user folder'
+    [void](New-Item -ItemType Directory -Path $userFolder -Force)
+    $modLua = Join-Path $userFolder 'mods\unpacked\beamng_vrs\lua\ge\extensions\beamngVrs.lua'
+    Set-Content -LiteralPath $ini -Value "[Renderer]`nRenderScale=0.8" -Encoding UTF8
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder
+    if ($LASTEXITCODE -ne 0) { throw 'Launcher failed with RenderScale.' }
+    if (-not (Test-Path -LiteralPath $modLua) -or (Get-Content -LiteralPath $modLua -Raw) -notmatch 'local scale = 0\.8\r?\n' -or
+        -not (Test-Path -LiteralPath (Join-Path $userFolder 'mods\unpacked\beamng_vrs\scripts\beamng_vrs\modScript.lua'))) { throw 'RenderScale mod was not written.' }
+    $deadline = [DateTime]::UtcNow.AddSeconds(10); $content = ''
+    while ([DateTime]::UtcNow -lt $deadline) {
+        try { $content = Get-Content -LiteralPath $result -Raw; if ($content -match 'XR_ENABLE_API_LAYERS=.*probe') { break } } catch {}
+        Start-Sleep -Milliseconds 100
+    }
+    Remove-Item -LiteralPath $result
+    Set-Content -LiteralPath $ini -Value "[Logging]`nLevel=info" -Encoding UTF8
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder
+    if ($LASTEXITCODE -ne 0 -or (Test-Path -LiteralPath (Join-Path $userFolder 'mods\unpacked\beamng_vrs'))) { throw 'RenderScale mod was not removed.' }
+    $deadline = [DateTime]::UtcNow.AddSeconds(10); $content = ''
+    while ([DateTime]::UtcNow -lt $deadline) {
+        try { $content = Get-Content -LiteralPath $result -Raw; if ($content -match 'XR_ENABLE_API_LAYERS=.*probe') { break } } catch {}
+        Start-Sleep -Milliseconds 100
+    }
+    Remove-Item -LiteralPath $result
     # [Renderer] API=vulkan keeps the Vulkan renderer, where the VRS layer applies.
     Set-Content -LiteralPath $ini -Value "[Renderer]`nAPI=vulkan" -Encoding UTF8
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher
@@ -166,7 +190,7 @@ try {
     Set-Content -LiteralPath $ini -Value "[Debug]`nDrawOutline=typo" -Encoding UTF8
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher
     if ($LASTEXITCODE -eq 0 -or (Test-Path -LiteralPath $result)) { throw 'Invalid INI started the game.' }
-    Write-Output 'Launcher integration passed: root/Bin64 layouts, root INI, both executable names, working directory, Vulkan discovery, diagnostic capture, arguments, child environment, CheckOnly, implicit OpenXR layer disabling, D3D12 default and Vulkan renderer, missing INI/executable and invalid INI.'
+    Write-Output 'Launcher integration passed: root/Bin64 layouts, root INI, both executable names, working directory, Vulkan discovery, diagnostic capture, arguments, child environment, CheckOnly, implicit OpenXR layer disabling, RenderScale mod, D3D12 default and Vulkan renderer, missing INI/executable and invalid INI.'
 } finally {
     foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $before[$name], 'Process') }
     Remove-Item -LiteralPath $temp -Recurse -Force

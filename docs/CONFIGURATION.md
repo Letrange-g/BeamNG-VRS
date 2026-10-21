@@ -22,6 +22,7 @@ The release ZIP puts `BeamNG-VRS.ini` beside `Launch-BeamNG-VRS.cmd` at the extr
 | Performance | `TurboMode` | `false` | Experimental one-frame OpenXR wait overlap. Enabled by default in 0.1.0; off by default since it showed no gain in GPU-limited tests. Restart to change. |
 | OpenXR | `DisableLayers` | `*` | Implicit OpenXR layers to turn off for BeamNG only: `*` (all, default), comma-separated names, or empty to keep every layer. See [Other OpenXR layers](#other-openxr-layers). |
 | Renderer | `API` | `d3d12` | `d3d12` starts BeamNG with `-gfx d3d12`, the game's VR default since 0.40. Foveation (fixed or eye-tracked) uses D3D12 VRS Tier 2 there; scissor, lens mask and outline also work, and `AllPasses` does not apply. `vulkan` starts `-gfx vk` with the original Vulkan layer. See [Direct3D 12](#direct3d-12). |
+| Renderer | `RenderScale` | (game: `0.5`) | Direct3D 12 only: VR render scale before FSR upscaling, `0.25` to `1.0`, applied by a launcher-written Lua mod. See [VR render scale](#direct3d-12). |
 | Logging | `Level` | `info` | `off`, `errors`, `info`, or `debug`. Default is brief status/errors, not verbose diagnostics. |
 | Tracking | `GracePeriodMs` | `30` | Hold the last valid gaze for this many milliseconds during temporary tracking loss (0 to 1000). |
 | Tracking | `GazeRefreshMs` | `8` | Minimum CPU gaze polling interval (2 to 50 ms). This does not measure eye-to-display latency. |
@@ -132,6 +133,14 @@ are covered too. The same `[Foveation]` sizes,
 shape and rates apply, and `[Tracking]` gaze settings move the sharp region with
 eye tracking. Both eyes share the game's intermediate targets, so each tile uses
 the finer rate of the two eyes; the sharp region is the union of both eyes' regions.
+
+**VR render scale (`M8.48`):** BeamNG 0.40 renders VR at 50% and upscales with
+FSR 3. `[Renderer] RenderScale=` (0.25-1.0) changes that: the launcher writes a
+small Lua mod to `%LOCALAPPDATA%\BeamNG\BeamNG.drive\current\mods\unpacked\beamng_vrs`
+that sets `upscaleRenderScale` on BeamNG's two VR views (`oxrView0`, `oxrView1`)
+whenever they appear. Comment the line out to restore the game's value; the
+launcher then deletes the mod folder (only if it wrote it). Foveation, the FOV
+crop and the lens mask follow the new size on their own.
 
 **Measuring the gain (`M8.47`):** the log shows the GPU time of the game's
 render queue every 900 frames, for example `M8.47 D3D12 GPU frames=900

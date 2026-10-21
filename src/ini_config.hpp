@@ -132,6 +132,8 @@ inline void setting(Values& out, const std::string& section, const std::string& 
  // Launcher-only: selects BeamNG's -gfx argument (default d3d12, BeamNG 0.40's VR
  // default). d3d12 features come from the OpenXR layer, vulkan ones from the Vulkan layer.
  else if(id == "renderer.api") out["BEAMNG_VRS_RENDERER"] = choice(value, {"vulkan", "d3d12"});
+ // Launcher-only (M8.48): BeamNG's VR upscale render scale, applied by a small Lua mod.
+ else if(id == "renderer.renderscale") { number(value, 0.25, 1.0); out["BEAMNG_VRS_RENDER_SCALE"] = value; }
  else throw std::runtime_error("unknown section or setting");
 }
 
