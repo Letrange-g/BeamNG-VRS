@@ -1,4 +1,4 @@
-// M8.41-M8.43: Direct3D 12 probe, foveation and eye-image effects; see d3d12_probe.hpp.
+// M8.41-M8.47: Direct3D 12 probe, foveation and eye-image effects; see d3d12_probe.hpp.
 // The C COM interface gives typed vtable slots, so hooks are patched by field
 // name rather than by hand-counted indices. Every hook forwards first; VRS
 // state is only added on top of the game's own binding.
@@ -96,14 +96,29 @@ decltype(ID3D12GraphicsCommandListVtbl::OMSetRenderTargets) nextOMSetRenderTarge
 decltype(ID3D12GraphicsCommandList4Vtbl::BeginRenderPass) nextBeginRenderPass=nullptr;
 decltype(ID3D12GraphicsCommandListVtbl::RSSetScissorRects) nextRSSetScissorRects=nullptr;
 decltype(ID3D12GraphicsCommandListVtbl::Reset) nextReset=nullptr;
+decltype(ID3D12CommandQueueVtbl::ExecuteCommandLists) nextExecute=nullptr;
+
+// M8.47: GPU busy time of the game's queue. Each submission is bracketed by
+// two timestamps in the same ExecuteCommandLists call, so time the queue spends
+// waiting for the CPU between submissions is not counted.
+struct Stamp { ID3D12CommandAllocator* allocator=nullptr; ID3D12GraphicsCommandList* begin=nullptr; ID3D12GraphicsCommandList* end=nullptr; uint64_t value=0; bool pending=false; };
+constexpr UINT stampSlots=128;
+Stamp stamps[stampSlots]{};UINT stampNext=0;
+ID3D12CommandQueue* gameQueue=nullptr;ID3D12QueryHeap* stampHeap=nullptr;ID3D12Resource* stampReadback=nullptr;
+const uint64_t* stampMapped=nullptr;ID3D12Fence* stampFence=nullptr;uint64_t stampValue=0;double ticksPerMs=0;
+std::mutex stampMutex;
+uint64_t busyTicks=0,submissions=0,stampSkipped=0;unsigned gpuFrames=0,gpuReports=0;
+// Ctrl+Shift+V pauses VRS for an A/B in the same scene; the GPU report says which.
+std::atomic<bool> vrsPaused{false};
 
 void log(const char* msg){if(logFn)logFn(msg);}
 uint64_t sizeKey(uint32_t w,uint32_t h){return (uint64_t(w)<<32)|h;}
 
-// Same aspect ratio as the OpenXR eye image, at 25-100% of its size.
+// Same aspect ratio as the OpenXR eye image, at 12.5-100% of its size (M8.47:
+// was 25%, which missed BeamNG's quarter-size 1297x1042 pass by rounding).
 bool eyeShaped(uint32_t w,uint32_t h){
  const uint32_t ew=eyeWidth,eh=eyeHeight;
- if(!ew||!eh||w>ew||h>eh||uint64_t(w)*4<ew)return false;
+ if(!ew||!eh||w>ew||h>eh||uint64_t(w)*8<ew)return false;
  const double expected=double(eh)*double(w)/double(ew);
  return std::fabs(double(h)-expected)<=2.0;
 }
@@ -155,7 +170,7 @@ void bind(ID3D12GraphicsCommandList* list,SIZE_T first,UINT count,bool renderPas
    if(!eligible && !count && depth){auto it=targets.find(depth);
     if(it!=targets.end() && fits(it->second)){v=it->second;eligible=true;source=2;}}
   }
-  if(eligible){
+  if(eligible && !vrsPaused.load(std::memory_order_relaxed)){
    auto r=rateImages.find({v.width,v.height});
    if(r!=rateImages.end()&&r->second.ready)image=r->second.texture;
   }
@@ -170,7 +185,7 @@ void bind(ID3D12GraphicsCommandList* list,SIZE_T first,UINT count,bool renderPas
   }else{
    ID3D12GraphicsCommandList5_RSSetShadingRateImage(list5,nullptr);
    ID3D12GraphicsCommandList5_RSSetShadingRate(list5,D3D12_SHADING_RATE_1X1,nullptr);
-   if(eligible){
+   if(eligible && !vrsPaused.load(std::memory_order_relaxed)){
     std::unique_lock<std::shared_mutex> g(targetsMutex);wantedSizes.insert(sizeKey(v.width,v.height));
    }
   }
@@ -293,6 +308,74 @@ void STDMETHODCALLTYPE hookCreateDsv(ID3D12Device* device,ID3D12Resource* resour
  t.resource=uint64_t(reinterpret_cast<uintptr_t>(resource));t.device=device;
  std::unique_lock<std::shared_mutex> g(targetsMutex);
  targets[destination.ptr]=t;
+}
+
+// Caller holds stampMutex.
+void collectStamps(){
+ const uint64_t done=ID3D12Fence_GetCompletedValue(stampFence);
+ for(UINT i=0;i<stampSlots;++i){auto& st=stamps[i];
+  if(!st.pending || st.value>done)continue;
+  st.pending=false;
+  const uint64_t a=stampMapped[2*i],b=stampMapped[2*i+1];
+  if(b>a && b-a<uint64_t(ticksPerMs*1000.0))busyTicks+=b-a;
+ }
+}
+
+void STDMETHODCALLTYPE hookExecute(ID3D12CommandQueue* queue,UINT count,ID3D12CommandList* const* lists){
+ if(queue!=gameQueue || !count || count>62){nextExecute(queue,count,lists);return;}
+ std::lock_guard<std::mutex> g(stampMutex);
+ if(!stampFence){nextExecute(queue,count,lists);return;}
+ collectStamps();
+ auto& st=stamps[stampNext];
+ const UINT i=stampNext;
+ if(st.pending || FAILED(ID3D12CommandAllocator_Reset(st.allocator)) ||
+    FAILED(ID3D12GraphicsCommandList_Reset(st.begin,st.allocator,nullptr))){
+  ++stampSkipped;nextExecute(queue,count,lists);return;
+ }
+ ID3D12GraphicsCommandList_EndQuery(st.begin,stampHeap,D3D12_QUERY_TYPE_TIMESTAMP,2*i);
+ ID3D12GraphicsCommandList_Close(st.begin);
+ if(FAILED(ID3D12GraphicsCommandList_Reset(st.end,st.allocator,nullptr))){++stampSkipped;nextExecute(queue,count,lists);return;}
+ ID3D12GraphicsCommandList_EndQuery(st.end,stampHeap,D3D12_QUERY_TYPE_TIMESTAMP,2*i+1);
+ ID3D12GraphicsCommandList_ResolveQueryData(st.end,stampHeap,D3D12_QUERY_TYPE_TIMESTAMP,2*i,2,stampReadback,UINT64(16)*i);
+ ID3D12GraphicsCommandList_Close(st.end);
+ ID3D12CommandList* all[64];
+ all[0]=reinterpret_cast<ID3D12CommandList*>(st.begin);
+ std::copy(lists,lists+count,all+1);
+ all[count+1]=reinterpret_cast<ID3D12CommandList*>(st.end);
+ nextExecute(queue,count+2,all);
+ if(SUCCEEDED(ID3D12CommandQueue_Signal(queue,stampFence,++stampValue))){st.value=stampValue;st.pending=true;}
+ ++submissions;stampNext=(stampNext+1)%stampSlots;
+}
+
+// The OpenXR binding's queue must be a direct queue, which timestamps support.
+void startGpuTiming(ID3D12Device* device,ID3D12CommandQueue* queue){
+ UINT64 frequency=0;
+ if(FAILED(ID3D12CommandQueue_GetTimestampFrequency(queue,&frequency)) || !frequency){log("M8.47 D3D12 GPU timing unavailable: no timestamp frequency");return;}
+ D3D12_QUERY_HEAP_DESC qd{};qd.Type=D3D12_QUERY_HEAP_TYPE_TIMESTAMP;qd.Count=2*stampSlots;
+ D3D12_HEAP_PROPERTIES heap{};heap.Type=D3D12_HEAP_TYPE_READBACK;
+ D3D12_RESOURCE_DESC bd{};bd.Dimension=D3D12_RESOURCE_DIMENSION_BUFFER;bd.Width=UINT64(16)*stampSlots;bd.Height=1;
+ bd.DepthOrArraySize=1;bd.MipLevels=1;bd.Format=DXGI_FORMAT_UNKNOWN;bd.SampleDesc.Count=1;bd.Layout=D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+ void* mapped=nullptr;
+ bool ok=SUCCEEDED(ID3D12Device_CreateQueryHeap(device,&qd,IID_ID3D12QueryHeap,reinterpret_cast<void**>(&stampHeap))) &&
+   SUCCEEDED(ID3D12Device_CreateCommittedResource(device,&heap,D3D12_HEAP_FLAG_NONE,&bd,D3D12_RESOURCE_STATE_COPY_DEST,nullptr,IID_ID3D12Resource,reinterpret_cast<void**>(&stampReadback))) &&
+   SUCCEEDED(ID3D12Resource_Map(stampReadback,0,nullptr,&mapped));
+ for(UINT i=0;ok && i<stampSlots;++i){auto& st=stamps[i];
+  ok=SUCCEEDED(ID3D12Device_CreateCommandAllocator(device,D3D12_COMMAND_LIST_TYPE_DIRECT,IID_ID3D12CommandAllocator,reinterpret_cast<void**>(&st.allocator))) &&
+     SUCCEEDED(ID3D12Device_CreateCommandList(device,0,D3D12_COMMAND_LIST_TYPE_DIRECT,st.allocator,nullptr,IID_ID3D12GraphicsCommandList,reinterpret_cast<void**>(&st.begin))) &&
+     SUCCEEDED(ID3D12Device_CreateCommandList(device,0,D3D12_COMMAND_LIST_TYPE_DIRECT,st.allocator,nullptr,IID_ID3D12GraphicsCommandList,reinterpret_cast<void**>(&st.end)));
+  if(ok){ID3D12GraphicsCommandList_Close(st.begin);ID3D12GraphicsCommandList_Close(st.end);}
+ }
+ ID3D12Fence* fence=nullptr;
+ ok=ok&&SUCCEEDED(ID3D12Device_CreateFence(device,0,D3D12_FENCE_FLAG_NONE,IID_ID3D12Fence,reinterpret_cast<void**>(&fence)));
+ // Leaked on failure: a few small objects, once per process.
+ if(!ok){log("M8.47 D3D12 GPU timing WARNING: timestamp objects could not be created");return;}
+ stampMapped=static_cast<const uint64_t*>(mapped);ticksPerMs=double(frequency)/1000.0;
+ ID3D12CommandQueue_AddRef(queue);gameQueue=queue;
+ if(!patch(&queue->lpVtbl->ExecuteCommandLists,decltype(ID3D12CommandQueueVtbl::ExecuteCommandLists)(&hookExecute),nextExecute)){
+  log("M8.47 D3D12 GPU timing WARNING: ExecuteCommandLists hook failed");return;
+ }
+ {std::lock_guard<std::mutex> g(stampMutex);stampFence=fence;}
+ log("M8.47 D3D12 GPU timing active (Ctrl+Shift+V pauses VRS for an A/B)");
 }
 
 bool install(ID3D12Device* device){
@@ -603,6 +686,8 @@ bool attach(void* device,void* queue,LogFn fn,bool diag,const Foveation& f,const
   else sprintf_s(msg,"M8.41 D3D12 VRS tier=unknown (OPTIONS6 query failed)");
   log(msg);diagnostics=true;
  }
+ static std::once_flag timingOnce;
+ if(queue)std::call_once(timingOnce,[&]{startGpuTiming(d,static_cast<ID3D12CommandQueue*>(queue));});
  // Effects first: the lens corners are part of the first shading-rate images.
  if(e.any() && !fxDevice)startEffects(d,static_cast<ID3D12CommandQueue*>(queue),e);
  // One VRS device per process; a later session on another device keeps rendering unchanged.
@@ -644,7 +729,7 @@ void finishEyeImageImpl(uint64_t texture,int eye,uint32_t format){
  const uint32_t w=uint32_t(rd.Width),h=rd.Height;
  const Rects& black=blackRects(w,h,eye);
  Rects red,orange;
- if(effects.outline && foveating){
+ if(effects.outline && foveating && !vrsPaused.load(std::memory_order_relaxed)){
   float cu,cv;{std::lock_guard<std::mutex> g(gazeMutex);cu=heldU[eye];cv=heldV[eye];}
   outlineRects(w,h,eye,cu,cv,config.center,red);
   // Orange marks the outer edge of the 2x2 band, as in the Vulkan outline.
@@ -716,7 +801,28 @@ void frame(){
   if(FAILED(reason)){removedLogged=true;char msg[160]{};
    sprintf_s(msg,"M8.43 ERROR: D3D12 device removed reason=0x%08lX (eyeImagesFinished=%llu)",reason,(unsigned long long)finished.load());log(msg);}
  }
+ // M8.47: Ctrl+Shift+V toggles VRS; the GPU window restarts so each report covers one state.
+ static bool keyDown=false;
+ const bool down=foveating && (GetAsyncKeyState(VK_CONTROL)&0x8000) && (GetAsyncKeyState(VK_SHIFT)&0x8000) && (GetAsyncKeyState('V')&0x8000);
+ if(down && !keyDown){
+  const bool paused=!vrsPaused.load();vrsPaused=paused;
+  {std::lock_guard<std::mutex> g(stampMutex);busyTicks=submissions=0;gpuFrames=0;gpuReports=0;}
+  log(paused?"M8.47 VRS paused (Ctrl+Shift+V)":"M8.47 VRS resumed (Ctrl+Shift+V)");
+ }
+ keyDown=down;
  if(foveating)updateFoveation();
+ if(gameQueue){
+  uint64_t busy=0,subs=0,skipped=0;unsigned gn=0;
+  {std::lock_guard<std::mutex> g(stampMutex);
+   if(stampFence)collectStamps();
+   if(stampFence && ++gpuFrames>=(gpuReports?900u:300u)){
+    ++gpuReports;gn=gpuFrames;busy=busyTicks;subs=submissions;skipped=stampSkipped;
+    gpuFrames=0;busyTicks=submissions=0;
+   }}
+  if(gn){char msg[220]{};
+   sprintf_s(msg,"M8.47 D3D12 GPU frames=%u busy=%.2f ms/frame submissions=%.1f/frame vrs=%s skipped=%llu",
+     gn,double(busy)/ticksPerMs/gn,double(subs)/gn,!foveating?"off":vrsPaused.load()?"paused":"on",(unsigned long long)skipped);log(msg);}
+ }
  std::vector<std::pair<Key,uint64_t>> top;uint64_t unknown=0,om=0,pass=0,vrs=0,later=0,depthOnly=0,cropped=0,calls=0,bare=0,assumed=0;unsigned n=0;
  {
   std::lock_guard<std::mutex> g(statsMutex);

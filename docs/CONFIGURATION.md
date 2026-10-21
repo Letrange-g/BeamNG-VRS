@@ -125,13 +125,21 @@ BeamNG 0.40 renders VR with Direct3D 12 and, by default, draws most of each eye'
 scene at half the headset resolution before upscaling it. With `[Renderer]
 API=d3d12` (default) the OpenXR layer receives the game's D3D12 device and applies
 a shading-rate image (VRS Tier 2, 16-pixel tiles on tested GPUs) to every render
-target with the eye image's shape at 25-100% of its size, so both the internal
+target with the eye image's shape at 12.5-100% of its size, so both the internal
 render size and the full-size passes are covered. Passes whose eye-shaped target
 is not the first one, and depth-only passes on an eye-shaped depth buffer (`M8.46`),
 are covered too. The same `[Foveation]` sizes,
 shape and rates apply, and `[Tracking]` gaze settings move the sharp region with
 eye tracking. Both eyes share the game's intermediate targets, so each tile uses
 the finer rate of the two eyes; the sharp region is the union of both eyes' regions.
+
+**Measuring the gain (`M8.47`):** the log shows the GPU time of the game's
+render queue every 900 frames, for example `M8.47 D3D12 GPU frames=900
+busy=6.10 ms/frame submissions=12.0/frame vrs=on`. Press **Ctrl+Shift+V** in VR
+to pause or resume VRS without restarting; the debug outline disappears while it
+is paused, and the next report (300 frames later) says `vrs=paused`. Compare the
+two `busy` values in the same scene. Work on other queues (async compute) is not
+counted.
 
 `[Scissor]`, `[LensMask]` and `[Debug]` also work with Direct3D 12 (`M8.43` lines):
 

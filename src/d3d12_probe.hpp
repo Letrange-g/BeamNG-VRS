@@ -54,7 +54,7 @@ void finishEyeImage(uint64_t texture, int eye, uint32_t dxgiFormat);
 // Known OpenXR eye swapchain textures (ID3D12Resource*), marked in reports.
 void setEyeImages(const uint64_t* images, size_t count);
 // OpenXR eye swapchain size; render targets with the same aspect ratio at
-// 25-100% of this size receive the shading-rate image.
+// 12.5-100% of this size receive the shading-rate image.
 void setEyeSize(uint32_t width, uint32_t height);
 // Projected gaze per eye in [0,1] image coordinates; bit i of mask = eye i valid.
 void setGaze(const float u[2], const float v[2], uint32_t mask);
