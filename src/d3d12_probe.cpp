@@ -124,7 +124,12 @@ void applyScissors(ID3D12GraphicsCommandList* list,const ListCrop& c){
   rects[i]=r;
  }
  nextRSSetScissorRects(list,c.count,rects);
- if(c.active)croppedScissors.fetch_add(c.count,std::memory_order_relaxed);
+ if(c.active && croppedScissors.fetch_add(c.count,std::memory_order_relaxed)==0){
+  static std::atomic<bool> once{false};
+  if(!once.exchange(true)){char msg[200]{};
+   sprintf_s(msg,"M8.43 first scissor clipped: (%ld,%ld)-(%ld,%ld) to keep (%ld,%ld)-(%ld,%ld)",
+     c.game[0].left,c.game[0].top,c.game[0].right,c.game[0].bottom,c.keep.left,c.keep.top,c.keep.right,c.keep.bottom);log(msg);}
+ }
 }
 
 // The first render target decides the shading-rate image for the whole bind.
@@ -552,10 +557,14 @@ void setGaze(const float u[2],const float v[2],uint32_t mask){
  gazeMask=mask;gazeTick=GetTickCount64();
 }
 
-void finishEyeImage(uint64_t texture,int eye,uint32_t format){
- if(!finishing || !texture || (eye!=0 && eye!=1))return;
+namespace {
+void finishEyeImageImpl(uint64_t texture,int eye,uint32_t format){
  auto* resource=reinterpret_cast<ID3D12Resource*>(uintptr_t(texture));
  D3D12_RESOURCE_DESC rd{};ID3D12Resource_GetDesc(resource,&rd);
+ static std::atomic<bool> described{false};
+ if(!described.exchange(true)){char msg[220]{};
+  sprintf_s(msg,"M8.43 first eye image release: eye=%d %llux%u format=%u/%u flags=0x%X samples=%u",
+    eye,(unsigned long long)rd.Width,rd.Height,unsigned(rd.Format),format,unsigned(rd.Flags),rd.SampleDesc.Count);log(msg);}
  if(rd.Dimension!=D3D12_RESOURCE_DIMENSION_TEXTURE2D || rd.SampleDesc.Count!=1 || rd.DepthOrArraySize!=1 ||
     !(rd.Flags&D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET))return;
  const uint32_t w=uint32_t(rd.Width),h=rd.Height;
@@ -599,6 +608,18 @@ void finishEyeImage(uint64_t texture,int eye,uint32_t format){
  if(finished.fetch_add(1,std::memory_order_relaxed)<2){
   char msg[200]{};sprintf_s(msg,"M8.43 eye image %d finished: %ux%u black=%zu outline=%zu",eye,w,h,black.size(),red.size()+orange.size());log(msg);
  }
+}
+}
+
+void finishEyeImage(uint64_t texture,int eye,uint32_t format){
+ if(!finishing || !texture || (eye!=0 && eye!=1))return;
+#ifdef _MSC_VER
+ // A fault here must not take the game down: log it and stop finishing images.
+ __try{finishEyeImageImpl(texture,eye,format);}
+ __except(EXCEPTION_EXECUTE_HANDLER){finishing=false;log("M8.43 ERROR: eye image finishing faulted; black edges and outline turned off");}
+#else
+ finishEyeImageImpl(texture,eye,format);
+#endif
 }
 
 void frame(){
