@@ -18,7 +18,8 @@ function Assert-IniNumber {
             [Globalization.CultureInfo]::InvariantCulture, [ref]$number) -or
         [double]::IsNaN($number) -or [double]::IsInfinity($number) -or
         $number -lt $Low -or $number -gt $High -or ($Integer -and $Value -cnotmatch '^[0-9]+$')) {
-        throw 'value is outside the allowed range'
+        $inv = [Globalization.CultureInfo]::InvariantCulture
+        throw "value '$Value' is outside the allowed range ($($Low.ToString($inv)) to $($High.ToString($inv)))"
     }
     return $number
 }
@@ -200,7 +201,10 @@ function Test-BeamNGIni {
             } elseif ($id -eq 'openxr.disablelayers') {
                 $script:DisabledOpenXRLayers = @(ConvertTo-OpenXRLayerList -Value $value)
             } else { throw 'unknown section or setting' }
-        } catch { throw "INI line ${lineNumber}: $($_.Exception.Message)" }
+        } catch {
+            $where = if ($section) { " [$section]" } else { '' }
+            throw "INI line ${lineNumber}${where}: $line : $($_.Exception.Message)"
+        }
     }
     if ($seen.Count -eq 0) { throw 'INI contains no settings' }
     if ($sizes['foveation.size1x1'] -gt $sizes['foveation.size2x2']) { throw 'Size1x1 must not exceed Size2x2' }
