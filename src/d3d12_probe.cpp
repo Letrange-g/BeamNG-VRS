@@ -101,13 +101,15 @@ decltype(ID3D12CommandQueueVtbl::ExecuteCommandLists) nextExecute=nullptr;
 // M8.47: GPU busy time of the game's queue. Each submission is bracketed by
 // two timestamps in the same ExecuteCommandLists call, so time the queue spends
 // waiting for the CPU between submissions is not counted.
-struct Stamp { ID3D12CommandAllocator* allocator=nullptr; ID3D12GraphicsCommandList* begin=nullptr; ID3D12GraphicsCommandList* end=nullptr; uint64_t value=0; bool pending=false; };
+struct Stamp { ID3D12CommandAllocator* allocator=nullptr; ID3D12GraphicsCommandList* begin=nullptr; ID3D12GraphicsCommandList* end=nullptr; uint64_t value=0; bool pending=false,ours=false; };
 constexpr UINT stampSlots=128;
 Stamp stamps[stampSlots]{};UINT stampNext=0;
 ID3D12CommandQueue* gameQueue=nullptr;ID3D12QueryHeap* stampHeap=nullptr;ID3D12Resource* stampReadback=nullptr;
 const uint64_t* stampMapped=nullptr;ID3D12Fence* stampFence=nullptr;uint64_t stampValue=0;double ticksPerMs=0;
 std::mutex stampMutex;
-uint64_t busyTicks=0,submissions=0,stampSkipped=0;unsigned gpuFrames=0,gpuReports=0;
+uint64_t busyTicks=0,ourTicks=0,submissions=0,stampSkipped=0;
+unsigned gpuFrames=0,gpuReports=0;
+thread_local bool ownSubmit=false; // Our uploads and eye-image effects, reported separately.
 // Ctrl+Shift+V pauses VRS for an A/B in the same scene; the GPU report says which.
 std::atomic<bool> vrsPaused{false};
 
@@ -317,7 +319,7 @@ void collectStamps(){
   if(!st.pending || st.value>done)continue;
   st.pending=false;
   const uint64_t a=stampMapped[2*i],b=stampMapped[2*i+1];
-  if(b>a && b-a<uint64_t(ticksPerMs*1000.0))busyTicks+=b-a;
+  if(b>a && b-a<uint64_t(ticksPerMs*1000.0))(st.ours?ourTicks:busyTicks)+=b-a;
  }
 }
 
@@ -343,8 +345,9 @@ void STDMETHODCALLTYPE hookExecute(ID3D12CommandQueue* queue,UINT count,ID3D12Co
  std::copy(lists,lists+count,all+1);
  all[count+1]=reinterpret_cast<ID3D12CommandList*>(st.end);
  nextExecute(queue,count+2,all);
- if(SUCCEEDED(ID3D12CommandQueue_Signal(queue,stampFence,++stampValue))){st.value=stampValue;st.pending=true;}
- ++submissions;stampNext=(stampNext+1)%stampSlots;
+ if(SUCCEEDED(ID3D12CommandQueue_Signal(queue,stampFence,++stampValue))){st.value=stampValue;st.pending=true;st.ours=ownSubmit;}
+ if(!ownSubmit)++submissions;
+ stampNext=(stampNext+1)%stampSlots;
 }
 
 // The OpenXR binding's queue must be a direct queue, which timestamps support.
@@ -588,7 +591,7 @@ void updateFoveation(){
  }
  if(FAILED(ID3D12GraphicsCommandList_Close(uploadList)))return;
  ID3D12CommandList* lists[]{reinterpret_cast<ID3D12CommandList*>(uploadList)};
- ID3D12CommandQueue_ExecuteCommandLists(vrsQueue,1,lists);
+ ownSubmit=true;ID3D12CommandQueue_ExecuteCommandLists(vrsQueue,1,lists);ownSubmit=false;
  ID3D12CommandQueue_Signal(vrsQueue,uploadFence,++uploadValue);
  // Game lists recorded from now on are submitted after this upload on the same queue.
  std::unique_lock<std::shared_mutex> g(targetsMutex);
@@ -776,7 +779,7 @@ void finishEyeImageImpl(uint64_t texture,int eye,uint32_t format){
  if(FAILED(hr)){sprintf_s(msg,"M8.43 WARNING: eye image list close failed hr=0x%08lX",hr);log(msg);return;}
  if(first)log("M8.43 first eye image: recorded, submitting");
  ID3D12CommandList* lists[]{reinterpret_cast<ID3D12CommandList*>(p->list)};
- ID3D12CommandQueue_ExecuteCommandLists(fxQueue,1,lists);
+ ownSubmit=true;ID3D12CommandQueue_ExecuteCommandLists(fxQueue,1,lists);ownSubmit=false;
  ID3D12CommandQueue_Signal(fxQueue,postFence,++postValue);
  p->value=postValue;
  if(finished.fetch_add(1,std::memory_order_relaxed)<2){
@@ -810,22 +813,22 @@ void frame(){
  const bool down=foveating && (GetAsyncKeyState(VK_CONTROL)&0x8000) && (GetAsyncKeyState(VK_SHIFT)&0x8000) && (GetAsyncKeyState('V')&0x8000);
  if(down && !keyDown){
   const bool paused=!vrsPaused.load();vrsPaused=paused;
-  {std::lock_guard<std::mutex> g(stampMutex);busyTicks=submissions=0;gpuFrames=0;gpuReports=0;}
+  {std::lock_guard<std::mutex> g(stampMutex);busyTicks=ourTicks=submissions=0;gpuFrames=0;gpuReports=0;}
   log(paused?"M8.47 VRS paused (Ctrl+Shift+V)":"M8.47 VRS resumed (Ctrl+Shift+V)");
  }
  keyDown=down;
  if(foveating)updateFoveation();
  if(gameQueue){
-  uint64_t busy=0,subs=0,skipped=0;unsigned gn=0;
+  uint64_t busy=0,ours=0,subs=0,skipped=0;unsigned gn=0;
   {std::lock_guard<std::mutex> g(stampMutex);
    if(stampFence)collectStamps();
    if(stampFence && ++gpuFrames>=(gpuReports?900u:300u)){
-    ++gpuReports;gn=gpuFrames;busy=busyTicks;subs=submissions;skipped=stampSkipped;
-    gpuFrames=0;busyTicks=submissions=0;
+    ++gpuReports;gn=gpuFrames;busy=busyTicks;ours=ourTicks;subs=submissions;skipped=stampSkipped;
+    gpuFrames=0;busyTicks=ourTicks=submissions=0;
    }}
   if(gn){char msg[220]{};
-   sprintf_s(msg,"M8.47 D3D12 GPU frames=%u busy=%.2f ms/frame submissions=%.1f/frame vrs=%s skipped=%llu",
-     gn,double(busy)/ticksPerMs/gn,double(subs)/gn,!foveating?"off":vrsPaused.load()?"paused":"on",(unsigned long long)skipped);log(msg);}
+   sprintf_s(msg,"M8.47 D3D12 GPU frames=%u busy=%.2f ms/frame (mod=%.2f) submissions=%.1f/frame vrs=%s skipped=%llu",
+     gn,double(busy)/ticksPerMs/gn,double(ours)/ticksPerMs/gn,double(subs)/gn,!foveating?"off":vrsPaused.load()?"paused":"on",(unsigned long long)skipped);log(msg);}
  }
  std::vector<std::pair<Key,uint64_t>> top;uint64_t unknown=0,om=0,pass=0,vrs=0,later=0,depthOnly=0,cropped=0,calls=0,bare=0,assumed=0;unsigned n=0;
  {

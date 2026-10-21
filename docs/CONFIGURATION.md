@@ -135,7 +135,9 @@ the finer rate of the two eyes; the sharp region is the union of both eyes' regi
 
 **Measuring the gain (`M8.47`):** the log shows the GPU time of the game's
 render queue every 900 frames, for example `M8.47 D3D12 GPU frames=900
-busy=6.10 ms/frame submissions=12.0/frame vrs=on`. Press **Ctrl+Shift+V** in VR
+busy=6.10 ms/frame (mod=0.05) submissions=12.0/frame vrs=on`;
+`mod` is this mod's own GPU work (shading-rate uploads, lens mask, outline). The
+debug outline costs GPU time, so turn `DrawOutline` off for measurements. Press **Ctrl+Shift+V** in VR
 to pause or resume VRS without restarting; the debug outline disappears while it
 is paused, and the next report (300 frames later) says `vrs=paused`. Compare the
 two `busy` values in the same scene. Work on other queues (async compute) is not
