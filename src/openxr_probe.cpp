@@ -603,6 +603,9 @@ double m843Fraction(const char* name,double fallback){
  return end!=v && !*end && std::isfinite(value) ? std::clamp(value,0.0,0.49) : fallback;
 }
 // M8.50: [Renderer] VRDrawDistance replaces the 10000 m far distance of the game's VR views.
+// Called once the game's OpenXR instance exists (the VR code is loaded by then).
+// The launcher passes the saved in-game pick in the same variable when the INI
+// value is unchanged; "off" leaves the variable unset and nothing is scanned.
 void m850VrDrawDistance(){
  static std::once_flag once;
  std::call_once(once,[]{
@@ -614,12 +617,15 @@ void m850VrDrawDistance(){
 }
 // M8.51: the launcher names a file (BEAMNG_VRS_VR_DRAW_DISTANCE_FILE) that the game's
 // Lua UI app and radial menu write as "distance=N". A new value is applied live.
+// Called from xrWaitFrame every 45 frames (~0.5 s at 90 Hz): one file-time check
+// per call, and the file is only read when its write time changes.
 void m851LiveDrawDistance(){
  static const std::wstring path=[]{
   std::wstring p(32768,L'\0');const DWORD n=GetEnvironmentVariableW(L"BEAMNG_VRS_VR_DRAW_DISTANCE_FILE",p.data(),DWORD(p.size()));
   p.resize(n<p.size()?n:0);return p;
  }();
  if(path.empty())return;
+ // xrWaitFrame may run on more than one thread; a busy poll is just skipped.
  static std::mutex pollMutex;
  std::unique_lock<std::mutex> lock(pollMutex,std::try_to_lock);
  if(!lock.owns_lock())return;
@@ -638,6 +644,7 @@ void m851LiveDrawDistance(){
  if(!at)return; // Possibly read mid-write: retried at the next poll.
  char* end=nullptr;const double distance=strtod(at+9,&end);
  if(end==at+9 || !std::isfinite(distance) || distance<100 || distance>10000)return;
+ // Only a complete, valid value marks this write time as handled.
  seen=a.ftLastWriteTime;
  if(distance==applied)return;
  applied=distance;

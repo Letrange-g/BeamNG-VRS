@@ -17,6 +17,10 @@
 //  3. those functions and the ones they call (two levels);
 //  4. in them, 10000 as a float/double immediate, or a RIP-relative reference to
 //     a 10000 constant in the image's data.
+// The anchors keep the search narrow: 10000 is a common constant elsewhere in
+// the game (physics, audio, UI), and only code reached from the VR view setup
+// is touched. If an update renames the anchors, nothing is found and the game
+// keeps its own 10000 m rather than risking an unrelated patch.
 // Each hit is a place that can be patched to the configured distance. The
 // scanner is portable (offsets into a copy of the image) so it is unit-tested
 // on Linux; vr_far_patch.cpp applies it to the running game on Windows.
@@ -106,6 +110,7 @@ inline std::vector<Range> callees(const Image& image, Range function, const Func
  return out;
 }
 
+// maxFunctions bounds step 3 so a heavily shared helper cannot pull in most of the game.
 inline Report scan(const Image& image, const FunctionAt& functionAt, size_t maxFunctions = 4000) {
  Report report;
  // 1. Anchor strings in data (whole C strings, so a log prefix also counts).
@@ -131,7 +136,9 @@ inline Report scan(const Image& image, const FunctionAt& functionAt, size_t maxF
    if(f.end > f.begin && seen.insert(f.begin).second) functions.push_back({f, 0});
   }
  }
- // 3. Two levels of direct callees.
+ // 3. Two levels of direct callees: the far value is set in a helper that the
+ //    view code calls (on BeamNG 0.40.1 all sites were at depth 0, but a
+ //    compiler inlining change can move them one or two calls down).
  for(size_t i = 0; i < functions.size() && functions.size() < maxFunctions; ++i) {
   if(functions[i].second >= 2) continue;
   for(const Range& f : callees(image, functions[i].first, functionAt)) {
@@ -141,6 +148,8 @@ inline Report scan(const Image& image, const FunctionAt& functionAt, size_t maxF
  }
  report.functions = functions.size();
  // 4. 10000 in those functions: immediates, or references to 10000 constants in data.
+ //    Constants are aligned like the compiler emits them (4/8 bytes); immediates
+ //    can sit at any byte inside an instruction, so they are matched unaligned.
  uint8_t fBytes[4], dBytes[8];
  std::memcpy(fBytes, &farFloat, 4); std::memcpy(dBytes, &farDouble, 8);
  auto floats = find(image, image.data, fBytes, 4, 4);
