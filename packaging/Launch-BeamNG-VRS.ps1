@@ -218,8 +218,9 @@ local function setVrDrawDistance(m)
   if not m then return end
   m = math.floor(math.min(10000, math.max(100, m)) / 100 + 0.5) * 100
   distance = m
-  local ok, err = pcall(writeFile, distanceFile, 'distance=' .. m .. '\nini=' .. iniDistance .. '\n')
-  if not ok then log('W', 'beamngVrs', 'BeamNG-VRS could not save the VR draw distance: ' .. tostring(err)) return end
+  -- writeFile returns nil when the file cannot be opened, and pcall catches errors.
+  local ok, written = pcall(writeFile, distanceFile, 'distance=' .. m .. '\nini=' .. iniDistance .. '\n')
+  if not ok or not written then log('W', 'beamngVrs', 'BeamNG-VRS could not save the VR draw distance: ' .. tostring(written)) return end
   log('I', 'beamngVrs', 'BeamNG-VRS VR draw distance ' .. m .. ' m')
   guihooks.trigger('BeamngVrsDrawDistance', m)
 end
