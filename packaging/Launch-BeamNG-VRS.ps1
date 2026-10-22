@@ -292,78 +292,121 @@ M.onExtensionLoaded = registerMenus
     }
     if ($null -ne $Scale) { Write-Output "VR render scale $scaleText applied through $mod" }
 }
-# [Renderer] GhostingFix: BeamNG 0.40 builds local exposure and bloom from one VR eye
-# and reuses them for the other eye, which shows the first eye's picture as ghosts.
-# GhostingFix.hlsl (beside this script) makes each eye read those textures at its own
-# position. BeamNG ignores shaders inside mods but loads loose files from the user
-# folder, so the game's own combinePass shader is patched and written there. The game
-# caches compiled shaders by file name, so temp\shaders is cleared whenever the patched
-# file is written or removed.
+# ---------------------------------------------------------------------------------------
+# [Renderer] GhostingFix
+#
+# BeamNG 0.40 builds local exposure and bloom from one VR eye and reuses them for the
+# other eye, which shows the first eye's picture as ghost shapes. GhostingFix.hlsl
+# (beside this script) makes each eye read those textures lined up with its own view.
+#
+# BeamNG ignores shaders inside mods but loads loose files from the user folder, so the
+# game's own combinePass shader is patched here and written there. The game caches
+# compiled shaders by file name, so temp\shaders is cleared whenever that file changes.
+# ---------------------------------------------------------------------------------------
+
+# Returns the game's combinePass shader with GhostingFix.hlsl patched in, or $null (with a
+# warning) when the game's shader no longer looks the way the patch expects.
+function Get-GhostingFixShader {
+    param([string]$StockFile, [string]$FixFile)
+
+    $source = [IO.File]::ReadAllText($StockFile).Replace("`r`n", "`n")
+    $fix = [IO.File]::ReadAllText($FixFile).Replace("`r`n", "`n")
+
+    # GhostingFix.hlsl uses these stock declarations; if one was renamed, stand down.
+    $declarations = @('Texture2D<float4> backbuffer', 'Texture2D<float4> bloomFinal',
+                      'Texture2D<float4> localExposureBlurredLogLum', 'SamplerState samplerLinear', '#ifdef BNG_COCONUT')
+    $missing = $declarations | Where-Object { -not $source.Contains($_) } | Select-Object -First 1
+    if ($missing) {
+        Write-Warning "[Renderer] GhostingFix: this BeamNG version's combinePass shader has no '$missing'; the ghosting fix is not applied."
+        return $null
+    }
+
+    # Each edit is (stock text, replacement). "\n" marks a line break and
+    # <GhostingFix.hlsl> the inserted file. The stock text is matched whitespace-tolerant
+    # and must occur exactly once, so a game update that changes it stands the fix down.
+    $edits = @(
+        # 1. Insert the fix after getRtDimensions(), where every resource it uses is declared.
+        @('uint2 getRtDimensions() {\n    uint2 dim;\n    destTex.GetDimensions(dim.x, dim.y);\n    return dim;\n}\n',
+          'uint2 getRtDimensions() {\n    uint2 dim;\n    destTex.GetDimensions(dim.x, dim.y);\n    return dim;\n}\n\n<GhostingFix.hlsl>'),
+        # 2. Read local exposure at this eye's measured shift.
+        @('computeLocalExposure(sample.rgb, uv, exposureScale,',
+          'computeLocalExposure(sample.rgb, saturate(uv + vrsLocalExposureShift), exposureScale,'),
+        # 3. Read bloom at the same shift.
+        @('sample.rgb += bloomScale * bloomFinal.SampleLevel(samplerLinear, uv, 0).rgb;',
+          'sample.rgb += bloomScale * bloomFinal.SampleLevel(samplerLinear, saturate(uv + vrsBloomShift), 0).rgb;'),
+        # 4. Optional debug bar (off unless VRS_STEREO_DEBUG is 1).
+        @('destTex[storePos] = float4(sampleOutput.rgb, 1);',
+          'destTex[storePos] = float4(vrsDebugOverlay(sampleOutput.rgb, uv), 1);'),
+        # 5. Measure the shift in main(), before any thread of the group returns.
+        @('void main(uint3 dispatchThreadID : SV_DispatchThreadID)\n{\n    if (any(dispatchThreadID.xy >= getRtDimensions())) return;',
+          'void main(uint3 dispatchThreadID : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex)\n{\n    vrsEstimateEyeShift(groupIndex);\n    if (any(dispatchThreadID.xy >= getRtDimensions())) return;'))
+
+    foreach ($edit in $edits) {
+        $words = ($edit[0] -replace '\\n', "`n") -split '\s+' | Where-Object { $_ }
+        $pattern = ($words | ForEach-Object { [regex]::Escape($_) }) -join '\s+'
+        $found = [regex]::Matches($source, $pattern)
+        if ($found.Count -ne 1) {
+            $firstLine = $edit[0] -replace '\\n.*', ''
+            Write-Warning "[Renderer] GhostingFix: this BeamNG version's combinePass shader changed ($firstLine...); the ghosting fix is not applied."
+            return $null
+        }
+
+        $replacement = ($edit[1] -replace '\\n', "`n").Replace('<GhostingFix.hlsl>', $fix)
+        $match = $found[0]
+        $source = $source.Substring(0, $match.Index) + $replacement + $source.Substring($match.Index + $match.Length)
+    }
+
+    return "// Written by Launch-BeamNG-VRS ([Renderer] GhostingFix) from the game's own combinePass.cs.hlsl.`n" + $source
+}
+
+# Writes, refreshes or removes the patched shader in the user folder.
 function Update-GhostingFix {
     param([string]$UserFolder, [string]$GameRoot, [string]$FixFile, [bool]$Enabled)
+
     $relative = 'shaders\common\postfx\hdr\combinePass.cs.hlsl'
     $target = Join-Path $UserFolder $relative
-    $marker = 'BeamNG-VRS ghosting fix'
-    $utf8 = New-Object Text.UTF8Encoding($false)
+    $shaderCache = Join-Path $UserFolder 'temp\shaders'
+    $marker = 'BeamNG-VRS ghosting fix' # appears in GhostingFix.hlsl's header
+
+    # What is in the user folder now, and did this launcher write it?
     $existing = if (Test-Path -LiteralPath $target -PathType Leaf) { [IO.File]::ReadAllText($target) } else { $null }
     $ours = $null -ne $existing -and $existing.Contains($marker)
-    $shaderCache = Join-Path $UserFolder 'temp\shaders'
+
+    # What should be there?
     $wanted = $null
     if ($Enabled) {
         $stock = Join-Path $GameRoot $relative
-        if (-not (Test-Path -LiteralPath $stock -PathType Leaf) -or -not (Test-Path -LiteralPath $FixFile -PathType Leaf)) {
-            Write-Warning "[Renderer] GhostingFix: $stock or $FixFile not found; the ghosting fix is not applied."
+        if ((Test-Path -LiteralPath $stock -PathType Leaf) -and (Test-Path -LiteralPath $FixFile -PathType Leaf)) {
+            $wanted = Get-GhostingFixShader -StockFile $stock -FixFile $FixFile
         } else {
-            $source = [IO.File]::ReadAllText($stock).Replace("`r`n", "`n")
-            $fix = [IO.File]::ReadAllText($FixFile).Replace("`r`n", "`n")
-            # Each edit anchors on the stock code (whitespace-tolerant) and must match exactly
-            # once; after a game update that changes any of them, the fix stands down.
-            $edits = @(
-                @('uint2 getRtDimensions() {\n    uint2 dim;\n    destTex.GetDimensions(dim.x, dim.y);\n    return dim;\n}\n',
-                  'uint2 getRtDimensions() {\n    uint2 dim;\n    destTex.GetDimensions(dim.x, dim.y);\n    return dim;\n}\n\n<GhostingFix.hlsl>'),
-                @('computeLocalExposure(sample.rgb, uv, exposureScale,',
-                  'computeLocalExposure(sample.rgb, saturate(uv + vrsLocalExposureShift), exposureScale,'),
-                @('sample.rgb += bloomScale * bloomFinal.SampleLevel(samplerLinear, uv, 0).rgb;',
-                  'sample.rgb += bloomScale * bloomFinal.SampleLevel(samplerLinear, saturate(uv + vrsBloomShift), 0).rgb;'),
-                @('destTex[storePos] = float4(sampleOutput.rgb, 1);',
-                  'destTex[storePos] = float4(vrsDebugOverlay(sampleOutput.rgb, uv), 1);'),
-                @('void main(uint3 dispatchThreadID : SV_DispatchThreadID)\n{\n    if (any(dispatchThreadID.xy >= getRtDimensions())) return;',
-                  'void main(uint3 dispatchThreadID : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex)\n{\n    vrsEstimateEyeShift(groupIndex);\n    if (any(dispatchThreadID.xy >= getRtDimensions())) return;'))
-            # GhostingFix.hlsl also uses these stock declarations; a rename stands it down too.
-            $failed = @('Texture2D<float4> backbuffer', 'Texture2D<float4> bloomFinal', 'Texture2D<float4> localExposureBlurredLogLum',
-                        'SamplerState samplerLinear', '#ifdef BNG_COCONUT') | Where-Object { -not $source.Contains($_) } | Select-Object -First 1
-            foreach ($edit in $(if ($failed) { @() } else { $edits })) {
-                $pattern = (($edit[0] -replace '\\n', "`n") -split '\s+' | Where-Object { $_ } | ForEach-Object { [regex]::Escape($_) }) -join '\s+'
-                $found = [regex]::Matches($source, $pattern)
-                if ($found.Count -ne 1) { $failed = $edit[0]; break }
-                $replacement = ($edit[1] -replace '\\n', "`n").Replace('<GhostingFix.hlsl>', $fix)
-                $source = $source.Substring(0, $found[0].Index) + $replacement + $source.Substring($found[0].Index + $found[0].Length)
-            }
-            if ($failed) {
-                Write-Warning "[Renderer] GhostingFix: this BeamNG version's combinePass shader changed ($($failed -replace '\\n.*', '')...); the ghosting fix is not applied."
-            } elseif ($source.Contains($marker)) {
-                $wanted = "// Written by Launch-BeamNG-VRS ([Renderer] GhostingFix) from the game's own combinePass.cs.hlsl.`n" + $source
-            }
+            Write-Warning "[Renderer] GhostingFix: $stock or $FixFile not found; the ghosting fix is not applied."
         }
     }
+
+    # Off, or not applicable: remove our file (never someone else's).
     if ($null -eq $wanted) {
-        # Only a file this launcher wrote is removed.
         if ($ours) {
             Remove-Item -LiteralPath $target -Force
             if (Test-Path -LiteralPath $shaderCache) { Remove-Item -LiteralPath $shaderCache -Recurse -Force }
         }
         return
     }
+
+    # Another mod's override wins; leave it alone.
     if ($null -ne $existing -and -not $ours) {
         Write-Warning "[Renderer] GhostingFix: $target exists but was not written by BeamNG-VRS (another mod?); the ghosting fix is not applied."
         return
     }
+
+    # Unchanged: keep the file and the compiled shader cache.
     if ($ours -and $existing -eq $wanted) { return }
+
     [void](New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force)
-    [IO.File]::WriteAllText($target, $wanted, $utf8)
+    [IO.File]::WriteAllText($target, $wanted, (New-Object Text.UTF8Encoding($false)))
     if (Test-Path -LiteralPath $shaderCache) { Remove-Item -LiteralPath $shaderCache -Recurse -Force }
     Write-Output 'Ghosting fix shader updated; BeamNG recompiles its shaders on this start (the first load is slower).'
 }
+
 function Test-BeamNGIni {
     param([string]$Path)
     $encoding = New-Object Text.UTF8Encoding($false, $true)
