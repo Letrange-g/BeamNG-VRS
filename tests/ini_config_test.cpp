@@ -45,7 +45,11 @@ int main() {
  assert(parse(oldFarClip).at("BEAMNG_VRS_RENDER_SCALE")=="1");
  std::istringstream drawDistance("[Renderer]\nVRDrawDistance=800\n");
  assert(parse(drawDistance).at("BEAMNG_VRS_VR_DRAW_DISTANCE")=="800");
- assert(!defaults.count("BEAMNG_VRS_VR_DRAW_DISTANCE"));
+ assert(defaults.at("BEAMNG_VRS_VR_DRAW_DISTANCE")=="4000");
+ for(const char* off : {"[Renderer]\nVRDrawDistance=off\n", "[Renderer]\nVRDrawDistance = OFF\n"}) {
+  std::istringstream input(off);
+  assert(!parse(input).count("BEAMNG_VRS_VR_DRAW_DISTANCE"));
+ }
  std::istringstream finalOnly("[Foveation]\nAllPasses=false\n");
  assert(parse(finalOnly).at("BEAMNG_VRS_ALL_PASSES")=="0");
  std::istringstream independent("[Foveation]\nEnabled=false\n[Scissor]\nEnabled=true\n[Performance]\nTurboMode=true\n");
@@ -135,7 +139,7 @@ int main() {
      "[Tracking]\nGazeRefreshMs=8.5", "[Tracking]\nGazeRefreshMs=8.0",
      "[Foveation]\nShape=triangle", "[Debug]\nDrawOutline=1 ; inline comment",
      "[OpenXR]\nDisableLayers=XR layer", "[OpenXR]\nDisableLayers=A,,B", "[OpenXR]\nDisableLayers=A,", "[OpenXR]\nDisableLayers=A,*",
-     "[OpenXR]\nDisableLayers=A\ndisablelayers=B", "[OpenXR]\nTypo=1", "[Renderer]\nAPI=dx12", "[Renderer]\nRenderScale=1.5", "[Renderer]\nRenderScale=0.2", "[Renderer]\nRenderScale=auto", "[Renderer]\nVRDrawDistance=50", "[Renderer]\nVRDrawDistance=20000", "[Renderer]\nVRDrawDistance=far","[Renderer]\nAPI=vulkan\napi=d3d12", "[Debug", "DrawOutline=1", "# empty\n"}) {
+     "[OpenXR]\nDisableLayers=A\ndisablelayers=B", "[OpenXR]\nTypo=1", "[Renderer]\nAPI=dx12", "[Renderer]\nRenderScale=1.5", "[Renderer]\nRenderScale=0.2", "[Renderer]\nRenderScale=auto", "[Renderer]\nVRDrawDistance=50", "[Renderer]\nVRDrawDistance=20000", "[Renderer]\nVRDrawDistance=far", "[Renderer]\nVRDrawDistance=on", "[Renderer]\nVRDrawDistance=","[Renderer]\nAPI=vulkan\napi=d3d12", "[Debug", "DrawOutline=1", "# empty\n"}) {
   bool rejected = false;
   try { std::istringstream input(bad); (void)parse(input); } catch(const std::runtime_error&) { rejected = true; }
   assert(rejected);

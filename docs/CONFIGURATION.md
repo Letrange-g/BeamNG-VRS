@@ -23,7 +23,7 @@ The release ZIP puts `BeamNG-VRS.ini` beside `Launch-BeamNG-VRS.cmd` at the extr
 | OpenXR | `DisableLayers` | `*` | Implicit OpenXR layers to turn off for BeamNG only: `*` (all, default), comma-separated names, or empty to keep every layer. See [Other OpenXR layers](#other-openxr-layers). |
 | Renderer | `API` | `d3d12` | `d3d12` starts BeamNG with `-gfx d3d12`, the game's VR default since 0.40. Foveation (fixed or eye-tracked) uses D3D12 VRS Tier 2 there; scissor, lens mask and outline also work, and `AllPasses` does not apply. `vulkan` starts `-gfx vk` with the original Vulkan layer. See [Direct3D 12](#direct3d-12). |
 | Renderer | `RenderScale` | (game: `0.5`) | Direct3D 12 only: VR render scale before FSR upscaling, `0.25` to `1.0`, applied by a launcher-written Lua mod. See [VR render scale](#direct3d-12). |
-| Renderer | `VRDrawDistance` | (game: `10000`) | Experimental, Direct3D 12 and Vulkan: VR far distance in metres, `100` to `10000`. Unset leaves the game's value. See [VR draw distance](#direct3d-12). |
+| Renderer | `VRDrawDistance` | `4000` | Experimental, Direct3D 12 and Vulkan: VR far distance in metres, `100` to `10000` (game: `10000`), changeable live in game. `off` leaves the game's code untouched. See [VR draw distance](#direct3d-12). |
 | Logging | `Level` | `info` | `off`, `errors`, `info`, or `debug`. Default is brief status/errors, not verbose diagnostics. |
 | Tracking | `GracePeriodMs` | `30` | Hold the last valid gaze for this many milliseconds during temporary tracking loss (0 to 1000). |
 | Tracking | `GazeRefreshMs` | `8` | Minimum CPU gaze polling interval (2 to 50 ms). This does not measure eye-to-display latency. |
@@ -140,7 +140,8 @@ FSR 3. `[Renderer] RenderScale=` (0.25-1.0) changes that: the launcher writes a
 small Lua mod to `%LOCALAPPDATA%\BeamNG\BeamNG.drive\current\mods\unpacked\beamng_vrs`
 that sets `upscaleRenderScale` on BeamNG's two VR views (`oxrView0`, `oxrView1`)
 whenever they appear, and puts it back within 2 seconds if the game lowers it. Comment the line out to restore the game's value; the
-launcher then deletes the mod folder (only if it wrote it). Foveation, the FOV
+launcher then removes that part of the mod, and deletes the mod folder (only if
+it wrote it) when `VRDrawDistance=off` too. Foveation, the FOV
 crop and the lens mask follow the new size on their own.
 
 BeamNG's VR views use a fixed 10000 m far distance and ignore the level's
@@ -148,15 +149,38 @@ visible distance. A Lua far clip (`M8.49`) was tried and has no effect: BeamNG
 does not use frusta set from Lua for VR. A leftover `FarClip=` line is ignored with a warning.
 
 **VR draw distance (`M8.50`, experimental):** `[Renderer] VRDrawDistance=`
-(100-10000 metres, for example `800`) lowers that far distance with Direct3D 12
+(100-10000 metres, default `4000`) lowers that far distance with Direct3D 12
 and Vulkan. No setting or Lua reaches it, so when the game creates its OpenXR
 instance the OpenXR layer scans BeamNG's executable in memory for the 10000 m
 constant used by the code around the VR views (`oxrView`, `OpenXrHelper`) and
 patches those places to the configured distance. The scan runs again at every
 start, so game updates are picked up; the log shows `M8.50 VR far scan: ...`,
 one `M8.50 site` line per place found (up to 60) and `M8.50 VR draw distance
-800 m: patched N of M sites`. Without the line nothing is scanned or changed. If
-the game misbehaves (wrong distance, missing scenery, crash), remove the line.
+4000 m: patched N of M sites`. With `VRDrawDistance=off` nothing is scanned or
+changed; use it if the game misbehaves (wrong distance, missing scenery, crash),
+for example after a game update.
+
+**Changing it in game (`M8.51`):** the launcher adds two controls to its mod in
+the BeamNG user folder (`mods\unpacked\beamng_vrs`); no hotkey is involved.
+
+- **UI app "VR draw distance":** press Esc, open the UI apps editor, add the app
+  and place it. Its slider goes from 100 to 10000 m in 100 m steps (it applies
+  0.3 s after you stop moving it); the buttons pick 500, 1000, 2000, 4000, 6000
+  or Full (10000 m).
+- **Radial (quick access) menu:** Freeroam actions > **VR draw distance** offers
+  the same presets, usable with a wheel in VR. The current value is highlighted.
+
+Both write `settings\beamng_vrs_vr_draw_distance.txt` in the user folder
+(`distance=2000` and `ini=4000`, the INI value of that launch). The OpenXR layer
+checks the file about every 45 frames and rewrites the places it patched at
+start; the log shows `M8.51 VR draw distance live: 2000 m`. The launcher passes
+the file's path to the game (`BEAMNG_VRS_VR_DRAW_DISTANCE_FILE`).
+
+The in-game choice is kept: at the next start the launcher reads the file and,
+if its `ini=` matches the current `VRDrawDistance`, starts at the saved distance.
+If you changed `VRDrawDistance` in the INI, the INI value wins and the file is
+deleted. With `off`, the file is ignored and the app and menu are not added.
+Live changes need a successful patch at start (`patched N` with N above 0).
 
 **Measuring the gain (`M8.47`):** the log shows the GPU time of the game's
 render queue every 900 frames, for example `M8.47 D3D12 GPU frames=900

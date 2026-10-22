@@ -98,6 +98,7 @@ inline Values defaults() {
  out["BEAMNG_VRS_LENS_MASK_SIZE"] = "1.15";
  out["BEAMNG_VRS_LOG_LEVEL"] = "1";
  out["BEAMNG_VRS_RENDERER"] = "d3d12";
+ out["BEAMNG_VRS_VR_DRAW_DISTANCE"] = "4000";
  return out;
 }
 inline void setting(Values& out, const std::string& section, const std::string& key, std::string value) {
@@ -135,7 +136,11 @@ inline void setting(Values& out, const std::string& section, const std::string& 
  // Launcher-only (M8.48): BeamNG's VR upscale render scale, applied by a small Lua mod.
  else if(id == "renderer.renderscale") { number(value, 0.25, 1.0); out["BEAMNG_VRS_RENDER_SCALE"] = value; }
  // M8.50: VR far distance in metres, patched into the game's OpenXR view code.
- else if(id == "renderer.vrdrawdistance") { number(value, 100, 10000); out["BEAMNG_VRS_VR_DRAW_DISTANCE"] = value; }
+ // "off" leaves the game's code untouched (nothing is scanned or patched).
+ else if(id == "renderer.vrdrawdistance") {
+  if(lower(value) == "off") out.erase("BEAMNG_VRS_VR_DRAW_DISTANCE");
+  else { number(value, 100, 10000); out["BEAMNG_VRS_VR_DRAW_DISTANCE"] = value; }
+ }
  // Removed (M8.49 had no effect in VR): accepted and ignored so older INIs still launch.
  else if(id == "renderer.farclip") {}
  else throw std::runtime_error("unknown section or setting");

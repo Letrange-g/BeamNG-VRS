@@ -1,12 +1,17 @@
 #include "vr_far_scan.hpp"
 #include <windows.h>
 #include <cstdio>
+#include <mutex>
 
 // M8.50: applies vr_far_scan.hpp to BeamNG's executable in this process. Offsets
 // are RVAs: the Image's bytes are the loaded module itself, limited to the
 // committed, readable pages of its sections.
 namespace beamng_far {
 namespace {
+// M8.51: what the startup patch changed, so setDistance can rewrite it live.
+std::mutex patchMutex;
+uint8_t* patchedSlot = nullptr; // float at 0, double at 8.
+std::vector<std::pair<uint8_t*, Kind>> patchedImmediates;
 bool readable(const MEMORY_BASIC_INFORMATION& m) {
  if(m.State != MEM_COMMIT || (m.Protect & (PAGE_GUARD | PAGE_NOACCESS))) return false;
  return (m.Protect & (PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READ |
@@ -119,8 +124,12 @@ void patchRunningGame(void (*log)(const char*), double distance) {
  size_t patched = 0;
  for(const Site& s : report.sites) {
   uint8_t* at = base + s.offset;
-  if(s.kind == Kind::FloatImmediate) { patched += write(at, &farValue, sizeof(farValue)); continue; }
-  if(s.kind == Kind::DoubleImmediate) { patched += write(at, &distance, sizeof(distance)); continue; }
+  if(s.kind == Kind::FloatImmediate || s.kind == Kind::DoubleImmediate) {
+   const bool ok = s.kind == Kind::FloatImmediate ? write(at, &farValue, sizeof(farValue)) : write(at, &distance, sizeof(distance));
+   if(ok) { std::lock_guard<std::mutex> lock(patchMutex); patchedImmediates.push_back({at, s.kind}); }
+   patched += ok;
+   continue;
+  }
   if(!slot && !slotTried) {
    slotTried = true;
    slot = allocateNear(uintptr_t(base), uintptr_t(base) + image.size);
@@ -130,6 +139,8 @@ void patchRunningGame(void (*log)(const char*), double distance) {
     std::memcpy(slot + 8, &distance, sizeof(distance));
     DWORD old = 0;
     VirtualProtect(slot, 16, PAGE_READONLY, &old);
+    std::lock_guard<std::mutex> lock(patchMutex);
+    patchedSlot = slot;
    }
   }
   if(!slot) continue;
@@ -141,5 +152,25 @@ void patchRunningGame(void (*log)(const char*), double distance) {
  }
  sprintf_s(line, "M8.50 VR draw distance %.0f m: patched %zu of %zu sites", distance, patched, report.sites.size());
  log(line);
+}
+
+bool setDistance(double distance) {
+ std::lock_guard<std::mutex> lock(patchMutex);
+ const float farValue = float(distance);
+ bool changed = false;
+ if(patchedSlot) {
+  DWORD old = 0;
+  if(VirtualProtect(patchedSlot, 16, PAGE_READWRITE, &old)) {
+   // Aligned stores: a game thread reading the constant sees the old or the new value.
+   *reinterpret_cast<volatile float*>(patchedSlot) = farValue;
+   *reinterpret_cast<volatile double*>(patchedSlot + 8) = distance;
+   DWORD ignored = 0;
+   VirtualProtect(patchedSlot, 16, old, &ignored);
+   changed = true;
+  }
+ }
+ for(const auto& [at, kind] : patchedImmediates)
+  changed |= kind == Kind::FloatImmediate ? write(at, &farValue, sizeof(farValue)) : write(at, &distance, sizeof(distance));
+ return changed;
 }
 } // namespace beamng_far

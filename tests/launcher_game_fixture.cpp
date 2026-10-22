@@ -14,7 +14,8 @@ int main(int argc, char** argv) {
  file << '\n';
  file << "working_directory=" << std::filesystem::current_path().string() << '\n';
  for(const char* name : {"BEAMNG_VRS_CONFIG", "VK_LAYER_PATH", "VK_ADD_LAYER_PATH", "XR_API_LAYER_PATH", "VK_INSTANCE_LAYERS", "XR_ENABLE_API_LAYERS", "BEAMNG_VRS_CENTER_RADIUS", "VK_LOADER_DEBUG", "BEAMNG_VRS_LOG_LEVEL",
-   "XR_LOADER_DEBUG", "DISABLE_XR_APILAYER_TEST_overlay", "DISABLE_XR_APILAYER_TEST_off"}) {
+   "XR_LOADER_DEBUG", "DISABLE_XR_APILAYER_TEST_overlay", "DISABLE_XR_APILAYER_TEST_off",
+   "BEAMNG_VRS_VR_DRAW_DISTANCE", "BEAMNG_VRS_VR_DRAW_DISTANCE_FILE"}) {
   const char* value = std::getenv(name);
   file << name << '=' << (value ? value : "") << '\n';
  }

@@ -60,31 +60,116 @@ function Get-OpenXRImplicitLayers {
 # VR views appear (entering VR recreates them) and every 2 s puts it back if the
 # game changed it. Setting it recreates FSR, so it is only set when it differs.
 # (M8.49 tried a VR far clip the same way: BeamNG ignores frusta set from Lua.)
+# M8.51: the same mod adds a "VR draw distance" UI app and radial menu entry. They
+# write <UserFolder>\settings\beamng_vrs_vr_draw_distance.txt ("distance=N", "ini=N"),
+# which the OpenXR layer applies live and the next launch keeps unless the INI changed.
+$script:VRDrawDistanceApp = @'
+angular.module('beamng.apps')
+.directive('beamngVrsDrawDistance', [function () {
+  return {
+    template:
+      '<div class="bngApp" style="padding: 6px 10px; color: white; box-sizing: border-box; width: 100%; height: 100%">' +
+        '<div style="font-weight: bold">VR draw distance: {{ value }} m</div>' +
+        '<input type="range" min="100" max="10000" step="100" ng-model="slider" ng-change="dragged()" style="width: 100%">' +
+        '<div style="display: flex">' +
+          '<button ng-repeat="p in presets" ng-click="pick(p.m)" style="flex: 1; margin: 1px; padding: 2px 0">{{ p.label }}</button>' +
+        '</div>' +
+      '</div>',
+    replace: true,
+    restrict: 'EA',
+    scope: true,
+    link: function (scope) {
+      var timer = null
+      scope.value = 0
+      scope.slider = 0
+      scope.presets = [500, 1000, 2000, 4000, 6000].map(function (m) { return { label: String(m), m: m } })
+      scope.presets.push({ label: 'Full', m: 10000 })
+      function send(m) { bngApi.engineLua('extensions.beamngVrs.setVrDrawDistance(' + Math.round(m) + ')') }
+      function cancel() { if (timer) { clearTimeout(timer); timer = null } }
+      // The slider only sends once it has been still for 300 ms.
+      scope.dragged = function () {
+        scope.value = Number(scope.slider)
+        cancel()
+        timer = setTimeout(function () { timer = null; send(scope.value) }, 300)
+      }
+      scope.pick = function (m) { cancel(); scope.slider = m; scope.value = m; send(m) }
+      scope.$on('BeamngVrsDrawDistance', function (event, m) {
+        scope.$evalAsync(function () { if (!timer) { scope.value = m; scope.slider = m } })
+      })
+      scope.$on('$destroy', cancel)
+      bngApi.engineLua('extensions.beamngVrs.requestVrDrawDistance()')
+    }
+  }
+}])
+'@
+$script:VRDrawDistanceAppJson = @'
+{
+  "domElement": "<beamng-vrs-draw-distance></beamng-vrs-draw-distance>",
+  "name": "VR draw distance",
+  "types": [
+    "ui.apps.categories.info"
+  ],
+  "description": "BeamNG-VRS: VR far distance in metres, applied live",
+  "css": {
+    "left": "200px",
+    "top": "200px",
+    "width": "320px",
+    "height": "90px"
+  },
+  "author": "BeamNG-VRS",
+  "version": "0.1",
+  "directive": "beamngVrsDrawDistance",
+  "category": "General",
+  "isAuxiliary": false,
+  "interactive": "yes"
+}
+'@
+$script:VRDrawDistanceAppPng = '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'
+# Returns this launch's starting distance: the in-game choice saved in the live
+# file when it was made with the same INI value, else the INI value (and a stale
+# file is deleted). Null when VRDrawDistance=off.
+function Get-VRDrawDistanceStart {
+    param([string]$File, $IniDistance)
+    if ($null -eq $IniDistance) { return $null }
+    if (Test-Path -LiteralPath $File -PathType Leaf) {
+        $saved = @{}
+        foreach ($line in [IO.File]::ReadAllLines($File)) {
+            if ($line -match '^\s*(distance|ini)\s*=\s*(\S+)\s*$') { $saved[$Matches[1]] = $Matches[2] }
+        }
+        try {
+            $ini = Assert-IniNumber -Value $saved['ini'] -Low 100 -High 10000 -Integer $false
+            $distance = Assert-IniNumber -Value $saved['distance'] -Low 100 -High 10000 -Integer $false
+            if ($ini -eq [double]$IniDistance) { return $distance }
+        } catch {}
+        Remove-Item -LiteralPath $File -Force
+    }
+    return [double]$IniDistance
+}
 function Update-VRMod {
-    param([string]$UserFolder, $Scale)
+    param([string]$UserFolder, $Scale, $Distance, $IniDistance)
     $mod = Join-Path $UserFolder 'mods\unpacked\beamng_vrs'
     $marker = Join-Path $mod 'beamng_vrs.txt'
-    if ($null -eq $Scale) {
+    if ($null -eq $Scale -and $null -eq $Distance) {
         # Only a folder this launcher wrote is removed.
         if (Test-Path -LiteralPath $marker -PathType Leaf) { Remove-Item -LiteralPath $mod -Recurse -Force }
         return
     }
     if (-not (Test-Path -LiteralPath $UserFolder -PathType Container)) {
-        Write-Warning "BeamNG user folder not found at $UserFolder; [Renderer] RenderScale is not applied."
+        Write-Warning "BeamNG user folder not found at $UserFolder; [Renderer] RenderScale and the VR draw distance app are not applied."
         return
     }
     if ((Test-Path -LiteralPath $mod) -and -not (Test-Path -LiteralPath $marker -PathType Leaf)) {
-        Write-Warning "$mod exists but was not written by BeamNG-VRS; [Renderer] RenderScale is not applied."
+        Write-Warning "$mod exists but was not written by BeamNG-VRS; [Renderer] RenderScale and the VR draw distance app are not applied."
         return
     }
-    $scaleText = ([double]$Scale).ToString('0.###', [Globalization.CultureInfo]::InvariantCulture)
+    # Rewritten from scratch, so a feature turned off in the INI leaves no file behind.
+    if (Test-Path -LiteralPath $mod) { Remove-Item -LiteralPath $mod -Recurse -Force }
+    $invariant = [Globalization.CultureInfo]::InvariantCulture
     $utf8 = New-Object Text.UTF8Encoding($false)
-    $files = @{
-        'beamng_vrs.txt' = "Written by Launch-BeamNG-VRS at every start from BeamNG-VRS.ini. Remove RenderScale there to delete it.`r`n"
-        'scripts\beamng_vrs\modScript.lua' = "load('beamngVrs')`r`nsetExtensionUnloadMode('beamngVrs', 'manual')`r`n"
-        'lua\ge\extensions\beamngVrs.lua' = @"
--- Written by Launch-BeamNG-VRS from BeamNG-VRS.ini ([Renderer] RenderScale).
-local M = {}
+    $lua = "-- Written by Launch-BeamNG-VRS from BeamNG-VRS.ini ([Renderer] RenderScale and VRDrawDistance).`r`nlocal M = {}`r`n"
+    if ($null -ne $Scale) {
+        $scaleText = ([double]$Scale).ToString('0.###', $invariant)
+        $lua += @"
 local scale = $scaleText
 local present = {}
 local sinceCheck = 0
@@ -116,15 +201,71 @@ end
 local function onClientPostStartMission() present = {} end
 M.onUpdate = onUpdate
 M.onClientPostStartMission = onClientPostStartMission
-return M
+
 "@
+    }
+    if ($null -ne $Distance) {
+        $iniText = ([double]$IniDistance).ToString('0', $invariant)
+        $distanceText = ([double]$Distance).ToString('0', $invariant)
+        $lua += @"
+-- M8.51: VR draw distance. The OpenXR layer applies the file below live.
+local iniDistance = $iniText
+local distance = $distanceText
+local distanceFile = '/settings/beamng_vrs_vr_draw_distance.txt'
+local presets = {500, 1000, 2000, 4000, 6000, 10000}
+local function setVrDrawDistance(m)
+  m = tonumber(m)
+  if not m then return end
+  m = math.floor(math.min(10000, math.max(100, m)) / 100 + 0.5) * 100
+  distance = m
+  writeFile(distanceFile, 'distance=' .. m .. '\nini=' .. iniDistance .. '\n')
+  log('I', 'beamngVrs', 'BeamNG-VRS VR draw distance ' .. m .. ' m')
+  guihooks.trigger('BeamngVrsDrawDistance', m)
+end
+local function requestVrDrawDistance() guihooks.trigger('BeamngVrsDrawDistance', distance) end
+-- Radial (quick access) menu: Freeroam actions > VR draw distance.
+local function registerMenus()
+  if not core_quickAccess then return end
+  core_quickAccess.addEntry({ level = '/root/sandbox/', uniqueID = 'beamngVrsDrawDistance', title = 'VR draw distance',
+    icon = 'road', categoryOrder = 40, ['goto'] = '/root/sandbox/beamngVrsDrawDistance/' })
+  core_quickAccess.addEntry({ level = '/root/sandbox/beamngVrsDrawDistance/', uniqueID = 'beamngVrsDrawDistancePresets',
+    generator = function(entries)
+      for i, m in ipairs(presets) do
+        local item = { title = m == 10000 and 'Full (10000 m)' or (m .. ' m'), icon = 'road', priority = i,
+          uniqueID = 'beamngVrsDrawDistance' .. m, onSelect = function() setVrDrawDistance(m) return {'reload'} end }
+        if m == distance then item.color = '#ff6600' end
+        table.insert(entries, item)
+      end
+    end })
+end
+M.setVrDrawDistance = setVrDrawDistance
+M.requestVrDrawDistance = requestVrDrawDistance
+M.onRegisterQuickAccessMenus = registerMenus
+M.onExtensionLoaded = registerMenus
+
+"@
+    }
+    $lua += "return M`r`n"
+    $files = @{
+        'beamng_vrs.txt' = "Written by Launch-BeamNG-VRS at every start from BeamNG-VRS.ini. Remove RenderScale and set VRDrawDistance=off there to delete it.`r`n"
+        'scripts\beamng_vrs\modScript.lua' = "load('beamngVrs')`r`nsetExtensionUnloadMode('beamngVrs', 'manual')`r`n"
+        'lua\ge\extensions\beamngVrs.lua' = $lua
+    }
+    if ($null -ne $Distance) {
+        $files['ui\modules\apps\BeamngVrsDrawDistance\app.js'] = $script:VRDrawDistanceApp
+        $files['ui\modules\apps\BeamngVrsDrawDistance\app.json'] = $script:VRDrawDistanceAppJson
     }
     foreach ($relative in $files.Keys) {
         $path = Join-Path $mod $relative
         [void](New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force)
         [IO.File]::WriteAllText($path, $files[$relative], $utf8)
     }
-    Write-Output "VR render scale $scaleText applied through $mod"
+    if ($null -ne $Distance) {
+        [IO.File]::WriteAllBytes((Join-Path $mod 'ui\modules\apps\BeamngVrsDrawDistance\app.png'),
+            [Convert]::FromBase64String($script:VRDrawDistanceAppPng))
+        Write-Output "VR draw distance $distanceText m; its in-game app and radial menu are added through $mod"
+    }
+    if ($null -ne $Scale) { Write-Output "VR render scale $scaleText applied through $mod" }
 }
 function Test-BeamNGIni {
     param([string]$Path)
@@ -149,7 +290,6 @@ function Test-BeamNGIni {
         'tracking.gazerefreshms' = @(2, 50, $true)
         'lensmask.size' = @(0.5, 1.5, $false)
         'renderer.renderscale' = @(0.25, 1.0, $false)
-        'renderer.vrdrawdistance' = @(100, 10000, $false)
     }
     foreach ($line in ($text -split "`n")) {
         ++$lineNumber
@@ -185,6 +325,9 @@ function Test-BeamNGIni {
                 $script:Renderer = $value.ToLowerInvariant()
             } elseif ($id -eq 'openxr.disablelayers') {
                 $script:DisabledOpenXRLayers = @(ConvertTo-OpenXRLayerList -Value $value)
+            } elseif ($id -eq 'renderer.vrdrawdistance') {
+                # off leaves the game's code untouched (an escape hatch after a game update).
+                $script:VRDrawDistance = if ($value -ieq 'off') { $null } else { Assert-IniNumber -Value $value -Low 100 -High 10000 -Integer $false }
             } elseif ($id -eq 'renderer.farclip') {
                 Write-Warning "INI line ${lineNumber} [Renderer]: FarClip was removed (BeamNG ignores it in VR); this line is ignored and can be deleted."
             } else { throw 'unknown section or setting' }
@@ -205,6 +348,7 @@ try {
     $script:DisabledOpenXRLayers = @('*')
     $script:Renderer = 'd3d12'
     $script:RenderScale = $null
+    $script:VRDrawDistance = [double]4000
     if (-not (Test-Path -LiteralPath $iniPath -PathType Leaf)) {
         throw 'BeamNG-VRS.ini not found beside Launch-BeamNG-VRS.cmd. Extract the entire ZIP; when upgrading, move your saved INI beside the CMD.'
     }
@@ -286,7 +430,18 @@ try {
         if ($null -ne $script:RenderScale) { Write-Output 'VR render scale will be applied through the BeamNG user folder.' }
         Write-Output 'Release files and game executable found. No game started.'; return
     }
-    Update-VRMod -UserFolder $UserFolder -Scale $(if ($script:Renderer -eq 'd3d12') { $script:RenderScale } else { $null })
+    # M8.51: the in-game VR draw distance persists unless the INI value changed.
+    $distanceFile = Join-Path $UserFolder 'settings\beamng_vrs_vr_draw_distance.txt'
+    $startDistance = Get-VRDrawDistanceStart -File $distanceFile -IniDistance $script:VRDrawDistance
+    if ($null -ne $startDistance) {
+        if ($startDistance -ne $script:VRDrawDistance) {
+            # Overrides the INI value in the OpenXR layer (child environment only).
+            $start.EnvironmentVariables['BEAMNG_VRS_VR_DRAW_DISTANCE'] = $startDistance.ToString('0', [Globalization.CultureInfo]::InvariantCulture)
+        }
+        $start.EnvironmentVariables['BEAMNG_VRS_VR_DRAW_DISTANCE_FILE'] = $distanceFile
+    }
+    Update-VRMod -UserFolder $UserFolder -Scale $(if ($script:Renderer -eq 'd3d12') { $script:RenderScale } else { $null }) `
+        -Distance $startDistance -IniDistance $script:VRDrawDistance
     if ($Diagnostics) {
         $start.EnvironmentVariables['VK_LOADER_DEBUG'] = 'error,warn,layer'
         # The OpenXR loader then reports the layer chain and which layer failed xrCreateInstance.
