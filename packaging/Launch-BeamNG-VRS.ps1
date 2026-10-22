@@ -218,17 +218,23 @@ local function setVrDrawDistance(m)
   if not m then return end
   m = math.floor(math.min(10000, math.max(100, m)) / 100 + 0.5) * 100
   distance = m
-  writeFile(distanceFile, 'distance=' .. m .. '\nini=' .. iniDistance .. '\n')
+  local ok, err = pcall(writeFile, distanceFile, 'distance=' .. m .. '\nini=' .. iniDistance .. '\n')
+  if not ok then log('W', 'beamngVrs', 'BeamNG-VRS could not save the VR draw distance: ' .. tostring(err)) return end
   log('I', 'beamngVrs', 'BeamNG-VRS VR draw distance ' .. m .. ' m')
   guihooks.trigger('BeamngVrsDrawDistance', m)
 end
 local function requestVrDrawDistance() guihooks.trigger('BeamngVrsDrawDistance', distance) end
 -- Radial (quick access) menu: Freeroam actions > VR draw distance.
+-- A future game version may change this menu: the entry is then left out, nothing else breaks.
+local function addMenuEntry(entry)
+  local ok, err = pcall(core_quickAccess.addEntry, entry)
+  if not ok then log('W', 'beamngVrs', 'BeamNG-VRS radial menu entry not added: ' .. tostring(err)) end
+end
 local function registerMenus()
-  if not core_quickAccess then return end
-  core_quickAccess.addEntry({ level = '/root/sandbox/', uniqueID = 'beamngVrsDrawDistance', title = 'VR draw distance',
+  if not core_quickAccess or type(core_quickAccess.addEntry) ~= 'function' then return end
+  addMenuEntry({ level = '/root/sandbox/', uniqueID = 'beamngVrsDrawDistance', title = 'VR draw distance',
     icon = 'road', categoryOrder = 40, ['goto'] = '/root/sandbox/beamngVrsDrawDistance/' })
-  core_quickAccess.addEntry({ level = '/root/sandbox/beamngVrsDrawDistance/', uniqueID = 'beamngVrsDrawDistancePresets',
+  addMenuEntry({ level = '/root/sandbox/beamngVrsDrawDistance/', uniqueID = 'beamngVrsDrawDistancePresets',
     generator = function(entries)
       for i, m in ipairs(presets) do
         local item = { title = m == 10000 and 'Full (10000 m)' or (m .. ' m'), icon = 'road', priority = i,
