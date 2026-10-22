@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(BeamNG_VRS VERSION 0.3.0 LANGUAGES CXX)
+project(BeamNG_VRS VERSION 0.4.0 LANGUAGES CXX)
 
 if(NOT WIN32)
   message(FATAL_ERROR "The Vulkan/OpenXR API layer DLLs currently require Windows.")
