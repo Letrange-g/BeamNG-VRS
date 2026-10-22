@@ -329,8 +329,10 @@ function Update-GhostingFix {
                   'destTex[storePos] = float4(vrsDebugOverlay(sampleOutput.rgb, uv), 1);'),
                 @('void main(uint3 dispatchThreadID : SV_DispatchThreadID)\n{\n    if (any(dispatchThreadID.xy >= getRtDimensions())) return;',
                   'void main(uint3 dispatchThreadID : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex)\n{\n    vrsEstimateEyeShift(groupIndex);\n    if (any(dispatchThreadID.xy >= getRtDimensions())) return;'))
-            $failed = $null
-            foreach ($edit in $edits) {
+            # GhostingFix.hlsl also uses these stock declarations; a rename stands it down too.
+            $failed = @('Texture2D<float4> backbuffer', 'Texture2D<float4> bloomFinal', 'Texture2D<float4> localExposureBlurredLogLum',
+                        'SamplerState samplerLinear', '#ifdef BNG_COCONUT') | Where-Object { -not $source.Contains($_) } | Select-Object -First 1
+            foreach ($edit in $(if ($failed) { @() } else { $edits })) {
                 $pattern = (($edit[0] -replace '\\n', "`n") -split '\s+' | Where-Object { $_ } | ForEach-Object { [regex]::Escape($_) }) -join '\s+'
                 $found = [regex]::Matches($source, $pattern)
                 if ($found.Count -ne 1) { $failed = $edit[0]; break }

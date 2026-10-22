@@ -212,7 +212,9 @@ try {
     $patchedShader = Join-Path $userFolder 'shaders\common\postfx\hdr\combinePass.cs.hlsl'
     $shaderCache = Join-Path $userFolder 'temp\shaders'
     [void](New-Item -ItemType Directory -Path (Split-Path -Parent $stockShader), $shaderCache -Force)
-    $stockText = "uint2 getRtDimensions() {`r`n    uint2 dim;`r`n    destTex.GetDimensions(dim.x, dim.y);`r`n    return dim;`r`n}`r`n" +
+    $stockText = "Texture2D<float4> backbuffer : register(t0);`r`nTexture2D<float4> bloomFinal : register(t2);`r`n" +
+        "Texture2D<float4> localExposureBlurredLogLum : register(t4);`r`nSamplerState samplerLinear : register(s0);`r`n#ifdef BNG_COCONUT`r`n#endif`r`n" +
+        "uint2 getRtDimensions() {`r`n    uint2 dim;`r`n    destTex.GetDimensions(dim.x, dim.y);`r`n    return dim;`r`n}`r`n" +
         "const float localGain = computeLocalExposure(sample.rgb, uv, exposureScale,`r`n" +
         "sample.rgb += bloomScale * bloomFinal.SampleLevel(samplerLinear, uv, 0).rgb;`r`n" +
         "destTex[storePos] = float4(sampleOutput.rgb, 1);`r`n" +
