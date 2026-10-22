@@ -9,6 +9,10 @@ BeamNG-VRS 0.4 — portable Windows x64, for BeamNG.drive 0.40.
   radial menu: **Freeroam Actions > VR draw distance** (500 / 1000 / 2000 /
   4000 / 6000 / Full). A "VR draw distance" UI app with a slider is also added.
   Your in-game pick is kept for the next launch unless you change the INI value.
+- **Sharper picture, your choice.** BeamNG 0.40 renders VR at 50% and upscales
+  it, which looks soft. Uncomment `RenderScale=1.0` under `[Renderer]` in the INI
+  for full resolution (more GPU; 0.67 to 0.8 is a middle ground). With the 4000 m
+  draw distance, 1.0 stayed within the 90 Hz budget on an RTX 5090.
 - In testing on an RTX 5090 at render scale 1.0, 4000 m looked almost the same as
   the full distance, with GPU time around 7 ms on West Coast and Italy. Short
   distances help most in open maps: 100 m on Utah cut GPU time from 9.1 to 3.8 ms.

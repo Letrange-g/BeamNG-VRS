@@ -16,6 +16,11 @@ Works with a fixed center or supported eye tracking.
   (500 / 1000 / 2000 / 4000 / 6000 / Full). A "VR draw distance" UI app with a
   slider is also available. Your in-game pick is kept for the next launch.
 
+- **Sharper picture, your choice.** BeamNG 0.40 renders VR at 50% and upscales it,
+  which looks soft. Uncomment `RenderScale=1.0` under `[Renderer]` in the INI for
+  full resolution (it costs more GPU; 0.67 to 0.8 is a middle ground). With the
+  4000 m draw distance, 1.0 stayed within the 90 Hz budget on an RTX 5090.
+
 ![West Coast, USA from the sky at the 4000 m default, render scale 1.0: GPU 7.2 ms, 1% low 80 fps](docs/images/west-coast-4000m.jpg)
 *West Coast, USA at the 4000 m default with render scale 1.0 (RTX 5090): the whole city and bay still in view, GPU 7.2 ms.*
 
@@ -47,7 +52,7 @@ Windows PowerShell is included in Windows 10/11; the package adds no EXE.
 - **Shape:** `circle` (default), `ellipse`, or `square`.
 - **DrawOutline:** shows the quality-region borders for checking settings. Leave `false` for gameplay.
 - **Scissor:** crops image edges to save rendering work. Enabled by default; check the edges in your headset.
-- **RenderScale:** Direct3D 12 VR render scale, `0.25` to `1.0`. Off by default (game uses `0.5`).
+- **RenderScale:** Direct3D 12 VR render scale, `0.25` to `1.0`. Not set by default (game uses `0.5`); set `1.0` for the sharpest picture.
 - **VRDrawDistance:** VR draw distance in metres, `100` to `10000`. Default `4000`; `off` keeps the game's 10000 m. Also changeable in game from the radial menu.
 - **LensMask:** skips the image corners hidden by the lenses. Enabled by default (`Size=1.15`); increase `Size` if you see black corners.
 
