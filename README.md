@@ -96,8 +96,8 @@ the launch CMD, so you get the new `[OpenXR]` and `[Renderer]` sections. Update 
 settings still work; the four new controls let you adjust each eye separately.
 
 Launch BeamNG normally to stop using VRS. To uninstall, remove the `BeamNG-VRS`
-folder, `BeamNG-VRS.ini`, both CMD files and `READ-ME-FIRST.txt`. If you used `RenderScale`, also delete
-`mods\unpacked\beamng_vrs` in your BeamNG user folder.
+folder, `BeamNG-VRS.ini`, both CMD files and `READ-ME-FIRST.txt`. Also delete
+`mods\unpacked\beamng_vrs` and `settings\beamng_vrs_vr_draw_distance.txt` in your BeamNG user folder.
 
 [Help and requirements](docs/TECHNICAL.md) · [Performance notes](docs/PERFORMANCE.md) ·
 [Source guide](docs/SOURCE-GUIDE.md) · [Build from source](docs/BUILDING.md) · [Report an issue safely](docs/SECURITY.md)

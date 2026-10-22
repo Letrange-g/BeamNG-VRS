@@ -41,6 +41,11 @@ Size=1.15 is the kept ellipse; increase it if you see black corners.
 [Performance] TurboMode=true enables experimental frame-wait overlap; default
 false. Restart after changes. It can interfere with motion reprojection. Compare
 headset smoothness and frame times; set false if it worsens pacing or appearance.
+[Renderer] VRDrawDistance=4000 (default) sets the VR draw distance in metres,
+100 to 10000; BeamNG itself uses 10000 in VR. off keeps the game's distance.
+In game, the radial menu (Freeroam Actions > VR draw distance) and the
+"VR draw distance" UI app change it live: 500, 1000, 2000, 4000, 6000 or Full.
+That choice is kept for the next start until you change the INI value.
 [Logging] Level accepts off, errors, info (default) or debug. Use off to stop
 layer log output; Diagnose-BeamNG-VRS.cmd overrides it with debug logging.
 GracePeriodMs=30 holds the last valid gaze briefly; 0 disables that grace.
