@@ -334,7 +334,7 @@ int m817MessageLevel(const char* msg){
     strstr(msg,"M8.31 TURBO") || strstr(msg,"Next xrCreateApiLayerInstance") || strstr(msg,"Opt-in:") ||
     // D3D12 setup and first-use lines are flushed at once, so a crash right after still leaves them.
     strstr(msg,"M8.40 graphics") || strstr(msg,"hooks=") || strstr(msg,"foveation active") ||
-    strstr(msg,"M8.42 shading-rate image") || strstr(msg,"foveation frames") || strstr(msg,"M8.43") || strstr(msg,"M8.44") || strstr(msg,"M8.47") || strstr(msg,"M8.50"))return 1;
+    strstr(msg,"M8.42 shading-rate image") || strstr(msg,"foveation frames") || strstr(msg,"M8.43") || strstr(msg,"M8.44") || strstr(msg,"M8.47") || strstr(msg,"M8.50") || strstr(msg,"M8.51"))return 1;
  return 2;
 }
 void logLine(const char* msg) {
@@ -612,6 +612,40 @@ void m850VrDrawDistance(){
   if(end!=v && !*end && std::isfinite(distance) && distance>0)beamng_far::patchRunningGame(logLine,distance);
  });
 }
+// M8.51: the launcher names a file (BEAMNG_VRS_VR_DRAW_DISTANCE_FILE) that the game's
+// Lua UI app and radial menu write as "distance=N". A new value is applied live.
+void m851LiveDrawDistance(){
+ static const std::wstring path=[]{
+  std::wstring p(32768,L'\0');const DWORD n=GetEnvironmentVariableW(L"BEAMNG_VRS_VR_DRAW_DISTANCE_FILE",p.data(),DWORD(p.size()));
+  p.resize(n<p.size()?n:0);return p;
+ }();
+ if(path.empty())return;
+ static std::mutex pollMutex;
+ std::unique_lock<std::mutex> lock(pollMutex,std::try_to_lock);
+ if(!lock.owns_lock())return;
+ static FILETIME seen{};
+ static double applied=0;
+ WIN32_FILE_ATTRIBUTE_DATA a{};
+ if(!GetFileAttributesExW(path.c_str(),GetFileExInfoStandard,&a) || !CompareFileTime(&a.ftLastWriteTime,&seen))return;
+ const HANDLE file=CreateFileW(path.c_str(),GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+ if(file==INVALID_HANDLE_VALUE)return;
+ char text[128]{};DWORD size=0;
+ const BOOL ok=ReadFile(file,text,sizeof(text)-1,&size,nullptr);
+ CloseHandle(file);
+ if(!ok)return;
+ text[size]='\0';
+ const char* at=strstr(text,"distance=");
+ if(!at)return; // Possibly read mid-write: retried at the next poll.
+ char* end=nullptr;const double distance=strtod(at+9,&end);
+ if(end==at+9 || !std::isfinite(distance) || distance<100 || distance>10000)return;
+ seen=a.ftLastWriteTime;
+ if(distance==applied)return;
+ applied=distance;
+ char msg[128]{};
+ if(beamng_far::setDistance(distance))sprintf_s(msg,sizeof(msg),"M8.51 VR draw distance live: %.0f m",distance);
+ else sprintf_s(msg,sizeof(msg),"M8.51 VR draw distance WARNING: %.0f m not applied (VRDrawDistance off or nothing patched at start)",distance);
+ logLine(msg);
+}
 beamng_d3d12::Effects m843Effects(){
  beamng_d3d12::Effects e{};
  e.crop=enabled("BEAMNG_VRS_SCISSOR_ENABLE");
@@ -809,7 +843,8 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeWaitFrame(XrSession session,const
   std::lock_guard<std::mutex> g(stateMutex);auto it=sessions.find(session);
   if(it!=sessions.end())it->second.displayTime=state->predictedDisplayTime;
  }
- static unsigned calls=0;
+ static unsigned calls=0,drawDistancePolls=0;
+ if(++drawDistancePolls%45==0)m851LiveDrawDistance();
  if(m817Verbose() && (++calls%300)==1){char msg[160]{};sprintf_s(msg,sizeof(msg),"M7.2b xrWaitFrame result=%d predictedDisplayTime=%lld",(int)r,(long long)(state?state->predictedDisplayTime:0));logLine(msg);}
  return r;
 }

@@ -9,15 +9,15 @@ foreach ($name in $names) { $before[$name] = [Environment]::GetEnvironmentVariab
 function Test-LaunchLayout {
     param([string]$Layers, [switch]$Diagnostics)
     $launcher = Join-Path $Layers 'Launch-BeamNG-VRS.ps1'
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -CheckOnly
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder -CheckOnly
     if ($LASTEXITCODE -ne 0 -or (Test-Path -LiteralPath $result)) { throw 'CheckOnly failed or started the game.' }
     $diagnosticLog = $null
     if ($Diagnostics) {
-        $messages = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -Diagnostics
+        $messages = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder -Diagnostics
         foreach ($message in $messages) {
             if ($message -match '^Vulkan loader diagnostics: (.+)$') { $diagnosticLog = $Matches[1] }
         }
-    } else { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher }
+    } else { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder }
     if ($LASTEXITCODE -ne 0) { throw 'Launcher failed.' }
     $deadline = [DateTime]::UtcNow.AddSeconds(10)
     # A closed file is required: the child might have just created it.
@@ -59,7 +59,9 @@ function Test-LaunchLayout {
 try {
     $layers = Join-Path $temp 'BeamNG-VRS'
     $bin = Join-Path $temp 'Bin64'
-    [void](New-Item -ItemType Directory -Path $layers, $bin)
+    # Every launch uses this scratch BeamNG user folder, never the real one.
+    $userFolder = Join-Path $temp 'user folder'
+    [void](New-Item -ItemType Directory -Path $layers, $bin, (Join-Path $userFolder 'settings'))
     Copy-Item -LiteralPath $GameFixture -Destination (Join-Path $bin 'BeamNG.drive.x64.exe')
     foreach ($file in @('BeamNG_VRS.dll', 'BeamNG_EyeProbe.dll',
             'VK_LAYER_BEAMNG_vrs.json', 'XR_APILAYER_BEAMNG_eye_probe.json')) {
@@ -112,10 +114,10 @@ try {
             [void](New-ItemProperty -Path $registry -Name $manifest -PropertyType DWord -Value $layer[1])
         }
         Set-Content -LiteralPath $ini -Value "[OpenXR]`nDisableLayers=XR_APILAYER_TEST_overlay, XR_APILAYER_TEST_off" -Encoding UTF8
-        $messages = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -CheckOnly -OpenXRLayerRegistry $registry
+        $messages = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder -CheckOnly -OpenXRLayerRegistry $registry
         if ($LASTEXITCODE -ne 0 -or ($messages -join "`n") -notmatch 'XR_APILAYER_TEST_overlay \[disabled for BeamNG' -or
             ($messages -join "`n") -notmatch 'XR_APILAYER_TEST_off \[off in registry\]') { throw 'CheckOnly did not report implicit OpenXR layers.' }
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -OpenXRLayerRegistry $registry
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder -OpenXRLayerRegistry $registry
         if ($LASTEXITCODE -ne 0) { throw 'Launcher failed with implicit OpenXR layers.' }
         $deadline = [DateTime]::UtcNow.AddSeconds(10); $content = ''
         while ([DateTime]::UtcNow -lt $deadline) {
@@ -130,7 +132,7 @@ try {
         # Omitted DisableLayers defaults to *; an explicit empty value keeps every layer.
         foreach ($case in @(@("[Logging]`nLevel=info", '1'), @("[OpenXR]`nDisableLayers=", ''))) {
             Set-Content -LiteralPath $ini -Value $case[0] -Encoding UTF8
-            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -OpenXRLayerRegistry $registry
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder -OpenXRLayerRegistry $registry
             if ($LASTEXITCODE -ne 0) { throw 'Launcher failed with default OpenXR layer handling.' }
             $deadline = [DateTime]::UtcNow.AddSeconds(10); $content = ''
             while ([DateTime]::UtcNow -lt $deadline) {
@@ -141,9 +143,8 @@ try {
             Remove-Item -LiteralPath $result
         }
     } finally { Remove-Item -LiteralPath (Split-Path -Parent $registry) -Recurse -Force -ErrorAction SilentlyContinue }
-    # M8.48: RenderScale writes the Lua mod into the user folder; omitting it removes the mod.
-    $userFolder = Join-Path $temp 'user folder'
-    [void](New-Item -ItemType Directory -Path $userFolder -Force)
+    # M8.48: RenderScale writes the Lua mod into the user folder; omitting it (and
+    # VRDrawDistance=off) removes the mod.
     $modLua = Join-Path $userFolder 'mods\unpacked\beamng_vrs\lua\ge\extensions\beamngVrs.lua'
     Set-Content -LiteralPath $ini -Value "[Renderer]`nRenderScale=0.8" -Encoding UTF8
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder
@@ -156,7 +157,42 @@ try {
         Start-Sleep -Milliseconds 100
     }
     Remove-Item -LiteralPath $result
-    Set-Content -LiteralPath $ini -Value "[Logging]`nLevel=info" -Encoding UTF8
+    # M8.51: the default VRDrawDistance=4000 adds the live UI app and radial menu.
+    $app = Join-Path $userFolder 'mods\unpacked\beamng_vrs\ui\modules\apps\BeamngVrsDrawDistance'
+    $distanceFile = Join-Path $userFolder 'settings\beamng_vrs_vr_draw_distance.txt'
+    $modText = Get-Content -LiteralPath $modLua -Raw
+    if ($modText -notmatch 'local distance = 4000\r?\n' -or $modText -notmatch 'local iniDistance = 4000\r?\n' -or
+        $modText -notmatch 'M\.setVrDrawDistance' -or $modText -notmatch 'core_quickAccess\.addEntry' -or
+        -not (Test-Path -LiteralPath (Join-Path $app 'app.js')) -or -not (Test-Path -LiteralPath (Join-Path $app 'app.json'))) {
+        throw 'VR draw distance app was not written.'
+    }
+    Add-Type -AssemblyName System.Drawing
+    $png = [Drawing.Image]::FromFile((Join-Path $app 'app.png'))
+    try { if ($png.Width -ne 250 -or $png.Height -ne 120) { throw 'VR draw distance app.png is not 250x120.' } } finally { $png.Dispose() }
+    [void](ConvertFrom-Json (Get-Content -LiteralPath (Join-Path $app 'app.json') -Raw))
+    # The in-game choice persists while the INI value is unchanged; a changed INI value wins.
+    foreach ($case in @(@('3000', "distance=1500`nini=3000`n", '1500', $true), @('5000', "distance=1500`nini=3000`n", '', $false),
+                        @('3000', "distance=99999`nini=3000`n", '', $false))) {
+        Set-Content -LiteralPath $ini -Value "[Renderer]`nVRDrawDistance=$($case[0])" -Encoding UTF8
+        [IO.File]::WriteAllText($distanceFile, $case[1])
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder
+        if ($LASTEXITCODE -ne 0) { throw 'Launcher failed with VRDrawDistance.' }
+        $deadline = [DateTime]::UtcNow.AddSeconds(10); $content = ''
+        while ([DateTime]::UtcNow -lt $deadline) {
+            try { $content = Get-Content -LiteralPath $result -Raw; if ($content -match 'XR_ENABLE_API_LAYERS=.*probe') { break } } catch {}
+            Start-Sleep -Milliseconds 100
+        }
+        $expected = if ($case[2]) { $case[2] } else { $case[0] }
+        if ($content -notmatch ('(?m)^BEAMNG_VRS_VR_DRAW_DISTANCE=' + $case[2] + '\r?$') -or
+            -not $content.Contains('BEAMNG_VRS_VR_DRAW_DISTANCE_FILE=' + $distanceFile) -or
+            (Get-Content -LiteralPath $modLua -Raw) -notmatch ('local distance = ' + $expected + '\r?\n') -or
+            (Test-Path -LiteralPath $distanceFile) -ne $case[3]) {
+            throw "Unexpected VR draw distance start for INI $($case[0]) and saved $($case[1])."
+        }
+        Remove-Item -LiteralPath $result
+    }
+    Set-Content -LiteralPath $ini -Value "[Logging]`nLevel=info`n[Renderer]`nVRDrawDistance=OFF" -Encoding UTF8
+    [IO.File]::WriteAllText($distanceFile, "distance=1500`nini=3000`n")
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder
     if ($LASTEXITCODE -ne 0 -or (Test-Path -LiteralPath (Join-Path $userFolder 'mods\unpacked\beamng_vrs'))) { throw 'RenderScale mod was not removed.' }
     $deadline = [DateTime]::UtcNow.AddSeconds(10); $content = ''
@@ -164,10 +200,13 @@ try {
         try { $content = Get-Content -LiteralPath $result -Raw; if ($content -match 'XR_ENABLE_API_LAYERS=.*probe') { break } } catch {}
         Start-Sleep -Milliseconds 100
     }
+    if ($content -notmatch '(?m)^BEAMNG_VRS_VR_DRAW_DISTANCE_FILE=\r?$' -or -not (Test-Path -LiteralPath $distanceFile)) {
+        throw 'VRDrawDistance=off still used the live file.'
+    }
     Remove-Item -LiteralPath $result
     # [Renderer] API=vulkan keeps the Vulkan renderer, where the VRS layer applies.
     Set-Content -LiteralPath $ini -Value "[Renderer]`nAPI=vulkan" -Encoding UTF8
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder
     if ($LASTEXITCODE -ne 0) { throw 'Launcher failed with the Vulkan renderer.' }
     $deadline = [DateTime]::UtcNow.AddSeconds(10); $content = ''
     while ([DateTime]::UtcNow -lt $deadline) {
@@ -180,17 +219,17 @@ try {
     Remove-Item -LiteralPath $result
     # The public launcher must not silently edit/use an obsolete nested INI.
     Move-Item -LiteralPath $ini -Destination $layers
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -CheckOnly
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder -CheckOnly
     if ($LASTEXITCODE -eq 0 -or (Test-Path -LiteralPath $result)) { throw 'Missing root INI was not rejected.' }
     Move-Item -LiteralPath (Join-Path $layers 'BeamNG-VRS.ini') -Destination $ini
     Remove-Item -LiteralPath (Join-Path $bin 'BeamNG.drive.x64.exe')
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -CheckOnly
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder -CheckOnly
     if ($LASTEXITCODE -eq 0 -or (Test-Path -LiteralPath $result)) { throw 'Missing executable was not rejected.' }
     Copy-Item -LiteralPath $GameFixture -Destination (Join-Path $bin 'BeamNG.drive.x64.exe')
     Set-Content -LiteralPath $ini -Value "[Debug]`nDrawOutline=typo" -Encoding UTF8
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder
     if ($LASTEXITCODE -eq 0 -or (Test-Path -LiteralPath $result)) { throw 'Invalid INI started the game.' }
-    Write-Output 'Launcher integration passed: root/Bin64 layouts, root INI, both executable names, working directory, Vulkan discovery, diagnostic capture, arguments, child environment, CheckOnly, implicit OpenXR layer disabling, RenderScale mod, D3D12 default and Vulkan renderer, missing INI/executable and invalid INI.'
+    Write-Output 'Launcher integration passed: root/Bin64 layouts, root INI, both executable names, working directory, Vulkan discovery, diagnostic capture, arguments, child environment, CheckOnly, implicit OpenXR layer disabling, RenderScale mod, VR draw distance app and persistence, D3D12 default and Vulkan renderer, missing INI/executable and invalid INI.'
 } finally {
     foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $before[$name], 'Process') }
     Remove-Item -LiteralPath $temp -Recurse -Force

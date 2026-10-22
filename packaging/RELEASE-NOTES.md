@@ -1,6 +1,26 @@
-BeamNG-VRS 0.3 — portable Windows x64, for BeamNG.drive 0.40.
+BeamNG-VRS 0.4 — portable Windows x64, for BeamNG.drive 0.40.
 
-## What's new
+## What's new in 0.4
+
+- **VR draw distance.** BeamNG 0.40 draws VR out to 10000 m, further than the
+  desktop's 8000 m, and no game setting changes it. BeamNG-VRS now sets it to
+  **4000 m by default**. Change it with `[Renderer] VRDrawDistance` (100 to
+  10000, or `off` to keep the game's value) in the INI, or live in game from the
+  radial menu: **Freeroam Actions > VR draw distance** (500 / 1000 / 2000 /
+  4000 / 6000 / Full). A "VR draw distance" UI app with a slider is also added.
+  Your in-game pick is kept for the next launch unless you change the INI value.
+- **Sharper picture, your choice.** BeamNG 0.40 renders VR at 50% and upscales
+  it, which looks soft. Uncomment `RenderScale=1.0` under `[Renderer]` in the INI
+  for full resolution (more GPU; 0.67 to 0.8 is a middle ground). With the 4000 m
+  draw distance, 1.0 stayed within the 90 Hz budget on an RTX 5090.
+- In testing on an RTX 5090 at render scale 1.0, 4000 m looked almost the same as
+  the full distance, with GPU time around 7 ms on West Coast and Italy. Short
+  distances help most in open maps: 100 m on Utah cut GPU time from 9.1 to 3.8 ms.
+- The distance is found in the game's code at every start. After a BeamNG update,
+  the log line `M8.50 VR draw distance … patched N of M sites` should show N above 0;
+  set `VRDrawDistance=off` if the game ever misbehaves.
+
+## Since 0.2
 
 - **Moved to Direct3D 12 VR.** BeamNG 0.40 renders VR with Direct3D 12, and the
   launcher now starts it that way. Foveation (fixed or eye-tracked) needs a GPU
@@ -12,14 +32,14 @@ BeamNG-VRS 0.3 — portable Windows x64, for BeamNG.drive 0.40.
 
 ## Install
 
-1. Download **BeamNG-VRS-0.3.0-windows-x64.zip** below.
+1. Download **BeamNG-VRS-0.4.0-windows-x64.zip** below.
 2. Close BeamNG and extract the whole ZIP into the game folder, beside `Bin64`.
    Extraction directly inside `Bin64` also works.
 3. Edit **BeamNG-VRS.ini** beside the CMD, then run **Launch-BeamNG-VRS.cmd**.
 4. Enable VR normally. Restart after changing settings.
 
-Updating from 0.2: back up your INI, extract the new ZIP, then copy your
-values into the new INI so you get the new `[OpenXR]` and `[Renderer]` sections.
+Updating: back up your INI, extract the new ZIP, then copy your values into
+the new INI. An older INI without `VRDrawDistance` also gets the 4000 m default.
 Update the launcher and both DLLs together.
 
 Requires Windows 10/11 x64, BeamNG.drive 0.40 VR (Direct3D 12, or Vulkan), an
@@ -36,7 +56,8 @@ administrator rights or global layer registration.
 - Turbo off. `TurboMode=true` may help when the CPU is the limit; it can
   interfere with motion reprojection.
 - Direct3D 12 renderer, other OpenXR layers off for BeamNG only (`DisableLayers=*`),
-  game's own VR render scale. On Direct3D 12, scissor crops the field of view.
+  game's own VR render scale, VR draw distance 4000 m. On Direct3D 12, scissor
+  crops the field of view.
 - Debug outlines disabled, brief `info` logging, 30 ms gaze grace and 8 ms polling.
 - If VRS shimmers on fine detail, try BeamNG's MSAA (`AllPasses=false` on Vulkan).
 - **Ctrl+Shift+V** pauses VRS in game; the log shows GPU time per frame for comparison.

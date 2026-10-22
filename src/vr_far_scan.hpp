@@ -161,6 +161,9 @@ inline Report scan(const Image& image, const FunctionAt& functionAt, size_t maxF
 // Scans BeamNG's executable in memory, logs M8.50 lines and, with distance > 0,
 // patches every site to that distance. Implemented in vr_far_patch.cpp.
 void patchRunningGame(void (*log)(const char*), double distance);
+// M8.51: rewrites the places the startup patch changed to a new distance.
+// Returns false when nothing was patched at startup.
+bool setDistance(double distance);
 #endif
 
 inline const char* name(Kind kind) {

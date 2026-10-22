@@ -4,7 +4,27 @@ Foveated rendering for **BeamNG.drive VR** (Direct3D 12 or Vulkan), plus edge cr
 Keep more detail where you look and reduce rendering work around the edges.
 Works with a fixed center or supported eye tracking.
 
-**Windows x64 · Release 0.3.0 · built for BeamNG.drive 0.40.** Performance varies by headset, GPU and scene.
+**Windows x64 · Release 0.4.0 · built for BeamNG.drive 0.40.** Performance varies by headset, GPU and scene.
+
+## What's new in 0.4
+
+- **VR draw distance.** BeamNG 0.40 draws VR out to 10000 m, further than the
+  desktop's 8000 m, and no game setting changes it. BeamNG-VRS now sets it to
+  **4000 m by default**, which looks almost the same and saves GPU and CPU time.
+  Change it with `[Renderer] VRDrawDistance` (100 to 10000, or `off`) in the INI,
+  or live in game from the radial menu: **Freeroam Actions > VR draw distance**
+  (500 / 1000 / 2000 / 4000 / 6000 / Full). A "VR draw distance" UI app with a
+  slider is also available. Your in-game pick is kept for the next launch.
+
+- **Sharper picture, your choice.** BeamNG 0.40 renders VR at 50% and upscales it,
+  which looks soft. Uncomment `RenderScale=1.0` under `[Renderer]` in the INI for
+  full resolution (it costs more GPU; 0.67 to 0.8 is a middle ground). With the
+  4000 m draw distance, 1.0 stayed within the 90 Hz budget on an RTX 5090.
+
+![West Coast, USA from the sky at the 4000 m default, render scale 1.0: GPU 7.2 ms, 1% low 80 fps](docs/images/west-coast-4000m.jpg)
+*West Coast, USA at the 4000 m default with render scale 1.0 (RTX 5090): the whole city and bay still in view, GPU 7.2 ms.*
+
+![Radial menu: Freeroam Actions > VR draw distance, 500 m selected](docs/images/radial-vr-draw-distance.jpg)
 
 ## What's new since 0.2
 
@@ -16,7 +36,7 @@ Works with a fixed center or supported eye tracking.
 
 ## Install
 
-1. [Download the Windows ZIP](https://github.com/Letrange-g/BeamNG-VRS/releases/download/v0.3.0/BeamNG-VRS-0.3.0-windows-x64.zip) (not the source-code ZIP).
+1. [Download the Windows ZIP](https://github.com/Letrange-g/BeamNG-VRS/releases/download/v0.4.0/BeamNG-VRS-0.4.0-windows-x64.zip) (not the source-code ZIP).
 2. Close BeamNG and extract the whole ZIP into the game folder, beside `Bin64`.
 3. Double-click `Launch-BeamNG-VRS.cmd`, then enable VR in the game.
 
@@ -32,7 +52,8 @@ Windows PowerShell is included in Windows 10/11; the package adds no EXE.
 - **Shape:** `circle` (default), `ellipse`, or `square`.
 - **DrawOutline:** shows the quality-region borders for checking settings. Leave `false` for gameplay.
 - **Scissor:** crops image edges to save rendering work. Enabled by default; check the edges in your headset.
-- **RenderScale:** Direct3D 12 VR render scale, `0.25` to `1.0`. Off by default (game uses `0.5`).
+- **RenderScale:** Direct3D 12 VR render scale, `0.25` to `1.0`. Not set by default (game uses `0.5`); set `1.0` for the sharpest picture.
+- **VRDrawDistance:** VR draw distance in metres, `100` to `10000`. Default `4000`; `off` keeps the game's 10000 m. Also changeable in game from the radial menu.
 - **LensMask:** skips the image corners hidden by the lenses. Enabled by default (`Size=1.15`); increase `Size` if you see black corners.
 
 If fine detail shimmers with VRS, try BeamNG's MSAA setting, or disable foveation
@@ -80,8 +101,8 @@ the launch CMD, so you get the new `[OpenXR]` and `[Renderer]` sections. Update 
 settings still work; the four new controls let you adjust each eye separately.
 
 Launch BeamNG normally to stop using VRS. To uninstall, remove the `BeamNG-VRS`
-folder, `BeamNG-VRS.ini`, both CMD files and `READ-ME-FIRST.txt`. If you used `RenderScale`, also delete
-`mods\unpacked\beamng_vrs` in your BeamNG user folder.
+folder, `BeamNG-VRS.ini`, both CMD files and `READ-ME-FIRST.txt`. Also delete
+`mods\unpacked\beamng_vrs` and `settings\beamng_vrs_vr_draw_distance.txt` in your BeamNG user folder.
 
 [Help and requirements](docs/TECHNICAL.md) · [Performance notes](docs/PERFORMANCE.md) ·
 [Source guide](docs/SOURCE-GUIDE.md) · [Build from source](docs/BUILDING.md) · [Report an issue safely](docs/SECURITY.md)
