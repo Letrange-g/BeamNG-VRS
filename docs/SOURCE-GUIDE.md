@@ -21,6 +21,9 @@ top to bottom.
 | `src/openxr_probe.cpp` | Intercept OpenXR calls; identify eyes, publish gaze and route turbo | `probeCreateSession`, `probeEndFrame`, `probeWaitFrame` |
 | `src/openxr_turbo.hpp` | One-frame async wait scheduler | `Scheduler::wait`, `begin`, `end`, `drain`, `stop` |
 | `src/d3d12_probe.cpp` | D3D12 side (BeamNG 0.40 DX12 VR), driven from the OpenXR layer: VRS Tier 2 foveation on eye-shaped render targets (M8.42), scissor clipping, lens-corner rates and final-image black edges/outline (M8.43), and the diagnostics render-target report (M8.41), via vtable hooks | `attach`, `bind`, `updateFoveation`, `hookRSSetScissorRects`, `finishEyeImage` |
+| `src/vr_far_scan.hpp` | VR draw distance (M8.50): portable search of the game executable for the 10000 m VR far value, starting from the OpenXR view strings | `scan`, `anchorStrings`, `ripRefs`, `callees` |
+| `src/vr_far_patch.cpp` | Applies the scan to the running game, redirects each site to our own value, and changes it live (M8.51) | `patchRunningGame`, `setDistance`, `allocateNear` |
+| `packaging/Launch-BeamNG-VRS.ps1` (Lua mod) | Writes the `beamng_vrs` mod: render scale, and the VR draw distance radial menu entry and UI app, which save the pick to a file the OpenXR layer polls | `Update-VRMod`, `Get-VRDrawDistanceStart` |
 | `src/ffr_upload_commands.hpp` | Reuse completed upload recordings/resources | Cache and ownership helpers |
 | `src/beamng_gaze_shared.hpp` | Shared-memory structures used between the DLLs | Mapping names and data structures |
 | `tests/` | Executable examples of configuration and lifetime rules | Parser, crop, hook and turbo tests |

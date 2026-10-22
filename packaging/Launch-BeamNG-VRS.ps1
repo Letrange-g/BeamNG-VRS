@@ -63,6 +63,10 @@ function Get-OpenXRImplicitLayers {
 # M8.51: the same mod adds a "VR draw distance" UI app and radial menu entry. They
 # write <UserFolder>\settings\beamng_vrs_vr_draw_distance.txt ("distance=N", "ini=N"),
 # which the OpenXR layer applies live and the next launch keeps unless the INI changed.
+# UI app "VR draw distance" (Angular directive, the format of the game's own apps):
+# a slider plus preset buttons. It calls the Lua extension below through
+# bngApi.engineLua and follows the 'BeamngVrsDrawDistance' event, so it shows the
+# same value as the radial menu.
 $script:VRDrawDistanceApp = @'
 angular.module('beamng.apps')
 .directive('beamngVrsDrawDistance', [function () {
@@ -93,10 +97,13 @@ angular.module('beamng.apps')
         timer = setTimeout(function () { timer = null; send(scope.value) }, 300)
       }
       scope.pick = function (m) { cancel(); scope.slider = m; scope.value = m; send(m) }
+      // A change from Lua (radial menu or another app) moves the slider, unless
+      // the user is still dragging it.
       scope.$on('BeamngVrsDrawDistance', function (event, m) {
         scope.$evalAsync(function () { if (!timer) { scope.value = m; scope.slider = m } })
       })
       scope.$on('$destroy', cancel)
+      // Ask Lua for the current value when the app opens.
       bngApi.engineLua('extensions.beamngVrs.requestVrDrawDistance()')
     }
   }
@@ -209,10 +216,14 @@ M.onClientPostStartMission = onClientPostStartMission
         $distanceText = ([double]$Distance).ToString('0', $invariant)
         $lua += @"
 -- M8.51: VR draw distance. The OpenXR layer applies the file below live.
+-- iniDistance is saved beside the pick so the launcher can tell whether the INI
+-- changed since; distance is the value this launch started with.
 local iniDistance = $iniText
 local distance = $distanceText
 local distanceFile = '/settings/beamng_vrs_vr_draw_distance.txt'
 local presets = {500, 1000, 2000, 4000, 6000, 10000}
+-- Called by the UI app and the radial menu: clamps to 100-10000 m in 100 m
+-- steps, saves it for the DLL and the next launch, and tells the UI.
 local function setVrDrawDistance(m)
   m = tonumber(m)
   if not m then return end
@@ -224,6 +235,7 @@ local function setVrDrawDistance(m)
   log('I', 'beamngVrs', 'BeamNG-VRS VR draw distance ' .. m .. ' m')
   guihooks.trigger('BeamngVrsDrawDistance', m)
 end
+-- Sends the current value to the UI app.
 local function requestVrDrawDistance() guihooks.trigger('BeamngVrsDrawDistance', distance) end
 -- Radial (quick access) menu: Freeroam actions > VR draw distance.
 -- A future game version may change this menu: the entry is then left out, nothing else breaks.
@@ -231,6 +243,10 @@ local function addMenuEntry(entry)
   local ok, err = pcall(core_quickAccess.addEntry, entry)
   if not ok then log('W', 'beamngVrs', 'BeamNG-VRS radial menu entry not added: ' .. tostring(err)) end
 end
+-- One category on the Freeroam actions page ('/root/sandbox/') that opens a
+-- submenu; its generator builds the preset items each time the menu opens, so
+-- the current preset is highlighted. Returning {'reload'} redraws the menu
+-- after a pick instead of closing it.
 local function registerMenus()
   if not core_quickAccess or type(core_quickAccess.addEntry) ~= 'function' then return end
   addMenuEntry({ level = '/root/sandbox/', uniqueID = 'beamngVrsDrawDistance', title = 'VR draw distance',
@@ -247,6 +263,8 @@ local function registerMenus()
 end
 M.setVrDrawDistance = setVrDrawDistance
 M.requestVrDrawDistance = requestVrDrawDistance
+-- The game asks extensions for entries whenever it rebuilds the radial menu;
+-- registering on load too covers a menu that was built before this mod loaded.
 M.onRegisterQuickAccessMenus = registerMenus
 M.onExtensionLoaded = registerMenus
 
