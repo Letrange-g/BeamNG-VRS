@@ -292,6 +292,76 @@ M.onExtensionLoaded = registerMenus
     }
     if ($null -ne $Scale) { Write-Output "VR render scale $scaleText applied through $mod" }
 }
+# [Renderer] GhostingFix: BeamNG 0.40 builds local exposure and bloom from one VR eye
+# and reuses them for the other eye, which shows the first eye's picture as ghosts.
+# GhostingFix.hlsl (beside this script) makes each eye read those textures at its own
+# position. BeamNG ignores shaders inside mods but loads loose files from the user
+# folder, so the game's own combinePass shader is patched and written there. The game
+# caches compiled shaders by file name, so temp\shaders is cleared whenever the patched
+# file is written or removed.
+function Update-GhostingFix {
+    param([string]$UserFolder, [string]$GameRoot, [string]$FixFile, [bool]$Enabled)
+    $relative = 'shaders\common\postfx\hdr\combinePass.cs.hlsl'
+    $target = Join-Path $UserFolder $relative
+    $marker = 'BeamNG-VRS ghosting fix'
+    $utf8 = New-Object Text.UTF8Encoding($false)
+    $existing = if (Test-Path -LiteralPath $target -PathType Leaf) { [IO.File]::ReadAllText($target) } else { $null }
+    $ours = $null -ne $existing -and $existing.Contains($marker)
+    $shaderCache = Join-Path $UserFolder 'temp\shaders'
+    $wanted = $null
+    if ($Enabled) {
+        $stock = Join-Path $GameRoot $relative
+        if (-not (Test-Path -LiteralPath $stock -PathType Leaf) -or -not (Test-Path -LiteralPath $FixFile -PathType Leaf)) {
+            Write-Warning "[Renderer] GhostingFix: $stock or $FixFile not found; the ghosting fix is not applied."
+        } else {
+            $source = [IO.File]::ReadAllText($stock).Replace("`r`n", "`n")
+            $fix = [IO.File]::ReadAllText($FixFile).Replace("`r`n", "`n")
+            # Each edit anchors on the stock code (whitespace-tolerant) and must match exactly
+            # once; after a game update that changes any of them, the fix stands down.
+            $edits = @(
+                @('uint2 getRtDimensions() {\n    uint2 dim;\n    destTex.GetDimensions(dim.x, dim.y);\n    return dim;\n}\n',
+                  'uint2 getRtDimensions() {\n    uint2 dim;\n    destTex.GetDimensions(dim.x, dim.y);\n    return dim;\n}\n\n<GhostingFix.hlsl>'),
+                @('computeLocalExposure(sample.rgb, uv, exposureScale,',
+                  'computeLocalExposure(sample.rgb, saturate(uv + vrsLocalExposureShift), exposureScale,'),
+                @('sample.rgb += bloomScale * bloomFinal.SampleLevel(samplerLinear, uv, 0).rgb;',
+                  'sample.rgb += bloomScale * bloomFinal.SampleLevel(samplerLinear, saturate(uv + vrsBloomShift), 0).rgb;'),
+                @('destTex[storePos] = float4(sampleOutput.rgb, 1);',
+                  'destTex[storePos] = float4(vrsDebugOverlay(sampleOutput.rgb, uv), 1);'),
+                @('void main(uint3 dispatchThreadID : SV_DispatchThreadID)\n{\n    if (any(dispatchThreadID.xy >= getRtDimensions())) return;',
+                  'void main(uint3 dispatchThreadID : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex)\n{\n    vrsEstimateEyeShift(groupIndex);\n    if (any(dispatchThreadID.xy >= getRtDimensions())) return;'))
+            $failed = $null
+            foreach ($edit in $edits) {
+                $pattern = (($edit[0] -replace '\\n', "`n") -split '\s+' | Where-Object { $_ } | ForEach-Object { [regex]::Escape($_) }) -join '\s+'
+                $found = [regex]::Matches($source, $pattern)
+                if ($found.Count -ne 1) { $failed = $edit[0]; break }
+                $replacement = ($edit[1] -replace '\\n', "`n").Replace('<GhostingFix.hlsl>', $fix)
+                $source = $source.Substring(0, $found[0].Index) + $replacement + $source.Substring($found[0].Index + $found[0].Length)
+            }
+            if ($failed) {
+                Write-Warning "[Renderer] GhostingFix: this BeamNG version's combinePass shader changed ($($failed -replace '\\n.*', '')...); the ghosting fix is not applied."
+            } elseif ($source.Contains($marker)) {
+                $wanted = "// Written by Launch-BeamNG-VRS ([Renderer] GhostingFix) from the game's own combinePass.cs.hlsl.`n" + $source
+            }
+        }
+    }
+    if ($null -eq $wanted) {
+        # Only a file this launcher wrote is removed.
+        if ($ours) {
+            Remove-Item -LiteralPath $target -Force
+            if (Test-Path -LiteralPath $shaderCache) { Remove-Item -LiteralPath $shaderCache -Recurse -Force }
+        }
+        return
+    }
+    if ($null -ne $existing -and -not $ours) {
+        Write-Warning "[Renderer] GhostingFix: $target exists but was not written by BeamNG-VRS (another mod?); the ghosting fix is not applied."
+        return
+    }
+    if ($ours -and $existing -eq $wanted) { return }
+    [void](New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force)
+    [IO.File]::WriteAllText($target, $wanted, $utf8)
+    if (Test-Path -LiteralPath $shaderCache) { Remove-Item -LiteralPath $shaderCache -Recurse -Force }
+    Write-Output 'Ghosting fix shader updated; BeamNG recompiles its shaders on this start (the first load is slower).'
+}
 function Test-BeamNGIni {
     param([string]$Path)
     $encoding = New-Object Text.UTF8Encoding($false, $true)
@@ -353,6 +423,9 @@ function Test-BeamNGIni {
             } elseif ($id -eq 'renderer.vrdrawdistance') {
                 # off leaves the game's code untouched (an escape hatch after a game update).
                 $script:VRDrawDistance = if ($value -ieq 'off') { $null } else { Assert-IniNumber -Value $value -Low 100 -High 10000 -Integer $false }
+            } elseif ($id -eq 'renderer.ghostingfix') {
+                if (@('0', '1', 'false', 'true') -cnotcontains $value.ToLowerInvariant()) { throw 'expected 0, 1, false or true' }
+                $script:GhostingFix = @('1', 'true') -ccontains $value.ToLowerInvariant()
             } elseif ($id -eq 'renderer.farclip') {
                 Write-Warning "INI line ${lineNumber} [Renderer]: FarClip was removed (BeamNG ignores it in VR); this line is ignored and can be deleted."
             } else { throw 'unknown section or setting' }
@@ -374,6 +447,7 @@ try {
     $script:Renderer = 'd3d12'
     $script:RenderScale = $null
     $script:VRDrawDistance = [double]4000
+    $script:GhostingFix = $true
     if (-not (Test-Path -LiteralPath $iniPath -PathType Leaf)) {
         throw 'BeamNG-VRS.ini not found beside Launch-BeamNG-VRS.cmd. Extract the entire ZIP; when upgrading, move your saved INI beside the CMD.'
     }
@@ -467,6 +541,8 @@ try {
     }
     Update-VRMod -UserFolder $UserFolder -Scale $(if ($script:Renderer -eq 'd3d12') { $script:RenderScale } else { $null }) `
         -Distance $startDistance -IniDistance $script:VRDrawDistance
+    Update-GhostingFix -UserFolder $UserFolder -GameRoot $start.WorkingDirectory `
+        -FixFile (Join-Path $layerDirectory 'GhostingFix.hlsl') -Enabled $script:GhostingFix
     if ($Diagnostics) {
         $start.EnvironmentVariables['VK_LOADER_DEBUG'] = 'error,warn,layer'
         # The OpenXR loader then reports the layer chain and which layer failed xrCreateInstance.

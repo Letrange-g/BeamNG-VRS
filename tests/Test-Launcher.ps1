@@ -70,6 +70,7 @@ try {
     $ini = Join-Path $temp 'BeamNG-VRS.ini'
     Copy-Item -LiteralPath (Join-Path $source 'packaging/BeamNG-VRS.ini') -Destination $ini
     Copy-Item -LiteralPath (Join-Path $source 'packaging/Launch-BeamNG-VRS.ps1') -Destination $layers
+    Copy-Item -LiteralPath (Join-Path $source 'packaging/GhostingFix.hlsl') -Destination $layers
     $result = Join-Path $temp 'result.txt'
     $env:BEAMNG_LAUNCHER_TEST_OUTPUT = $result
     $env:VK_INSTANCE_LAYERS = 'VK_LAYER_test_existing'
@@ -204,6 +205,43 @@ try {
         throw 'VRDrawDistance=off still used the live file.'
     }
     Remove-Item -LiteralPath $result
+    # [Renderer] GhostingFix (default true) patches the game's combinePass shader into the
+    # user folder and clears the shader cache only when that file changes. This stand-in
+    # has only the stock lines the patch anchors on (the real shader is the game's own).
+    $stockShader = Join-Path $temp 'shaders\common\postfx\hdr\combinePass.cs.hlsl'
+    $patchedShader = Join-Path $userFolder 'shaders\common\postfx\hdr\combinePass.cs.hlsl'
+    $shaderCache = Join-Path $userFolder 'temp\shaders'
+    [void](New-Item -ItemType Directory -Path (Split-Path -Parent $stockShader), $shaderCache -Force)
+    $stockText = "uint2 getRtDimensions() {`r`n    uint2 dim;`r`n    destTex.GetDimensions(dim.x, dim.y);`r`n    return dim;`r`n}`r`n" +
+        "const float localGain = computeLocalExposure(sample.rgb, uv, exposureScale,`r`n" +
+        "sample.rgb += bloomScale * bloomFinal.SampleLevel(samplerLinear, uv, 0).rgb;`r`n" +
+        "destTex[storePos] = float4(sampleOutput.rgb, 1);`r`n" +
+        "void main(uint3 dispatchThreadID : SV_DispatchThreadID)`r`n{`r`n    if (any(dispatchThreadID.xy >= getRtDimensions())) return;`r`n}`r`n"
+    [IO.File]::WriteAllText($stockShader, $stockText)
+    Set-Content -LiteralPath $ini -Value "[Renderer]`nVRDrawDistance=off" -Encoding UTF8
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder
+    if ($LASTEXITCODE -ne 0) { throw 'Launcher failed with the ghosting fix.' }
+    $patched = if (Test-Path -LiteralPath $patchedShader) { Get-Content -LiteralPath $patchedShader -Raw } else { '' }
+    if (-not $patched.Contains('BeamNG-VRS ghosting fix') -or -not $patched.Contains('saturate(uv + vrsLocalExposureShift)') -or
+        -not $patched.Contains('saturate(uv + vrsBloomShift)') -or -not $patched.Contains('vrsEstimateEyeShift(groupIndex);') -or
+        (Test-Path -LiteralPath $shaderCache)) { throw 'Ghosting fix shader was not written or the shader cache was not cleared.' }
+    [void](New-Item -ItemType Directory -Path $shaderCache)
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $shaderCache)) { throw 'An unchanged ghosting fix cleared the shader cache.' }
+    Set-Content -LiteralPath $ini -Value "[Renderer]`nVRDrawDistance=off`nGhostingFix=false" -Encoding UTF8
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder
+    if ($LASTEXITCODE -ne 0 -or (Test-Path -LiteralPath $patchedShader) -or (Test-Path -LiteralPath $shaderCache)) { throw 'GhostingFix=false did not remove the shader.' }
+    # Another mod's override is never touched; a changed game shader is left alone.
+    [IO.File]::WriteAllText($patchedShader, 'other mod')
+    Set-Content -LiteralPath $ini -Value "[Renderer]`nVRDrawDistance=off`nGhostingFix=true" -Encoding UTF8
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder
+    if ($LASTEXITCODE -ne 0 -or (Get-Content -LiteralPath $patchedShader -Raw) -ne 'other mod') { throw 'Another override was replaced.' }
+    Remove-Item -LiteralPath $patchedShader
+    [IO.File]::WriteAllText($stockShader, $stockText.Replace('uv, exposureScale', 'uv * 2, exposureScale'))
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder
+    if ($LASTEXITCODE -ne 0 -or (Test-Path -LiteralPath $patchedShader)) { throw 'A changed game shader was patched.' }
+    Remove-Item -LiteralPath (Join-Path $temp 'shaders') -Recurse
+    Remove-Item -LiteralPath $result -ErrorAction SilentlyContinue
     # [Renderer] API=vulkan keeps the Vulkan renderer, where the VRS layer applies.
     Set-Content -LiteralPath $ini -Value "[Renderer]`nAPI=vulkan" -Encoding UTF8
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder
@@ -229,7 +267,7 @@ try {
     Set-Content -LiteralPath $ini -Value "[Debug]`nDrawOutline=typo" -Encoding UTF8
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder
     if ($LASTEXITCODE -eq 0 -or (Test-Path -LiteralPath $result)) { throw 'Invalid INI started the game.' }
-    Write-Output 'Launcher integration passed: root/Bin64 layouts, root INI, both executable names, working directory, Vulkan discovery, diagnostic capture, arguments, child environment, CheckOnly, implicit OpenXR layer disabling, RenderScale mod, VR draw distance app and persistence, D3D12 default and Vulkan renderer, missing INI/executable and invalid INI.'
+    Write-Output 'Launcher integration passed: root/Bin64 layouts, root INI, both executable names, working directory, Vulkan discovery, diagnostic capture, arguments, child environment, CheckOnly, implicit OpenXR layer disabling, RenderScale mod, VR draw distance app and persistence, ghosting fix shader, D3D12 default and Vulkan renderer, missing INI/executable and invalid INI.'
 } finally {
     foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $before[$name], 'Process') }
     Remove-Item -LiteralPath $temp -Recurse -Force
