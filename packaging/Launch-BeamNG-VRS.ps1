@@ -492,7 +492,7 @@ try {
     $script:Renderer = 'd3d12'
     $script:RenderScale = $null
     $script:VRDrawDistance = [double]4000
-    $script:GhostingFix = $true
+    $script:GhostingFix = $false
     if (-not (Test-Path -LiteralPath $iniPath -PathType Leaf)) {
         throw 'BeamNG-VRS.ini not found beside Launch-BeamNG-VRS.cmd. Extract the entire ZIP; when upgrading, move your saved INI beside the CMD.'
     }

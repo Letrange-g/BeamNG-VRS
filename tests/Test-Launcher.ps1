@@ -205,7 +205,7 @@ try {
         throw 'VRDrawDistance=off still used the live file.'
     }
     Remove-Item -LiteralPath $result
-    # [Renderer] GhostingFix (default true) patches the game's combinePass shader into the
+    # [Renderer] GhostingFix (default false; opt-in) patches the game's combinePass shader into the
     # user folder and clears the shader cache only when that file changes. This stand-in
     # has only the stock lines the patch anchors on (the real shader is the game's own).
     $stockShader = Join-Path $temp 'shaders\common\postfx\hdr\combinePass.cs.hlsl'
@@ -221,6 +221,11 @@ try {
         "void main(uint3 dispatchThreadID : SV_DispatchThreadID)`r`n{`r`n    if (any(dispatchThreadID.xy >= getRtDimensions())) return;`r`n}`r`n"
     [IO.File]::WriteAllText($stockShader, $stockText)
     Set-Content -LiteralPath $ini -Value "[Renderer]`nVRDrawDistance=off" -Encoding UTF8
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder
+    if ($LASTEXITCODE -ne 0 -or (Test-Path -LiteralPath $patchedShader) -or -not (Test-Path -LiteralPath $shaderCache)) {
+        throw 'The ghosting fix was applied although it is off by default.'
+    }
+    Set-Content -LiteralPath $ini -Value "[Renderer]`nVRDrawDistance=off`nGhostingFix=true" -Encoding UTF8
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder
     if ($LASTEXITCODE -ne 0) { throw 'Launcher failed with the ghosting fix.' }
     $patched = if (Test-Path -LiteralPath $patchedShader) { Get-Content -LiteralPath $patchedShader -Raw } else { '' }

@@ -10,9 +10,9 @@ Works with a fixed center or supported eye tracking.
 
 - **Right-eye ghosting fix.** BeamNG 0.40 builds local exposure and bloom from one eye
   and reuses them for the other, leaving "ghost" shapes in the right eye. BeamNG-VRS
-  patches the game's combine shader so each eye reads them at its own position. On by
-  default (`[Renderer] GhostingFix=true`); the first start after installing is slower
-  while BeamNG rebuilds its shader cache.
+  can patch the game's combine shader so each eye reads them at its own position. Off by
+  default: set `[Renderer] GhostingFix=true` to try it; the next start is slower while
+  BeamNG rebuilds its shader cache.
 - **The log says what limits your frame rate:** the `M8.47` line now ends with
   on target, GPU-bound, CPU-bound or runtime-bound.
 

@@ -99,7 +99,7 @@ inline Values defaults() {
  out["BEAMNG_VRS_LOG_LEVEL"] = "1";
  out["BEAMNG_VRS_RENDERER"] = "d3d12";
  out["BEAMNG_VRS_VR_DRAW_DISTANCE"] = "4000";
- out["BEAMNG_VRS_GHOSTING_FIX"] = "1";
+ out["BEAMNG_VRS_GHOSTING_FIX"] = "0";
  return out;
 }
 inline void setting(Values& out, const std::string& section, const std::string& key, std::string value) {

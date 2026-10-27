@@ -50,9 +50,9 @@ int main() {
   std::istringstream input(off);
   assert(!parse(input).count("BEAMNG_VRS_VR_DRAW_DISTANCE"));
  }
- assert(defaults.at("BEAMNG_VRS_GHOSTING_FIX")=="1");
- std::istringstream ghosting("[Renderer]\nGhostingFix=false\n");
- assert(parse(ghosting).at("BEAMNG_VRS_GHOSTING_FIX")=="0");
+ assert(defaults.at("BEAMNG_VRS_GHOSTING_FIX")=="0");
+ std::istringstream ghosting("[Renderer]\nGhostingFix=true\n");
+ assert(parse(ghosting).at("BEAMNG_VRS_GHOSTING_FIX")=="1");
  std::istringstream finalOnly("[Foveation]\nAllPasses=false\n");
  assert(parse(finalOnly).at("BEAMNG_VRS_ALL_PASSES")=="0");
  std::istringstream independent("[Foveation]\nEnabled=false\n[Scissor]\nEnabled=true\n[Performance]\nTurboMode=true\n");

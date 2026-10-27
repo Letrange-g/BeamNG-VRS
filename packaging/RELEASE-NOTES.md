@@ -5,11 +5,11 @@ BeamNG-VRS 0.4.1 — portable Windows x64, for BeamNG.drive 0.40.
 - **Right-eye ghosting fix.** BeamNG 0.40 builds local exposure and bloom from
   one eye and reuses them for the other, so dark or bright "ghost" shapes show
   in the right eye. BeamNG-VRS now patches the game's combine shader so each eye
-  reads them at its own matching position. It is on by default
-  (`[Renderer] GhostingFix=true`). The launcher writes the patched shader into
-  your BeamNG user folder and clears the shader cache when it changes, so the
-  first start after installing takes longer. Set `GhostingFix=false` to remove
-  it. Very near objects (the cockpit) can still be slightly off.
+  reads them at its own matching position. It is **off by default**: set
+  `[Renderer] GhostingFix=true` in the INI to try it. The launcher then writes
+  the patched shader into your BeamNG user folder and clears the shader cache,
+  so the next start takes longer. Set it back to `false` to remove it. Very near
+  objects (the cockpit glass) can still be slightly off.
 - **The log now says what limits your frame rate.** The `M8.47` GPU line adds
   the frame time, the headset budget, the CPU and wait times and a verdict:
   on target, GPU-bound, CPU-bound or runtime-bound (compositor or streaming,
