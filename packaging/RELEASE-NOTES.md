@@ -1,6 +1,22 @@
-BeamNG-VRS 0.4 — portable Windows x64, for BeamNG.drive 0.40.
+BeamNG-VRS 0.4.1 — portable Windows x64, for BeamNG.drive 0.40.
 
-## What's new in 0.4
+## What's new in 0.4.1
+
+- **Right-eye ghosting fix.** BeamNG 0.40 builds local exposure and bloom from
+  one eye and reuses them for the other, so dark or bright "ghost" shapes show
+  in the right eye. BeamNG-VRS now patches the game's combine shader so each eye
+  reads them at its own matching position. It is on by default
+  (`[Renderer] GhostingFix=true`). The launcher writes the patched shader into
+  your BeamNG user folder and clears the shader cache when it changes, so the
+  first start after installing takes longer. Set `GhostingFix=false` to remove
+  it. Very near objects (the cockpit) can still be slightly off.
+- **The log now says what limits your frame rate.** The `M8.47` GPU line adds
+  the frame time, the headset budget, the CPU and wait times and a verdict:
+  on target, GPU-bound, CPU-bound or runtime-bound (compositor or streaming,
+  such as Virtual Desktop). See "What limits the frame rate" in
+  docs/CONFIGURATION.md.
+
+## In 0.4.0
 
 - **VR draw distance.** BeamNG 0.40 draws VR out to 10000 m, further than the
   desktop's 8000 m, and no game setting changes it. BeamNG-VRS now sets it to
@@ -32,7 +48,7 @@ BeamNG-VRS 0.4 — portable Windows x64, for BeamNG.drive 0.40.
 
 ## Install
 
-1. Download **BeamNG-VRS-0.4.0-windows-x64.zip** below.
+1. Download **BeamNG-VRS-0.4.1-windows-x64.zip** below.
 2. Close BeamNG and extract the whole ZIP into the game folder, beside `Bin64`.
    Extraction directly inside `Bin64` also works.
 3. Edit **BeamNG-VRS.ini** beside the CMD, then run **Launch-BeamNG-VRS.cmd**.

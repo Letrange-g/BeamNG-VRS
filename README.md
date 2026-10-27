@@ -4,9 +4,19 @@ Foveated rendering for **BeamNG.drive VR** (Direct3D 12 or Vulkan), plus edge cr
 Keep more detail where you look and reduce rendering work around the edges.
 Works with a fixed center or supported eye tracking.
 
-**Windows x64 · Release 0.4.0 · built for BeamNG.drive 0.40.** Performance varies by headset, GPU and scene.
+**Windows x64 · Release 0.4.1 · built for BeamNG.drive 0.40.** Performance varies by headset, GPU and scene.
 
-## What's new in 0.4
+## What's new in 0.4.1
+
+- **Right-eye ghosting fix.** BeamNG 0.40 builds local exposure and bloom from one eye
+  and reuses them for the other, leaving "ghost" shapes in the right eye. BeamNG-VRS
+  patches the game's combine shader so each eye reads them at its own position. On by
+  default (`[Renderer] GhostingFix=true`); the first start after installing is slower
+  while BeamNG rebuilds its shader cache.
+- **The log says what limits your frame rate:** the `M8.47` line now ends with
+  on target, GPU-bound, CPU-bound or runtime-bound.
+
+## In 0.4.0
 
 - **VR draw distance.** BeamNG 0.40 draws VR out to 10000 m, further than the
   desktop's 8000 m, and no game setting changes it. BeamNG-VRS now sets it to
@@ -36,7 +46,7 @@ Works with a fixed center or supported eye tracking.
 
 ## Install
 
-1. [Download the Windows ZIP](https://github.com/Letrange-g/BeamNG-VRS/releases/download/v0.4.0/BeamNG-VRS-0.4.0-windows-x64.zip) (not the source-code ZIP).
+1. [Download the Windows ZIP](https://github.com/Letrange-g/BeamNG-VRS/releases/download/v0.4.1/BeamNG-VRS-0.4.1-windows-x64.zip) (not the source-code ZIP).
 2. Close BeamNG and extract the whole ZIP into the game folder, beside `Bin64`.
 3. Double-click `Launch-BeamNG-VRS.cmd`, then enable VR in the game.
 
