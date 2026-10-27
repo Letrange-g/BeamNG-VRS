@@ -845,7 +845,12 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeWaitFrame(XrSession session,const
  else if(!instances.empty())d=instances.begin()->second;}
  if(!d.waitFrame)return XR_ERROR_FUNCTION_UNSUPPORTED;
  const auto c=frameContext(session);
+ LARGE_INTEGER waitStart{},waitEnd{},freq{};QueryPerformanceCounter(&waitStart);
  XrResult r=c.turbo?c.turbo->wait(info,state):d.waitFrame(session,info,state);
+ QueryPerformanceCounter(&waitEnd);QueryPerformanceFrequency(&freq);
+ // M8.52: how long the runtime held the game here, for the M8.47 frame-pacing verdict.
+ if(XR_SUCCEEDED(r))beamng_d3d12::frameWaited(double(waitEnd.QuadPart-waitStart.QuadPart)*1000.0/double(freq.QuadPart),
+   state&&state->predictedDisplayPeriod>0?double(state->predictedDisplayPeriod)/1e6:0.0);
  if(XR_SUCCEEDED(r)&&state){
   std::lock_guard<std::mutex> g(stateMutex);auto it=sessions.find(session);
   if(it!=sessions.end())it->second.displayTime=state->predictedDisplayTime;

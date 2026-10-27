@@ -193,6 +193,24 @@ is paused, and the next report (300 frames later) says `vrs=paused`. Compare the
 two `busy` values in the same scene. Work on other queues (async compute) is not
 counted.
 
+**What limits the frame rate (`M8.52`):** the same line ends with the frame pacing,
+for example `| frame=13.90 ms (budget 11.11) cpu=13.40 wait=0.50 -> CPU-bound`.
+`frame` is the time between two submitted frames and `budget` is the headset's
+display period (11.11 ms at 90 Hz). `wait` is the time the game was held in
+`xrWaitFrame` by the runtime, and `cpu` is the rest of the frame (the game's own
+work, including waits on its GPU work). The verdict:
+
+- `on target`: the headset's rate is reached; anything below the budget is headroom.
+- `GPU-bound`: GPU `busy` uses 85% or more of the budget. Crop, foveation, a lower
+  draw distance or render scale raise the frame rate.
+- `CPU-bound`: the game's own work uses 85% or more of the budget while the GPU has
+  room. GPU savings don't raise the frame rate; lower CPU-heavy game settings
+  (traffic, dynamic reflections, mirrors) instead, or spend the spare GPU time on
+  `RenderScale`.
+- `runtime-bound`: neither side is busy, yet frames are slow. The runtime or
+  compositor holds the game back: reprojection at half rate, or streaming
+  (Virtual Desktop, Air Link) encoding.
+
 `[Scissor]`, `[LensMask]` and `[Debug]` also work with Direct3D 12 (`M8.43` lines):
 
 - **Scissor** (`M8.44` FOV crop): the margins are removed from the field of view
