@@ -99,6 +99,7 @@ inline Values defaults() {
  out["BEAMNG_VRS_LOG_LEVEL"] = "1";
  out["BEAMNG_VRS_RENDERER"] = "d3d12";
  out["BEAMNG_VRS_VR_DRAW_DISTANCE"] = "4000";
+ out["BEAMNG_VRS_GHOSTING_FIX"] = "0";
  return out;
 }
 inline void setting(Values& out, const std::string& section, const std::string& key, std::string value) {
@@ -141,6 +142,9 @@ inline void setting(Values& out, const std::string& section, const std::string& 
   if(lower(value) == "off") out.erase("BEAMNG_VRS_VR_DRAW_DISTANCE");
   else { number(value, 100, 10000); out["BEAMNG_VRS_VR_DRAW_DISTANCE"] = value; }
  }
+ // Launcher-only: patches the game's combinePass shader so each VR eye reads the shared
+ // local exposure and bloom textures at its own position (BeamNG 0.40 right-eye ghosting).
+ else if(id == "renderer.ghostingfix") out["BEAMNG_VRS_GHOSTING_FIX"] = boolean(value);
  // Removed (M8.49 had no effect in VR): accepted and ignored so older INIs still launch.
  else if(id == "renderer.farclip") {}
  else throw std::runtime_error("unknown section or setting");

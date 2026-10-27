@@ -10,6 +10,7 @@
 #include "d3d12_probe.hpp"
 #include "m825_gaze_hold.hpp"
 #include "lens_mask.hpp"
+#include "frame_pacing.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -109,6 +110,10 @@ const uint64_t* stampMapped=nullptr;ID3D12Fence* stampFence=nullptr;uint64_t sta
 std::mutex stampMutex;
 uint64_t busyTicks=0,ourTicks=0,submissions=0,stampSkipped=0;
 unsigned gpuFrames=0,gpuReports=0;
+// M8.52: frame pacing over the same window as the GPU report (see frame_pacing.hpp).
+double pacingIntervalMs=0,pacingWaitMs=0,pacingPeriodMs=0;
+unsigned pacingFrames=0,pacingWaits=0;
+LARGE_INTEGER lastFrameEnd{};
 thread_local bool ownSubmit=false; // Our uploads and eye-image effects, reported separately.
 // Ctrl+Shift+V pauses VRS for an A/B in the same scene; the GPU report says which.
 std::atomic<bool> vrsPaused{false};
@@ -799,6 +804,11 @@ void finishEyeImage(uint64_t texture,int eye,uint32_t format){
 #endif
 }
 
+void frameWaited(double waitMs,double periodMs){
+ std::lock_guard<std::mutex> g(stampMutex);
+ pacingWaitMs+=waitMs;pacingPeriodMs+=periodMs;++pacingWaits;
+}
+
 void frame(){
  if(!hooked)return;
  // M8.43: report a lost device once, with its reason, before the game shuts down.
@@ -820,15 +830,35 @@ void frame(){
  if(foveating)updateFoveation();
  if(gameQueue){
   uint64_t busy=0,ours=0,subs=0,skipped=0;unsigned gn=0;
+  frame_pacing::Averages pacing{};unsigned paced=0;
   {std::lock_guard<std::mutex> g(stampMutex);
+   // M8.52: time since the previous xrEndFrame on the game's render thread.
+   LARGE_INTEGER now{},freq{};QueryPerformanceCounter(&now);QueryPerformanceFrequency(&freq);
+   if(lastFrameEnd.QuadPart){pacingIntervalMs+=double(now.QuadPart-lastFrameEnd.QuadPart)*1000.0/double(freq.QuadPart);++pacingFrames;}
+   lastFrameEnd=now;
    if(stampFence)collectStamps();
    if(stampFence && ++gpuFrames>=(gpuReports?900u:300u)){
     ++gpuReports;gn=gpuFrames;busy=busyTicks;ours=ourTicks;subs=submissions;skipped=stampSkipped;
     gpuFrames=0;busyTicks=ourTicks=submissions=0;
+    if(pacingFrames && pacingWaits){
+     paced=pacingFrames;
+     pacing.intervalMs=pacingIntervalMs/pacingFrames;
+     pacing.waitMs=pacingWaitMs/pacingWaits;
+     pacing.periodMs=pacingPeriodMs/pacingWaits;
+    }
+    pacingIntervalMs=pacingWaitMs=pacingPeriodMs=0;pacingFrames=pacingWaits=0;
    }}
-  if(gn){char msg[220]{};
-   sprintf_s(msg,"M8.47 D3D12 GPU frames=%u busy=%.2f ms/frame (mod=%.2f) submissions=%.1f/frame vrs=%s skipped=%llu",
-     gn,double(busy)/ticksPerMs/gn,double(ours)/ticksPerMs/gn,double(subs)/gn,!foveating?"off":vrsPaused.load()?"paused":"on",(unsigned long long)skipped);log(msg);}
+  if(gn){char msg[400]{};
+   const double gpuMs=double(busy)/ticksPerMs/gn;
+   int used=sprintf_s(msg,"M8.47 D3D12 GPU frames=%u busy=%.2f ms/frame (mod=%.2f) submissions=%.1f/frame vrs=%s skipped=%llu",
+     gn,gpuMs,double(ours)/ticksPerMs/gn,double(subs)/gn,!foveating?"off":vrsPaused.load()?"paused":"on",(unsigned long long)skipped);
+   // M8.52: frame interval, game work (interval minus xrWaitFrame) and the verdict.
+   if(paced && used>0){
+    pacing.gpuMs=gpuMs;
+    sprintf_s(msg+used,sizeof(msg)-used," | frame=%.2f ms (budget %.2f) cpu=%.2f wait=%.2f -> %s",
+      pacing.intervalMs,pacing.periodMs,pacing.intervalMs>pacing.waitMs?pacing.intervalMs-pacing.waitMs:0.0,pacing.waitMs,frame_pacing::verdict(pacing));
+   }
+   log(msg);}
  }
  std::vector<std::pair<Key,uint64_t>> top;uint64_t unknown=0,om=0,pass=0,vrs=0,later=0,depthOnly=0,cropped=0,calls=0,bare=0,assumed=0;unsigned n=0;
  {

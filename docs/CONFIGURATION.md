@@ -23,6 +23,7 @@ The release ZIP puts `BeamNG-VRS.ini` beside `Launch-BeamNG-VRS.cmd` at the extr
 | OpenXR | `DisableLayers` | `*` | Implicit OpenXR layers to turn off for BeamNG only: `*` (all, default), comma-separated names, or empty to keep every layer. See [Other OpenXR layers](#other-openxr-layers). |
 | Renderer | `API` | `d3d12` | `d3d12` starts BeamNG with `-gfx d3d12`, the game's VR default since 0.40. Foveation (fixed or eye-tracked) uses D3D12 VRS Tier 2 there; scissor, lens mask and outline also work, and `AllPasses` does not apply. `vulkan` starts `-gfx vk` with the original Vulkan layer. See [Direct3D 12](#direct3d-12). |
 | Renderer | `RenderScale` | (game: `0.5`) | Direct3D 12 only: VR render scale before FSR upscaling, `0.25` to `1.0`, applied by a launcher-written Lua mod. `1.0` gives the sharpest picture; `0.67`-`0.8` is a middle ground. See [VR render scale](#direct3d-12). |
+| Renderer | `GhostingFix` | `false` | Fixes BeamNG 0.40's right-eye ghosting by lining up the shared local exposure and bloom textures with each eye. Patches a copy of the game's `combinePass` shader into the user folder. See [Ghosting fix](#ghosting-fix). |
 | Renderer | `VRDrawDistance` | `4000` | Experimental, Direct3D 12 and Vulkan: VR far distance in metres, `100` to `10000` (game: `10000`), changeable live in game. `off` leaves the game's code untouched. See [VR draw distance](#direct3d-12). |
 | Logging | `Level` | `info` | `off`, `errors`, `info`, or `debug`. Default is brief status/errors, not verbose diagnostics. |
 | Tracking | `GracePeriodMs` | `30` | Hold the last valid gaze for this many milliseconds during temporary tracking loss (0 to 1000). |
@@ -192,6 +193,24 @@ is paused, and the next report (300 frames later) says `vrs=paused`. Compare the
 two `busy` values in the same scene. Work on other queues (async compute) is not
 counted.
 
+**What limits the frame rate (`M8.52`):** the same line ends with the frame pacing,
+for example `| frame=13.90 ms (budget 11.11) cpu=13.40 wait=0.50 -> CPU-bound`.
+`frame` is the time between two submitted frames and `budget` is the headset's
+display period (11.11 ms at 90 Hz). `wait` is the time the game was held in
+`xrWaitFrame` by the runtime, and `cpu` is the rest of the frame (the game's own
+work, including waits on its GPU work). The verdict:
+
+- `on target`: the headset's rate is reached; anything below the budget is headroom.
+- `GPU-bound`: GPU `busy` uses 85% or more of the budget. Crop, foveation, a lower
+  draw distance or render scale raise the frame rate.
+- `CPU-bound`: the game's own work uses 85% or more of the budget while the GPU has
+  room. GPU savings don't raise the frame rate; lower CPU-heavy game settings
+  (traffic, dynamic reflections, mirrors) instead, or spend the spare GPU time on
+  `RenderScale`.
+- `runtime-bound`: neither side is busy, yet frames are slow. The runtime or
+  compositor holds the game back: reprojection at half rate, or streaming
+  (Virtual Desktop, Air Link) encoding.
+
 `[Scissor]`, `[LensMask]` and `[Debug]` also work with Direct3D 12 (`M8.43` lines):
 
 - **Scissor** (`M8.44` FOV crop): the margins are removed from the field of view
@@ -219,6 +238,42 @@ counted.
 A GPU without VRS Tier 2 keeps normal rendering and logs
 `M8.42 D3D12 foveation unavailable`; the FOV crop and the black lens corners still work. `Diagnose-BeamNG-VRS.cmd` also logs the VRS
 tier and the render-target sizes the game binds per frame (`M8.41` lines).
+
+## Ghosting fix
+
+`[Renderer] GhostingFix=true` (off by default) fixes the right-eye ghosting of BeamNG
+0.40 VR: dark or bright shapes from the other eye's picture, offset sideways.
+The game builds its local exposure textures (`LocalTonemapBlurredLogLum`,
+`LocalTonemapBilateralGrid`) and bloom from one eye and reuses them for the
+other eye. Neither the console nor Lua can reach a per-eye switch: each view's
+`cacheRenderState.localTonemap` only holds the manual exposure settings.
+
+The fix keeps local exposure and bloom; it only changes where the combine pass
+reads them. Each eye compares its own picture with the shared blurred
+luminance at 32 probe points and 48 candidate sideways shifts (up to 16% of the
+image width), keeps the best match, and reads local exposure and bloom at that
+shift. The eye the textures were built from, the desktop, and any future game
+version that builds them per eye all measure a shift of about 0 and look stock.
+Because the shift is measured, it works with any headset FOV and with the FOV
+crop. Near objects (the cockpit) can still be slightly off, because one shift
+is used for the whole picture. The bilateral grid limits how visible that is.
+
+BeamNG ignores shaders inside mods, but it loads loose files from the user
+folder. At each start, the launcher reads the game's own
+`shaders\common\postfx\hdr\combinePass.cs.hlsl`, inserts
+`BeamNG-VRS\GhostingFix.hlsl`, and writes the result to
+`%LOCALAPPDATA%\BeamNG\BeamNG.drive\current\shaders\common\postfx\hdr\combinePass.cs.hlsl`.
+The game caches compiled shaders by file name, so `temp\shaders` is deleted
+whenever the written file changes, and the first start after that loads slower.
+A few more cases:
+- If a game update changes the lines the patch anchors on, the launcher warns
+  and writes nothing.
+- If another mod already put a `combinePass.cs.hlsl` there, the launcher leaves
+  that file alone.
+- `GhostingFix=false` removes the file, but only one the launcher wrote.
+
+Set `VRS_STEREO_DEBUG 1` in `GhostingFix.hlsl` to
+draw the measured shift as a green bar at the top of each eye.
 
 ## Other OpenXR layers
 

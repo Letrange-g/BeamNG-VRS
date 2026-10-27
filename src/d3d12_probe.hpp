@@ -58,6 +58,9 @@ void setEyeImages(const uint64_t* images, size_t count);
 void setEyeSize(uint32_t width, uint32_t height);
 // Projected gaze per eye in [0,1] image coordinates; bit i of mask = eye i valid.
 void setGaze(const float u[2], const float v[2], uint32_t mask);
+// M8.52: called once per xrWaitFrame with the time the game spent blocked in it and the
+// headset's display period (both ms; period 0 = unknown). Feeds the M8.47 verdict.
+void frameWaited(double waitMs, double periodMs);
 // Called once per xrEndFrame: updates shading-rate images, logs diagnostics.
 void frame();
 }
