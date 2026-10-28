@@ -4,9 +4,16 @@ Foveated rendering for **BeamNG.drive VR** (Direct3D 12 or Vulkan), plus edge cr
 Keep more detail where you look and reduce rendering work around the edges.
 Works with a fixed center or supported eye tracking.
 
-**Windows x64 · Release 0.4.1 · built for BeamNG.drive 0.40.** Performance varies by headset, GPU and scene.
+**Windows x64 · Release 0.4.2 · built for BeamNG.drive 0.40.** Performance varies by headset, GPU and scene.
 
-## What's new in 0.4.1
+## What's new in 0.4.2
+
+- **Multiplayer (BeamMP).** Double-click `Launch-BeamMP-VRS.cmd` instead of
+  `BeamMP-Launcher.exe`: BeamMP then starts BeamNG with BeamNG-VRS. On a server,
+  BeamMP turns off the in-game draw distance app and radial menu entry; the INI
+  settings still apply.
+
+## In 0.4.1
 
 - **Right-eye ghosting fix.** BeamNG 0.40 builds local exposure and bloom from one eye
   and reuses them for the other, leaving "ghost" shapes in the right eye. BeamNG-VRS
@@ -46,9 +53,10 @@ Works with a fixed center or supported eye tracking.
 
 ## Install
 
-1. [Download the Windows ZIP](https://github.com/Letrange-g/BeamNG-VRS/releases/download/v0.4.1/BeamNG-VRS-0.4.1-windows-x64.zip) (not the source-code ZIP).
+1. [Download the Windows ZIP](https://github.com/Letrange-g/BeamNG-VRS/releases/download/v0.4.2/BeamNG-VRS-0.4.2-windows-x64.zip) (not the source-code ZIP).
 2. Close BeamNG and extract the whole ZIP into the game folder, beside `Bin64`.
 3. Double-click `Launch-BeamNG-VRS.cmd`, then enable VR in the game.
+   For BeamMP multiplayer, double-click `Launch-BeamMP-VRS.cmd` instead.
 
 Edit **`BeamNG-VRS.ini` beside the launch CMD** in Notepad to change settings.
 Restart the game after every change. Extraction inside `Bin64` also works.

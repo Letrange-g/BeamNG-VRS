@@ -305,6 +305,31 @@ active, off in the registry, or disabled for BeamNG. Diagnostics also set
 `xrCreateInstance` result. The setting applies only when BeamNG is started by
 this launcher.
 
+## BeamMP (multiplayer)
+
+`BeamMP-Launcher.exe` starts BeamNG itself, so the game it starts does not get
+the settings this launcher gives the game (the layer path, the INI path and the
+OpenXR layer choices above). Start `Launch-BeamMP-VRS.cmd` instead: it runs
+`Launch-BeamNG-VRS.ps1 -BeamMP`, which prepares everything as usual and then
+starts BeamMP with those settings and `-- -gfx d3d12` (or `-gfx vk`). BeamMP
+passes its own settings and the arguments after `--` on to the game, including
+when it restarts itself after an update.
+
+- BeamMP is looked for at `%APPDATA%\BeamMP-Launcher\BeamMP-Launcher.exe`, the
+  installer's default. For another folder, add
+  `-BeamMPLauncher "D:\path\BeamMP-Launcher.exe"` after `-BeamMP` in the CMD.
+- BeamMP starts the game from the folder in its own settings
+  (`%LOCALAPPDATA%\BeamNG\BeamNG.Drive.ini` or the registry), so with two
+  BeamNG installs, extract BeamNG-VRS into the one BeamMP uses.
+- On a server, BeamMP turns off every mod the server does not list, including
+  the small `beamng_vrs` mod this launcher writes for `RenderScale`, the VR draw
+  distance app and the radial menu entry, and BeamNG saves that in
+  `mods\db.json`. Everything set by the DLLs still applies: foveation, the
+  crop, the lens mask and the draw distance from the INI (or your last in-game
+  pick). Each start through either CMD sets that mod back to active in
+  `mods\db.json`; only its `active` value is changed.
+- `-CheckOnly -BeamMP` also checks that BeamMP was found.
+
 ## Existing developer launch scripts
 
 Existing `BEAMNG_VRS_*` and `BEAMNG_EYE_*` process environment variables continue to override corresponding INI values. The public launcher clears these project-specific settings only in the child process, so its INI is authoritative and the parent shell remains unchanged. The old `BEAMNG_VRS_CENTER_RADIUS` and `BEAMNG_VRS_MID_RADIUS` variables map to `Size1x1` and `Size2x2`; their names remain for compatibility, while their values represent diameters.

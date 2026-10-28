@@ -1,4 +1,4 @@
-BeamNG-VRS 0.4.1 - portable Windows x64
+BeamNG-VRS 0.4.2 - portable Windows x64
 
 INSTALL
 1. Close BeamNG.
@@ -9,6 +9,15 @@ INSTALL
 4. Start Launch-BeamNG-VRS.cmd. It launches BeamNG in Direct3D 12 mode
    (set [Renderer] API=vulkan in the INI for the Vulkan VRS features).
 5. Enable VR in BeamNG as usual. Restart the game after every settings change.
+
+BEAMMP (MULTIPLAYER)
+Start Launch-BeamMP-VRS.cmd instead of BeamMP-Launcher.exe. It prepares
+BeamNG-VRS, then starts BeamMP, which starts the game with BeamNG-VRS.
+BeamMP is expected in %APPDATA%\BeamMP-Launcher. If it is elsewhere, edit
+the CMD in Notepad and add -BeamMPLauncher "D:\path\BeamMP-Launcher.exe"
+after -BeamMP. On a server, BeamMP turns off the in-game VR draw distance app
+and radial menu entry; the INI settings still apply. The next start through
+either CMD turns them back on.
 
 SETTINGS
 Open BeamNG-VRS/VRS-SETTINGS.png for a visual explanation.
@@ -70,7 +79,8 @@ The game may require its normal Steam session. Start Steam first if needed.
 
 UNINSTALL / UPDATE
 Launch BeamNG normally to stop using these layers. To uninstall, close the
-game, then delete BeamNG-VRS.ini, Launch-BeamNG-VRS.cmd, Diagnose-BeamNG-VRS.cmd and the
+game, then delete BeamNG-VRS.ini, Launch-BeamNG-VRS.cmd, Launch-BeamMP-VRS.cmd,
+Diagnose-BeamNG-VRS.cmd and the
 BeamNG-VRS folder.
 Back up your INI before extracting an update: extraction can overwrite it.
 When updating from an earlier beta, delete the old BeamNG-VRS-Check.exe;

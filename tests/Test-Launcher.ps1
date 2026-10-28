@@ -262,6 +262,36 @@ try {
         throw 'The child did not receive Vulkan arguments and layer activation.'
     }
     Remove-Item -LiteralPath $result
+    # -BeamMP starts BeamMP-Launcher.exe (the fixture stands in for it) from its own folder with
+    # the same child settings and the game arguments after --; the game inherits them.
+    $beamMP = Join-Path $temp 'BeamMP-Launcher\BeamMP-Launcher.exe'
+    [void](New-Item -ItemType Directory -Path (Split-Path -Parent $beamMP))
+    Copy-Item -LiteralPath $GameFixture -Destination $beamMP
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder -CheckOnly -BeamMP -BeamMPLauncher (Join-Path $temp 'missing.exe')
+    if ($LASTEXITCODE -eq 0) { throw 'A missing BeamMP launcher was not rejected.' }
+    # BeamMP turned our mod off on a server; only that entry's top-level active value changes.
+    $database = Join-Path $userFolder 'mods\db.json'
+    $databaseText = '{"header":{"version":1.1},"mods":{"other":{"active":false,"modname":"other"},' +
+        '"beamng_vrs":{"modData":{"active":false,"name":"x \"active\":false"},"active" : false,"modname":"beamng_vrs"}}}'
+    [IO.File]::WriteAllText($database, $databaseText)
+    Set-Content -LiteralPath $ini -Value "[Logging]`nLevel=info" -Encoding UTF8
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder -BeamMP -BeamMPLauncher $beamMP
+    if ($LASTEXITCODE -ne 0) { throw 'Launcher failed with -BeamMP.' }
+    $deadline = [DateTime]::UtcNow.AddSeconds(10); $content = ''
+    while ([DateTime]::UtcNow -lt $deadline) {
+        try { $content = Get-Content -LiteralPath $result -Raw; if ($content -match 'XR_ENABLE_API_LAYERS=.*probe') { break } } catch {}
+        Start-Sleep -Milliseconds 100
+    }
+    if ($content -notmatch '(?m)^arguments=-- -gfx d3d12\r?$' -or
+        -not $content.Contains('working_directory=' + (Split-Path -Parent $beamMP)) -or
+        -not $content.Contains('BEAMNG_VRS_CONFIG=' + $ini) -or -not $content.Contains('XR_API_LAYER_PATH=' + $layers) -or
+        $content -notmatch 'XR_ENABLE_API_LAYERS=XR_APILAYER_test_existing;XR_APILAYER_BEAMNG_eye_probe') {
+        throw 'BeamMP did not receive the game arguments and child settings.'
+    }
+    if ([IO.File]::ReadAllText($database) -ne $databaseText.Replace('"active" : false,"modname":"beamng_vrs"', '"active":true,"modname":"beamng_vrs"')) {
+        throw 'The BeamNG-VRS mod was not turned back on in mods\db.json, or other values changed.'
+    }
+    Remove-Item -LiteralPath $result, $database
     # The public launcher must not silently edit/use an obsolete nested INI.
     Move-Item -LiteralPath $ini -Destination $layers
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder -CheckOnly
@@ -274,7 +304,7 @@ try {
     Set-Content -LiteralPath $ini -Value "[Debug]`nDrawOutline=typo" -Encoding UTF8
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder
     if ($LASTEXITCODE -eq 0 -or (Test-Path -LiteralPath $result)) { throw 'Invalid INI started the game.' }
-    Write-Output 'Launcher integration passed: root/Bin64 layouts, root INI, both executable names, working directory, Vulkan discovery, diagnostic capture, arguments, child environment, CheckOnly, implicit OpenXR layer disabling, RenderScale mod, VR draw distance app and persistence, ghosting fix shader, D3D12 default and Vulkan renderer, missing INI/executable and invalid INI.'
+    Write-Output 'Launcher integration passed: root/Bin64 layouts, root INI, both executable names, working directory, Vulkan discovery, diagnostic capture, arguments, child environment, CheckOnly, implicit OpenXR layer disabling, RenderScale mod, VR draw distance app and persistence, ghosting fix shader, D3D12 default and Vulkan renderer, BeamMP launch and mod re-enable, missing INI/executable and invalid INI.'
 } finally {
     foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $before[$name], 'Process') }
     Remove-Item -LiteralPath $temp -Recurse -Force
