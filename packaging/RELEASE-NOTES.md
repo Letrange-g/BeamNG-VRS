@@ -1,6 +1,21 @@
-BeamNG-VRS 0.4.1 — portable Windows x64, for BeamNG.drive 0.40.
+BeamNG-VRS 0.4.2 — portable Windows x64, for BeamNG.drive 0.40.
 
-## What's new in 0.4.1
+## What's new in 0.4.2
+
+- **Multiplayer (BeamMP) support.** Double-click the new
+  **Launch-BeamMP-VRS.cmd** instead of `BeamMP-Launcher.exe`. It sets up
+  BeamNG-VRS as usual and starts BeamMP, which then starts BeamNG with
+  foveation, the crop, the lens mask and the VR draw distance from your INI.
+  Starting BeamMP the usual way runs the game without BeamNG-VRS.
+  BeamMP is looked for in `%APPDATA%\BeamMP-Launcher`; if you installed it
+  elsewhere, edit the CMD and add `-BeamMPLauncher "D:\path\BeamMP-Launcher.exe"`.
+- **On a BeamMP server**, BeamMP turns off every mod the server does not list,
+  including BeamNG-VRS's small in-game mod. The radial menu entry and the
+  "VR draw distance" app are then gone until you restart; the INI distance (or
+  your last in-game pick) still applies. The launcher turns the mod back on at
+  every start, so single player is not left without it.
+
+## In 0.4.1
 
 - **Right-eye ghosting fix.** BeamNG 0.40 builds local exposure and bloom from
   one eye and reuses them for the other, so dark or bright "ghost" shapes show
@@ -48,10 +63,11 @@ BeamNG-VRS 0.4.1 — portable Windows x64, for BeamNG.drive 0.40.
 
 ## Install
 
-1. Download **BeamNG-VRS-0.4.1-windows-x64.zip** below.
+1. Download **BeamNG-VRS-0.4.2-windows-x64.zip** below.
 2. Close BeamNG and extract the whole ZIP into the game folder, beside `Bin64`.
    Extraction directly inside `Bin64` also works.
-3. Edit **BeamNG-VRS.ini** beside the CMD, then run **Launch-BeamNG-VRS.cmd**.
+3. Edit **BeamNG-VRS.ini** beside the CMD, then run **Launch-BeamNG-VRS.cmd**
+   (or **Launch-BeamMP-VRS.cmd** for BeamMP multiplayer).
 4. Enable VR normally. Restart after changing settings.
 
 Updating: back up your INI, extract the new ZIP, then copy your values into

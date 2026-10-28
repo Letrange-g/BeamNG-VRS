@@ -4,6 +4,10 @@ param(
     [switch]$CheckOnly,
     [switch]$Diagnostics,
     [switch]$ValidateOnly,
+    # Start BeamNG through BeamMP-Launcher.exe (multiplayer) instead of directly.
+    [switch]$BeamMP,
+    # BeamMP-Launcher.exe when it is not in its default folder, %APPDATA%\BeamMP-Launcher.
+    [string]$BeamMPLauncher,
     # BeamNG user folder for the RenderScale mod; tests use a scratch folder.
     [string]$UserFolder = (Join-Path $env:LOCALAPPDATA 'BeamNG\BeamNG.drive\current'),
     # Implicit OpenXR layer registry keys; tests replace them with a scratch key.
@@ -291,6 +295,40 @@ M.onExtensionLoaded = registerMenus
         Write-Output "VR draw distance $distanceText m; its in-game app and radial menu are added through $mod"
     }
     if ($null -ne $Scale) { Write-Output "VR render scale $scaleText applied through $mod" }
+    Enable-VRModInDatabase -UserFolder $UserFolder
+}
+
+# BeamMP turns off every mod a server does not list, ours included, and BeamNG saves
+# that in mods\db.json. Turn the mod back on so it is not left off after a server.
+# Only the "active" value of our entry changes; the rest of the file is kept as is.
+function Enable-VRModInDatabase {
+    param([string]$UserFolder)
+    $database = Join-Path $UserFolder 'mods\db.json'
+    if (-not (Test-Path -LiteralPath $database -PathType Leaf)) { return }
+    $text = [IO.File]::ReadAllText($database)
+    $entry = [regex]::Match($text, '"beamng_vrs"\s*:\s*\{')
+    if (-not $entry.Success) { return }
+    # Find "active": false at the top level of our entry, skipping strings and nested objects.
+    $depth = 0; $inString = $false
+    for ($i = $entry.Index + $entry.Length - 1; $i -lt $text.Length; ++$i) {
+        $c = $text[$i]
+        if ($inString) {
+            if ($c -eq '\') { ++$i } elseif ($c -eq '"') { $inString = $false }
+            continue
+        }
+        if ($c -eq '{' -or $c -eq '[') { ++$depth }
+        elseif ($c -eq '}' -or $c -eq ']') { $depth -= 1; if ($depth -eq 0) { return } }
+        elseif ($c -eq '"') {
+            $active = if ($depth -eq 1) { [regex]::Match($text.Substring($i), '^"active"\s*:\s*false') } else { $null }
+            if ($active -and $active.Success) {
+                $text = $text.Substring(0, $i) + '"active":true' + $text.Substring($i + $active.Length)
+                [IO.File]::WriteAllText($database, $text, (New-Object Text.UTF8Encoding($false)))
+                Write-Output 'BeamNG-VRS in-game mod turned back on (BeamMP turns it off on servers).'
+                return
+            }
+            $inString = $true
+        }
+    }
 }
 # ---------------------------------------------------------------------------------------
 # [Renderer] GhostingFix
@@ -521,12 +559,25 @@ try {
     }
     if ([IO.Path]::GetExtension($GameExecutable) -ne '.exe') { throw 'Select the BeamNG Windows executable (.exe).' }
     $GameExecutable = (Resolve-Path -LiteralPath $GameExecutable).Path
+    $gameRoot = Split-Path -Parent (Split-Path -Parent $GameExecutable)
     $start = New-Object System.Diagnostics.ProcessStartInfo
     $start.FileName = $GameExecutable
-    $start.WorkingDirectory = Split-Path -Parent (Split-Path -Parent $GameExecutable)
+    $start.WorkingDirectory = $gameRoot
     # Direct3D 12 is BeamNG 0.40's VR default and the launcher's. The OpenXR layer
     # applies the features on d3d12; the Vulkan layer applies them on vk.
     $start.Arguments = if ($script:Renderer -eq 'vulkan') { '-gfx vk' } else { '-gfx d3d12' }
+    if ($BeamMP) {
+        # BeamMP-Launcher starts BeamNG with its own environment, so the child settings
+        # below reach the game. It passes the arguments after -- on to the game.
+        if (-not $BeamMPLauncher) { $BeamMPLauncher = Join-Path $env:APPDATA 'BeamMP-Launcher\BeamMP-Launcher.exe' }
+        if (-not (Test-Path -LiteralPath $BeamMPLauncher -PathType Leaf)) {
+            throw "BeamMP-Launcher.exe not found at $BeamMPLauncher. Install BeamMP, or run this script with -BeamMP -BeamMPLauncher followed by the full path of BeamMP-Launcher.exe."
+        }
+        $start.FileName = (Resolve-Path -LiteralPath $BeamMPLauncher).Path
+        # BeamMP renames and updates itself relative to its own folder.
+        $start.WorkingDirectory = Split-Path -Parent $start.FileName
+        $start.Arguments = '-- ' + $start.Arguments
+    }
     $start.UseShellExecute = $false
     # The child receives its own environment. The shell and Windows settings are untouched.
     # Old testing scripts must not silently override the user's INI settings.
@@ -572,6 +623,7 @@ try {
     if ($CheckOnly) {
         $layerReport | Write-Output
         if ($null -ne $script:RenderScale) { Write-Output 'VR render scale will be applied through the BeamNG user folder.' }
+        if ($BeamMP) { Write-Output "BeamMP launcher found: $($start.FileName)" }
         Write-Output 'Release files and game executable found. No game started.'; return
     }
     # M8.51: the in-game VR draw distance persists unless the INI value changed.
@@ -586,7 +638,7 @@ try {
     }
     Update-VRMod -UserFolder $UserFolder -Scale $(if ($script:Renderer -eq 'd3d12') { $script:RenderScale } else { $null }) `
         -Distance $startDistance -IniDistance $script:VRDrawDistance
-    Update-GhostingFix -UserFolder $UserFolder -GameRoot $start.WorkingDirectory `
+    Update-GhostingFix -UserFolder $UserFolder -GameRoot $gameRoot `
         -FixFile (Join-Path $layerDirectory 'GhostingFix.hlsl') -Enabled $script:GhostingFix
     if ($Diagnostics) {
         $start.EnvironmentVariables['VK_LOADER_DEBUG'] = 'error,warn,layer'
@@ -615,7 +667,9 @@ try {
     }
     $layerReport | Where-Object { $_ -like '*disabled for BeamNG*' } | Write-Output
     [void][System.Diagnostics.Process]::Start($start)
-    if ($script:Renderer -eq 'd3d12') {
+    if ($BeamMP) {
+        Write-Output 'BeamMP launcher started; it starts BeamNG with BeamNG-VRS. On servers the in-game draw distance app and radial menu are off; BeamNG-VRS.ini settings still apply.'
+    } elseif ($script:Renderer -eq 'd3d12') {
         Write-Output 'BeamNG launched in Direct3D 12 mode. Change BeamNG-VRS.ini and restart to apply settings.'
     } else { Write-Output 'BeamNG launched in Vulkan mode. Change BeamNG-VRS.ini and restart to apply settings.' }
 } catch {

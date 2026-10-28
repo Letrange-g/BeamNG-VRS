@@ -34,7 +34,7 @@ foreach ($file in @('BeamNG_VRS.dll', 'BeamNG_EyeProbe.dll',
 }
 Copy-Item -LiteralPath (Join-Path $root 'packaging/Launch-BeamNG-VRS.ps1') -Destination $layers
 Copy-Item -LiteralPath (Join-Path $root 'packaging/GhostingFix.hlsl') -Destination $layers
-foreach ($file in @('BeamNG-VRS.ini', 'Launch-BeamNG-VRS.cmd', 'Diagnose-BeamNG-VRS.cmd', 'READ-ME-FIRST.txt')) {
+foreach ($file in @('BeamNG-VRS.ini', 'Launch-BeamNG-VRS.cmd', 'Launch-BeamMP-VRS.cmd', 'Diagnose-BeamNG-VRS.cmd', 'READ-ME-FIRST.txt')) {
     Copy-Item -LiteralPath (Join-Path $root "packaging/$file") -Destination $stage
 }
 Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination $layers
