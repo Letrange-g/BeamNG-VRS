@@ -194,15 +194,22 @@ two `busy` values in the same scene. Work on other queues (async compute) is not
 counted.
 
 **What limits the frame rate (`M8.52`):** the same line ends with the frame pacing,
-for example `| frame=13.90 ms (budget 11.11) cpu=13.40 wait=0.50 -> CPU-bound`.
-`frame` is the time between two submitted frames and `budget` is the headset's
-display period (11.11 ms at 90 Hz). `wait` is the time the game was held in
+for example `| frame=13.90 ms (sd 2.40, budget 11.11) cpu=13.40 wait=0.50 -> CPU-bound`.
+`frame` is the time between two submitted frames, `sd` how much it varies from
+frame to frame, and `budget` is the headset's display period (11.11 ms at 90 Hz). `wait` is the time the game was held in
 `xrWaitFrame` by the runtime, and `cpu` is the rest of the frame (the game's own
 work, including waits on its GPU work). The verdict:
 
 - `on target`: the headset's rate is reached; anything below the budget is headroom.
 - `GPU-bound`: GPU `busy` uses 85% or more of the budget. Crop, foveation, a lower
   draw distance or render scale raise the frame rate.
+- `FPS-capped`: the frame rate is flat (`sd` under 5% of `frame`) below the
+  headset's rate while the GPU has room, so a frame limiter holds it there,
+  usually BeamNG's own FPS limiter. The line adds the rate and what to check, for
+  example `-> FPS-capped at 75 fps, headset 90 Hz`. Raise the limit to the
+  headset's rate or above. If it already is, set it to another value (120) and
+  back: one user's limit of 90 stuck at 75 until they did. A steady half or third
+  of the headset's rate is reported as `runtime-bound` instead (reprojection).
 - `CPU-bound`: the game's own work uses 85% or more of the budget while the GPU has
   room. GPU savings don't raise the frame rate; lower CPU-heavy game settings
   (traffic, dynamic reflections, mirrors) instead, or spend the spare GPU time on

@@ -111,7 +111,7 @@ std::mutex stampMutex;
 uint64_t busyTicks=0,ourTicks=0,submissions=0,stampSkipped=0;
 unsigned gpuFrames=0,gpuReports=0;
 // M8.52: frame pacing over the same window as the GPU report (see frame_pacing.hpp).
-double pacingIntervalMs=0,pacingWaitMs=0,pacingPeriodMs=0;
+double pacingIntervalMs=0,pacingIntervalSqMs=0,pacingWaitMs=0,pacingPeriodMs=0;
 unsigned pacingFrames=0,pacingWaits=0;
 LARGE_INTEGER lastFrameEnd{};
 thread_local bool ownSubmit=false; // Our uploads and eye-image effects, reported separately.
@@ -834,7 +834,8 @@ void frame(){
   {std::lock_guard<std::mutex> g(stampMutex);
    // M8.52: time since the previous xrEndFrame on the game's render thread.
    LARGE_INTEGER now{},freq{};QueryPerformanceCounter(&now);QueryPerformanceFrequency(&freq);
-   if(lastFrameEnd.QuadPart){pacingIntervalMs+=double(now.QuadPart-lastFrameEnd.QuadPart)*1000.0/double(freq.QuadPart);++pacingFrames;}
+   if(lastFrameEnd.QuadPart){const double ms=double(now.QuadPart-lastFrameEnd.QuadPart)*1000.0/double(freq.QuadPart);
+    pacingIntervalMs+=ms;pacingIntervalSqMs+=ms*ms;++pacingFrames;}
    lastFrameEnd=now;
    if(stampFence)collectStamps();
    if(stampFence && ++gpuFrames>=(gpuReports?900u:300u)){
@@ -843,20 +844,28 @@ void frame(){
     if(pacingFrames && pacingWaits){
      paced=pacingFrames;
      pacing.intervalMs=pacingIntervalMs/pacingFrames;
+     // M8.53: spread of the interval; a frame limiter holds it flat.
+     const double variance=pacingIntervalSqMs/pacingFrames-pacing.intervalMs*pacing.intervalMs;
+     pacing.intervalSdMs=variance>0?std::sqrt(variance):0.0;
      pacing.waitMs=pacingWaitMs/pacingWaits;
      pacing.periodMs=pacingPeriodMs/pacingWaits;
     }
-    pacingIntervalMs=pacingWaitMs=pacingPeriodMs=0;pacingFrames=pacingWaits=0;
+    pacingIntervalMs=pacingIntervalSqMs=pacingWaitMs=pacingPeriodMs=0;pacingFrames=pacingWaits=0;
    }}
-  if(gn){char msg[400]{};
+  if(gn){char msg[512]{};
    const double gpuMs=double(busy)/ticksPerMs/gn;
    int used=sprintf_s(msg,"M8.47 D3D12 GPU frames=%u busy=%.2f ms/frame (mod=%.2f) submissions=%.1f/frame vrs=%s skipped=%llu",
      gn,gpuMs,double(ours)/ticksPerMs/gn,double(subs)/gn,!foveating?"off":vrsPaused.load()?"paused":"on",(unsigned long long)skipped);
    // M8.52: frame interval, game work (interval minus xrWaitFrame) and the verdict.
    if(paced && used>0){
     pacing.gpuMs=gpuMs;
-    sprintf_s(msg+used,sizeof(msg)-used," | frame=%.2f ms (budget %.2f) cpu=%.2f wait=%.2f -> %s",
-      pacing.intervalMs,pacing.periodMs,pacing.intervalMs>pacing.waitMs?pacing.intervalMs-pacing.waitMs:0.0,pacing.waitMs,frame_pacing::verdict(pacing));
+    const char* verdict=frame_pacing::verdict(pacing);
+    const int more=sprintf_s(msg+used,sizeof(msg)-used," | frame=%.2f ms (sd %.2f, budget %.2f) cpu=%.2f wait=%.2f -> %s",
+      pacing.intervalMs,pacing.intervalSdMs,pacing.periodMs,pacing.intervalMs>pacing.waitMs?pacing.intervalMs-pacing.waitMs:0.0,pacing.waitMs,verdict);
+    // M8.53: a steady rate below the headset's is a frame limiter; say where to look.
+    if(more>0 && !strcmp(verdict,"FPS-capped"))
+     sprintf_s(msg+used+more,sizeof(msg)-used-more," at %.0f fps, headset %.0f Hz: check BeamNG's FPS limiter"
+       " in the graphics options; if it is already above, set it to 120 and back",1000.0/pacing.intervalMs,1000.0/pacing.periodMs);
    }
    log(msg);}
  }
