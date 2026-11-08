@@ -59,6 +59,8 @@ That choice is kept for the next start until you change the INI value.
 layer log output; Diagnose-BeamNG-VRS.cmd overrides it with debug logging.
 GracePeriodMs=30 holds the last valid gaze briefly; 0 disables that grace.
 GazeRefreshMs=8 sets the CPU gaze polling interval. It is not display latency.
+BigscreenGaze=true reads Bigscreen Beyond 2e gaze from the Bigscreen software;
+false uses SteamVR's OpenXR gaze only.
 Valid eye tracking follows gaze; unavailable tracking uses fixed center.
 Use a dot in decimal numbers. Comments must be on separate lines.
 The launcher reports malformed settings and refuses to start the game.

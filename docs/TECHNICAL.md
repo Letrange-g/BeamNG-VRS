@@ -8,7 +8,7 @@ Other hardware needs testing. Experimental builds can crash or show artifacts.
 ## What the package loads
 
 - `BeamNG_VRS.dll`: Vulkan layer applying per-eye shading-rate patterns and optional scissor crops.
-- `BeamNG_EyeProbe.dll`: OpenXR layer collecting supported eye-tracking and eye-image information.
+- `BeamNG_EyeProbe.dll`: OpenXR layer collecting supported eye-tracking and eye-image information. On a Bigscreen Beyond 2e it reads head-relative gaze from the Bigscreen software's `EyeTrackingMemmapData` mapping while that updates (`[Tracking] BigscreenGaze`), because SteamVR's OpenXR gaze can stay head-locked there; otherwise it uses `XR_EXT_eye_gaze_interaction`.
 
 The launcher validates the INI and activates both layers only for the game it
 starts. It preserves normal Vulkan layer discovery, needs no administrator

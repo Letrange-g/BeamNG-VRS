@@ -28,6 +28,7 @@ The release ZIP puts `BeamNG-VRS.ini` beside `Launch-BeamNG-VRS.cmd` at the extr
 | Logging | `Level` | `info` | `off`, `errors`, `info`, or `debug`. Default is brief status/errors, not verbose diagnostics. |
 | Tracking | `GracePeriodMs` | `30` | Hold the last valid gaze for this many milliseconds during temporary tracking loss (0 to 1000). |
 | Tracking | `GazeRefreshMs` | `8` | Minimum CPU gaze polling interval (2 to 50 ms). This does not measure eye-to-display latency. |
+| Tracking | `BigscreenGaze` | `true` | Bigscreen Beyond 2e: while the Bigscreen software runs, read gaze from it directly (its `EyeTrackingMemmapData` mapping) instead of SteamVR's OpenXR gaze, which can stay head-locked. Falls back to OpenXR gaze when the mapping is absent, stops updating, or stays invalid for over a second. Needs the runtime's `XR_EXT_eye_gaze_interaction`, like other eye-tracked foveation. Set `false` to use OpenXR gaze only. |
 
 Use a dot for decimals. Boolean values accept `true`/`false` or `1`/`0`; section/key names and shape values are case-insensitive. Put `;` or `#` comments on their own lines. Duplicate keys, unknown settings, empty files and invalid values are rejected. Omitted settings use the defaults above. Each layer loads the file once when first needed; editing a running game's file does not change its cached settings.
 

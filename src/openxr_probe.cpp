@@ -334,7 +334,7 @@ int m817MessageLevel(const char* msg){
     strstr(msg,"M8.31 TURBO") || strstr(msg,"Next xrCreateApiLayerInstance") || strstr(msg,"Opt-in:") ||
     // D3D12 setup and first-use lines are flushed at once, so a crash right after still leaves them.
     strstr(msg,"M8.40 graphics") || strstr(msg,"hooks=") || strstr(msg,"foveation active") ||
-    strstr(msg,"M8.42 shading-rate image") || strstr(msg,"foveation frames") || strstr(msg,"M8.43") || strstr(msg,"M8.44") || strstr(msg,"M8.47") || strstr(msg,"M8.50") || strstr(msg,"M8.51"))return 1;
+    strstr(msg,"M8.42 shading-rate image") || strstr(msg,"foveation frames") || strstr(msg,"M8.43") || strstr(msg,"M8.44") || strstr(msg,"M8.47") || strstr(msg,"M8.50") || strstr(msg,"M8.51") || strstr(msg,"M8.53"))return 1;
  return 2;
 }
 void logLine(const char* msg) {
@@ -903,6 +903,81 @@ void m844CropFov(XrFovf& fov,const beamng_scissor::Margins& m){
  fov.angleLeft=float(atan(l+m.left*(r-l)));fov.angleRight=float(atan(r-m.right*(r-l)));
  fov.angleUp=float(atan(u-m.top*(u-dn)));fov.angleDown=float(atan(dn+m.bottom*(u-dn)));
 }
+// M8.53: Bigscreen Beyond 2e. BeyondHID publishes head-relative gaze in a named
+// mapping; on some setups the SteamVR OpenXR gaze stays head-locked instead.
+// Layout (float32): left eye xyz @0, right eye xyz @12, combined xyz @24
+// (+x right, +y up, -z forward); int32 valid flag @48. Undocumented, so every
+// sample is checked and anything unexpected falls back to OpenXR gaze.
+enum class M853Gaze{absent,invalid,valid};
+constexpr size_t m853Bytes=52;
+// Not constants so the projection test can use its own mapping and timings.
+const wchar_t* m853MappingName=L"EyeTrackingMemmapData";
+ULONGLONG m853StaleMs=750,m853InvalidMs=1000,m853RetryMs=2000;
+M853Gaze m853ParseBigscreenGaze(const uint8_t* data,V3& out){
+ float g[3]{};int32_t valid=0;
+ memcpy(g,data+24,sizeof(g));memcpy(&valid,data+48,sizeof(valid));
+ const float len=sqrtf(g[0]*g[0]+g[1]*g[1]+g[2]*g[2]);
+ if(valid!=1||!std::isfinite(len)||len<0.5f||len>1.5f||g[2]>=-0.0001f)return M853Gaze::invalid;
+ out={g[0]/len,g[1]/len,g[2]/len};
+ return M853Gaze::valid;
+}
+bool m853BigscreenAllowed(){
+ // [Tracking] BigscreenGaze defaults to true, also without an INI file.
+ static const bool allowed=[]{char s[16]{};
+  return enabled("BEAMNG_EYE_SAMPLE")&&(!beamng_config::read("BEAMNG_VRS_BIGSCREEN_GAZE",s,sizeof(s))||strcmp(s,"0")!=0);}();
+ return allowed;
+}
+// One session at a time; the app serializes xrLocateViews (see M8.18).
+M853Gaze m853BigscreenGaze(V3& out){
+ struct Source{HANDLE mapping=nullptr;const uint8_t* view=nullptr;ULONGLONG nextTry=0,changed=0,invalidSince=0;
+  uint8_t last[m853Bytes]{};bool haveLast=false,live=false;};
+ static Source s;
+ if(!m853BigscreenAllowed())return M853Gaze::absent;
+ const ULONGLONG now=GetTickCount64();
+ auto fallBack=[&](const char* why){
+  if(s.live){s.live=false;char msg[160]{};sprintf_s(msg,sizeof(msg),"M8.53 Bigscreen gaze %s; using OpenXR gaze",why);logLine(msg);}
+  return M853Gaze::absent;
+ };
+ if(!s.view){
+  if(now<s.nextTry)return M853Gaze::absent;
+  s.nextTry=now+m853RetryMs;
+  s.mapping=OpenFileMappingW(FILE_MAP_READ,FALSE,m853MappingName);
+  if(!s.mapping)return M853Gaze::absent;
+  s.view=static_cast<const uint8_t*>(MapViewOfFile(s.mapping,FILE_MAP_READ,0,0,m853Bytes));
+  if(!s.view){CloseHandle(s.mapping);s.mapping=nullptr;return M853Gaze::absent;}
+  if(!s.haveLast)s.changed=now;
+ }
+ // No sequence field: a read during a write can mix two consecutive samples,
+ // which the normalisation below absorbs.
+ uint8_t sample[m853Bytes]{};memcpy(sample,s.view,sizeof(sample));
+ // Tracker noise changes the floats every frame; identical bytes mean BeyondHID
+ // stopped writing. Releasing the view lets a dead mapping disappear, and
+ // keeping the last bytes stops a reopened frozen mapping from looking fresh.
+ if(!s.haveLast||memcmp(sample,s.last,sizeof(sample))){memcpy(s.last,sample,sizeof(sample));s.haveLast=true;s.changed=now;}
+ else if(now-s.changed>m853StaleMs){
+  UnmapViewOfFile(s.view);CloseHandle(s.mapping);s.view=nullptr;s.mapping=nullptr;
+  return fallBack("stopped updating");
+ }
+ const M853Gaze g=m853ParseBigscreenGaze(sample,out);
+ if(g==M853Gaze::valid){
+  s.invalidSince=0;
+  if(!s.live){s.live=true;logLine("M8.53 Bigscreen gaze live");}
+  return g;
+ }
+ // Brief invalid samples (blinks) keep the grace period; a lasting invalid
+ // state, e.g. an unexpected flag value, falls back to OpenXR gaze.
+ if(!s.invalidSince)s.invalidSince=now;
+ return now-s.invalidSince>m853InvalidMs?fallBack("invalid"):g;
+}
+// Head orientation for head-relative gaze: the normalized mean of both eyes'
+// orientations (identical to each eye on headsets with parallel views).
+XrQuaternionf m853HeadOrientation(const XrView views[2]){
+ const auto& a=views[0].pose.orientation;const auto& b=views[1].pose.orientation;
+ const float sign=(a.x*b.x+a.y*b.y+a.z*b.z+a.w*b.w)<0.f?-1.f:1.f;
+ XrQuaternionf q{a.x+sign*b.x,a.y+sign*b.y,a.z+sign*b.z,a.w+sign*b.w};
+ const float len=sqrtf(q.x*q.x+q.y*q.y+q.z*q.z+q.w*q.w);
+ return len>0.f?XrQuaternionf{q.x/len,q.y/len,q.z/len,q.w/len}:a;
+}
 extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeLocateViews(XrSession session,const XrViewLocateInfo* info,XrViewState* state,uint32_t capacity,uint32_t* count,XrView* views){
  Dispatch d{};GazeSession gs{};bool crop=false;std::array<beamng_scissor::Margins,2> margins{};
  {std::lock_guard<std::mutex> g(stateMutex);auto it=sessions.find(session);if(it!=sessions.end()){gs=it->second;d=instances[it->second.instance];}else if(!instances.empty())d=instances.begin()->second;
@@ -926,12 +1001,20 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeLocateViews(XrSession session,con
  if(XR_FAILED(r)||!count||*count<2||!state)return invalid();
  // The eye view poses must be in the view space supplied by the application, using xrLocateSpace.
  if(!(state->viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT))return invalid();
- if(!gs.gazeSpace||!d.locateSpace)return invalid();
- XrSpaceLocation gaze{XR_TYPE_SPACE_LOCATION};
- if(XR_FAILED(d.locateSpace(gs.gazeSpace,info->space,info->displayTime,&gaze)) || !(gaze.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))return invalid();
+ V3 forward{},direct{};
+ // While Bigscreen gaze is live, an invalid sample (e.g. a blink) uses the
+ // grace period rather than the head-locked OpenXR gaze.
+ const M853Gaze bigscreen=m853BigscreenGaze(direct);
+ if(bigscreen==M853Gaze::invalid)return invalid();
+ if(bigscreen==M853Gaze::valid)forward=rotateQ(m853HeadOrientation(views),direct);
+ else{
+  if(!gs.gazeSpace||!d.locateSpace)return invalid();
+  XrSpaceLocation gaze{XR_TYPE_SPACE_LOCATION};
+  if(XR_FAILED(d.locateSpace(gs.gazeSpace,info->space,info->displayTime,&gaze)) || !(gaze.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))return invalid();
+  forward=rotateQ(gaze.pose.orientation,{0.f,0.f,-1.f});
+ }
  const uint64_t poseTick=GetTickCount64();
  uint32_t mask=0;
- V3 forward=rotateQ(gaze.pose.orientation,{0.f,0.f,-1.f});
  for(int i=0;i<2;++i){
   const auto& eye=views[i];auto q=eye.pose.orientation;
   XrQuaternionf inverse{-q.x,-q.y,-q.z,q.w};

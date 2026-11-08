@@ -81,6 +81,7 @@ inline Values defaults() {
  out["BEAMNG_VRS_OUTER_RATE"] = "4x4";
  out["BEAMNG_VRS_GAZE_UPDATE_MS"] = "8";
  out["BEAMNG_VRS_GAZE_GRACE_MS"] = "30";
+ out["BEAMNG_VRS_BIGSCREEN_GAZE"] = "1";
  out["BEAMNG_VRS_M823_LAZY_FB"] = "1";
  out["BEAMNG_VRS_DEBUG_OUTLINE"] = "0";
  out["BEAMNG_VRS_OUTLINE_RESIZE_PAUSE_MS"] = "350";
@@ -111,6 +112,7 @@ inline void setting(Values& out, const std::string& section, const std::string& 
  }
  else if(id == "performance.turbomode") out["BEAMNG_VRS_TURBO_MODE"]=boolean(value);
  else if(id == "foveation.allpasses") out["BEAMNG_VRS_ALL_PASSES"]=boolean(value);
+ else if(id == "tracking.bigscreengaze") out["BEAMNG_VRS_BIGSCREEN_GAZE"]=boolean(value);
  else if(id == "lensmask.enabled") out["BEAMNG_VRS_LENS_MASK"]=boolean(value);
  else if(id == "lensmask.size") { number(value, 0.5, 1.5); out["BEAMNG_VRS_LENS_MASK_SIZE"] = value; }
  else if(id == "foveation.shape") out["BEAMNG_VRS_SHAPE"] = choice(value, {"circle", "square", "ellipse"});
