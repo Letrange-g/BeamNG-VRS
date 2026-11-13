@@ -3,7 +3,7 @@ BeamNG-VRS 0.4.3 — portable Windows x64, for BeamNG.drive 0.40.
 ## What's new in 0.4.3
 
 - **Quad views (experimental, Direct3D 12).** Set `[VR] Mode=quad` in the INI.
-  Each eye renders only a small sharp **focus view** (40% x 40% of its field of
+  Each eye renders only a small sharp **focus view** (35% x 35% of its field of
   view by default) that follows your gaze with eye tracking, or stays centred
   without it. One cheap **wide view** per eye covers the rest at low resolution
   and lower detail. BeamNG-VRS's OpenXR layer blends the two into one full image
@@ -13,8 +13,9 @@ BeamNG-VRS 0.4.3 — portable Windows x64, for BeamNG.drive 0.40.
                                            +--> OpenXR layer: focus over wide,
       wide view (low res, low detail) ----'     soft edge --> headset
 
-  On an RTX 5090 with a Pimax Dream Air in Utah: about 6 ms of GPU time per
-  frame, against 8.5-9 ms in the default `vrs` mode, at a similar CPU time.
+  On an RTX 5090 with a Pimax Dream Air: about 6 ms of GPU time per frame in
+  Utah (8.5-9 ms in the default `vrs` mode) and 7.5-9.5 ms on Jungle Rock Island
+  (about 10-11 ms in earlier `vrs` runs), at a similar CPU time.
   `[QuadViews]` sets the focus size and edge, gaze following, the wide views'
   resolution, field of view (`WideFov=auto` fits your headset) and detail
   (`WideDetail=full`, `medium` (default) or `low`; medium turns off live

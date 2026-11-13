@@ -28,8 +28,8 @@ struct Settings {
  bool middle = true;        // false: black around the sharp window, no middle view.
  bool gaze = true;          // false: the window stays straight ahead.
  bool roundShape = true;    // ellipse inside the window; false: the whole rectangle.
- double sharpWidth = 0.40;  // window share of each eye's full tangent width
- double sharpHeight = 0.40; // and height
+ double sharpWidth = 0.35;  // window share of each eye's full tangent width
+ double sharpHeight = 0.35; // and height
  double feather = 0.30;     // edge blend, share of the window radius
  double deadZone = 0.03;    // tangent units (~1.7 deg) the gaze moves before the window follows
  uint32_t middleWidth = 1280, middleHeight = 880; // left wide view; the right one is 2 rows taller

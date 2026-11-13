@@ -76,6 +76,40 @@ See [configuration details](CONFIGURATION.md) and [performance findings](PERFORM
 for the exact controls and a comparison procedure. Automated tests use mock API
 callbacks and do not validate headset appearance or predict FPS.
 
+## How quad views work
+
+`[VR] Mode=quad` (Direct3D 12) splits each eye into two views and joins them again:
+
+```mermaid
+flowchart LR
+    subgraph game["BeamNG.drive renders, per eye"]
+        focus["Focus view<br/>small window around your gaze<br/>full sharpness"]
+        wide["Wide view<br/>whole field of view<br/>low resolution, lower detail"]
+    end
+    layer["BeamNG-VRS OpenXR layer<br/>focus over wide, soft edge"]
+    hmd["Headset<br/>one full image per eye"]
+    gaze(["Eye tracker<br/>(optional)"])
+    gaze -. moves the window .-> focus
+    focus --> layer
+    wide --> layer
+    layer --> hmd
+```
+
+- **Focus views.** The OpenXR layer shrinks the game's recommended eye size by the focus
+  share and, in `xrLocateViews`, hands the game a field of view that covers only a window
+  around the gaze (with a dead zone so small eye movements do not move it). The game renders
+  its normal eye views into that window at full pixel density. The layer keeps the full
+  field of view for itself.
+- **Wide views.** BeamNG-VRS's in-game Lua mod creates one extra render view per eye
+  (`beamngVrsWide0/1`). Each takes this frame's head pose from the game camera plus its
+  eye's offset (the eyes' own matrices are one frame old in Lua), copies its eye's exposure,
+  hides the driver's head like the eyes do, and gets a per-view settings override from
+  `WideDetail`. Its field of view is sized by the layer to cover the eye (`WideFov=auto`).
+- **Composition.** The layer finds the wide views' render targets by size (the right one is
+  two rows taller), and at `xrEndFrame` draws, per eye, the wide view with the focus view
+  blended over it into its own full-size swapchain. That image replaces the game's projection
+  layer, so the runtime sees an ordinary stereo frame. No depth is submitted.
+
 ## Reporting a problem
 
 Include your package version, GPU, headset, settings and whether normal Vulkan

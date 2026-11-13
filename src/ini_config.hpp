@@ -106,8 +106,8 @@ inline Values defaults() {
  out["BEAMNG_VRS_TRIPLE_GAZE"] = "1";
  out["BEAMNG_VRS_TRIPLE_SHAPE"] = "circle";
  out["BEAMNG_VRS_TRIPLE_WIDE_DETAIL"] = "medium"; // launcher-only (Lua mod)
- out["BEAMNG_VRS_TRIPLE_SHARP_WIDTH"] = "0.40";
- out["BEAMNG_VRS_TRIPLE_SHARP_HEIGHT"] = "0.40";
+ out["BEAMNG_VRS_TRIPLE_SHARP_WIDTH"] = "0.35";
+ out["BEAMNG_VRS_TRIPLE_SHARP_HEIGHT"] = "0.35";
  out["BEAMNG_VRS_TRIPLE_FEATHER"] = "0.30";
  out["BEAMNG_VRS_TRIPLE_DEADZONE"] = "1.5";
  out["BEAMNG_VRS_TRIPLE_MIDDLE_WIDTH"] = "1280";

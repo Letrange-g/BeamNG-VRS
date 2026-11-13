@@ -14,7 +14,7 @@ Set `[VR] Mode=quad` in the INI to try a new way of rendering. Your eye only see
 detail in a small area around where it looks. Quad views render that area sharp and
 everything around it cheaply:
 
-- **Focus view (sharp):** each eye renders only a small window, 40% x 40% of its field
+- **Focus view (sharp):** each eye renders only a small window, 35% x 35% of its field
   of view by default. With eye tracking the window follows your gaze; without it, it
   stays in the centre. Because it covers only part of the field of view, it gets the
   game's full pixel density at a fraction of the pixel count.
@@ -26,25 +26,15 @@ everything around it cheaply:
   view with a soft edge and hands the headset one full image per eye. The headset
   runtime sees a normal stereo game.
 
-```mermaid
-flowchart LR
-    subgraph game["BeamNG.drive renders, per eye"]
-        focus["Focus view<br/>small window around your gaze<br/>full sharpness"]
-        wide["Wide view<br/>whole field of view<br/>low resolution, lower detail"]
-    end
-    layer["BeamNG-VRS OpenXR layer<br/>focus over wide, soft edge"]
-    hmd["Headset<br/>one full image per eye"]
-    gaze(["Eye tracker<br/>(optional)"])
-    gaze -. moves the window .-> focus
-    focus --> layer
-    wide --> layer
-    layer --> hmd
-```
+![Each eye renders one wide low-resolution view plus one small sharp focus view; the headset shows them blended](docs/images/quad-views.svg)
 
-On an RTX 5090 with a Pimax Dream Air in Utah, quad views took about 6 ms of GPU time
-per frame against about 8.5-9 ms with the default `vrs` mode, at a similar CPU time
-(7-8 ms; each wide view repeats some of the game's per-view work). Your results will
-depend on your headset, GPU and map.
+(How it works inside: [Technical notes](docs/TECHNICAL.md#how-quad-views-work).)
+
+On an RTX 5090 with a Pimax Dream Air, quad views took about 6 ms of GPU time per frame
+in Utah (8.5-9 ms with the default `vrs` mode) and 7.5-9.5 ms on the heavy Jungle Rock
+Island map (about 10-11 ms in earlier `vrs` runs), at a similar CPU time (7-8.5 ms; each wide view
+repeats some of the game's per-view work). Your results will depend on your headset, GPU
+and map.
 
 - `Mode=vrs` stays the default. `Mode=quad-black` shows only the focus views, with
   black around them, for comparison.

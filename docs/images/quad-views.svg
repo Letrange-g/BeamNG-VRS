@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1100" height="380" viewBox="0 0 1100 380" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5b8fd6"/><stop offset="1" stop-color="#bcd6f2"/>
+    </linearGradient>
+    <symbol id="scene" viewBox="0 0 300 200">
+      <rect width="300" height="200" fill="url(#sky)"/>
+      <circle cx="245" cy="38" r="16" fill="#fff6c8"/>
+      <polygon points="0,120 40,70 75,98 110,55 150,105 190,62 235,95 270,68 300,90 300,130 0,130" fill="#c56a45"/>
+      <polygon points="0,128 300,128 300,200 0,200" fill="#d9a46b"/>
+      <polygon points="128,128 172,128 260,200 40,200" fill="#59595f"/>
+      <polygon points="148,134 152,134 154,146 146,146" fill="#f3f3f3"/>
+      <polygon points="145,154 155,154 157,172 143,172" fill="#f3f3f3"/>
+      <polygon points="141,182 159,182 161,200 139,200" fill="#f3f3f3"/>
+      <rect x="203" y="112" width="3" height="22" fill="#555"/>
+      <rect x="194" y="100" width="22" height="14" rx="2" fill="#2f8f4e"/>
+      <rect x="198" y="105" width="14" height="2" fill="#fff"/>
+      <rect x="198" y="109" width="10" height="2" fill="#fff"/>
+      <circle cx="48" cy="140" r="14" fill="#4f7a3a"/><rect x="46" y="150" width="4" height="12" fill="#6b4a2b"/>
+      <circle cx="262" cy="150" r="11" fill="#4f7a3a"/><rect x="260" y="158" width="4" height="10" fill="#6b4a2b"/>
+      <rect x="0" y="0" width="300" height="26" fill="#2b2b30"/>
+      <polygon points="0,0 34,0 18,200 0,200" fill="#2b2b30"/>
+      <polygon points="300,0 266,0 282,200 300,200" fill="#2b2b30"/>
+      <path d="M60,200 Q70,168 110,166 L190,166 Q230,168 240,200 Z" fill="#3a3a40"/>
+    </symbol>
+    <filter id="lowres" x="0" y="0" width="1" height="1"><feGaussianBlur stdDeviation="3.2"/></filter>
+    <pattern id="pixels" width="8" height="8" patternUnits="userSpaceOnUse">
+      <rect width="8" height="8" fill="none" stroke="#000" stroke-opacity="0.07" stroke-width="1"/>
+    </pattern>
+    <radialGradient id="soft">
+      <stop offset="0.62" stop-color="#fff"/><stop offset="1" stop-color="#000"/>
+    </radialGradient>
+    <mask id="focusMask" maskUnits="userSpaceOnUse" x="0" y="0" width="300" height="200">
+      <rect width="300" height="200" fill="#000"/>
+      <circle cx="150" cy="125" r="62" fill="url(#soft)"/>
+    </mask>
+    <clipPath id="panel"><rect width="300" height="200" rx="10"/></clipPath>
+  </defs>
+
+  <rect width="1100" height="380" rx="16" fill="#ffffff"/>
+  <text x="550" y="40" text-anchor="middle" font-size="24" font-weight="700" fill="#1d2330">Quad views: what each eye renders</text>
+  <text x="550" y="66" text-anchor="middle" font-size="15" fill="#5a6273">The left eye and the right eye each do this</text>
+
+  <!-- 1: wide view -->
+  <g transform="translate(40,95)">
+    <g clip-path="url(#panel)">
+      <g filter="url(#lowres)"><use href="#scene" xlink:href="#scene" width="300" height="200"/></g>
+      <rect width="300" height="200" fill="url(#pixels)"/>
+    </g>
+    <rect width="300" height="200" rx="10" fill="none" stroke="#c9ced8" stroke-width="2"/>
+    <text x="150" y="232" text-anchor="middle" font-size="18" font-weight="700" fill="#1d2330">1 wide view, low resolution</text>
+    <text x="150" y="256" text-anchor="middle" font-size="14" fill="#5a6273">your whole field of view, cheap to draw</text>
+  </g>
+
+  <text x="370" y="200" text-anchor="middle" font-size="40" font-weight="700" fill="#8a92a3">+</text>
+
+  <!-- 2: focus view -->
+  <g transform="translate(400,95)">
+    <g transform="translate(70,30)">
+      <svg width="160" height="140" viewBox="88 90 124 108.5">
+        <use href="#scene" xlink:href="#scene" width="300" height="200"/>
+      </svg>
+      <rect width="160" height="140" rx="6" fill="none" stroke="#e8792b" stroke-width="3"/>
+    </g>
+    <text x="150" y="232" text-anchor="middle" font-size="18" font-weight="700" fill="#1d2330">1 small focus view, full resolution</text>
+    <text x="150" y="256" text-anchor="middle" font-size="14" fill="#5a6273">only where you look; follows your eyes</text>
+    <text x="150" y="276" text-anchor="middle" font-size="14" fill="#5a6273">(or stays centred without eye tracking)</text>
+  </g>
+
+  <text x="730" y="200" text-anchor="middle" font-size="40" font-weight="700" fill="#8a92a3">=</text>
+
+  <!-- 3: what you see -->
+  <g transform="translate(760,95)">
+    <g clip-path="url(#panel)">
+      <g filter="url(#lowres)"><use href="#scene" xlink:href="#scene" width="300" height="200"/></g>
+      <rect width="300" height="200" fill="url(#pixels)"/>
+      <g mask="url(#focusMask)"><use href="#scene" xlink:href="#scene" width="300" height="200"/></g>
+      <circle cx="150" cy="125" r="50" fill="none" stroke="#e8792b" stroke-width="2" stroke-dasharray="6 5" opacity="0.8"/>
+    </g>
+    <rect width="300" height="200" rx="10" fill="none" stroke="#c9ced8" stroke-width="2"/>
+    <text x="150" y="232" text-anchor="middle" font-size="18" font-weight="700" fill="#1d2330">What you see in the headset</text>
+    <text x="150" y="256" text-anchor="middle" font-size="14" fill="#5a6273">sharp where you look, blended softly</text>
+    <text x="150" y="276" text-anchor="middle" font-size="14" fill="#5a6273">into the cheap view around it</text>
+  </g>
+</svg>
