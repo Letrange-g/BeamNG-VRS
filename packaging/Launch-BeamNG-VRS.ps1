@@ -391,12 +391,14 @@ end
 local function wideCreate(manager)
   local fov = wideFov or wideAutoFov()
   if not fov then return end -- auto: not written yet, retried in a second
-  -- Far follows the left eye when its frustum can be read. The near plane sits 0.2 m out:
-  -- the eyes hide the driver's own head from the inside, the wide views cannot (they
-  -- have no camera object), so it is clipped away instead. Nothing else is that close.
-  local near, far = 0.2, 4000
+  -- Near and far follow the left eye when its frustum can be read (0.1 m and 4000 m in
+  -- BeamNG 0.40). The driver's head is hidden by the render view mask set below, as in
+  -- the eyes, so nothing needs clipping: a farther near plane cut the roof liner away.
+  local near, far = 0.1, 4000
   pcall(function()
-    local x = manager:getView('oxrView0').frustum:getFarDist()
+    local f = manager:getView('oxrView0').frustum
+    local n, x = f:getNearDist(), f:getFarDist()
+    if type(n) == 'number' and n > 0 and n < 1 then near = n end
     if type(x) == 'number' and x > near then far = x end
   end)
   for i = 1, wideCount do
