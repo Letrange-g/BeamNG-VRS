@@ -50,13 +50,12 @@ int main() {
   std::istringstream input(off);
   assert(!parse(input).count("BEAMNG_VRS_VR_DRAW_DISTANCE"));
  }
- // M8.55 [VR] Mode and [QuadViews] (the M8.54 triple names stay accepted)
+ // M8.55 [VR] Mode and [QuadViews] (the M8.54 triple names stay accepted and mean quad)
  for(const char* mode : {"[VR]\nMode=quad\n", "[vr]\nmode = Quad Views\n"}) {
   std::istringstream input(mode);const auto v=parse(input);
   assert(v.at("BEAMNG_VRS_TRIPLE_VIEW")=="1"&&v.at("BEAMNG_VRS_TRIPLE_MIDDLE")=="1");
  }
- {std::istringstream input("[VR]\nMode=triple\n");const auto v=parse(input);assert(v.at("BEAMNG_VRS_TRIPLE_SHARED")=="1");}
- {std::istringstream input("[VR]\nMode=quad\n");const auto v=parse(input);assert(v.at("BEAMNG_VRS_TRIPLE_SHARED")=="0");}
+ {std::istringstream input("[VR]\nMode=triple\n");const auto v=parse(input);assert(v.count("BEAMNG_VRS_TRIPLE_SHARED")==0);}
  {std::istringstream input("[VR]\nMode=quad-black\n");const auto v=parse(input);
   assert(v.at("BEAMNG_VRS_TRIPLE_VIEW")=="1"&&v.at("BEAMNG_VRS_TRIPLE_MIDDLE")=="0");}
  {std::istringstream input("[QuadViews]\nFocusWidth=0.3\nWideHeight=700\nWideFov=100\nFeather=0.4\n");const auto v=parse(input);

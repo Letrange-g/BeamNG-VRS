@@ -26,7 +26,6 @@ inline Tangents fromAngles(double left, double right, double up, double down) {
 struct Settings {
  bool enabled = false;
  bool middle = true;        // false: black around the sharp window, no middle view.
- bool shared = false;       // true: triple view, one wide view between the eyes for both (M8.54)
  bool gaze = true;          // false: the window stays straight ahead.
  bool roundShape = true;    // ellipse inside the window; false: the whole rectangle.
  double sharpWidth = 0.40;  // window share of each eye's full tangent width

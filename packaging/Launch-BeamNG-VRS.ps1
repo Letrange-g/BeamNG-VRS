@@ -245,15 +245,12 @@ local function onClientPostStartMission() present = {} end
         $middleW = [int]$Middle.Width; $middleH = [int]$Middle.Height
         # nil = auto: wait for the OpenXR layer's value in the settings folder.
         $middleFov = if ($null -eq $Middle.Fov) { 'nil' } else { ([double]$Middle.Fov).ToString('0.##', $invariant) }
-        # Triple view: one wide view between the eyes, shared by both (cheaper, flat periphery).
-        $wideShared = if ($Middle.Shared) { 'true' } else { 'false' }
         $lua += @"
 -- M8.55 quad views: wide views.
 local wideW, wideH, wideFov = $middleW, $middleH, $middleFov
-local wideShared = $wideShared -- triple view: one view (index 1) between the eyes
 -- core_camera first: its onPreRender sets this frame's head pose that the wide views use.
 M.dependencies = {'core_camera'}
-local wideCount = wideShared and 1 or 2
+local wideCount = 2
 local wideFovFile = '/settings/beamng_vrs_middle_fov.txt'
 local wide = {}       -- [1] left eye, [2] right eye
 local wideWait = 0
@@ -376,12 +373,6 @@ local function wideFollow(manager, dt)
   local m0 = manager:getView('oxrView0').cameraMatrix
   local m1 = manager:getView('oxrView1').cameraMatrix
   local source = {m0, m1}
-  if wideShared then
-    -- Triple view: the left eye's camera moved halfway to the right eye.
-    local a, b = m0:getPosition(), m1:getPosition()
-    m0:setPosition(Point3F((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2))
-    source = {m0}
-  end
   local h = predict and headNow()
   if h then
     table.insert(heads, 1, h)
@@ -807,13 +798,13 @@ function Test-BeamNGIni {
                 $script:GhostingFix = @('1', 'true') -ccontains $value.ToLowerInvariant()
             } elseif ($id -eq 'vr.mode') {
                 # Same rule as the DLL: spaces, '-' and '_' are ignored ("quad views" works);
-                # the M8.54 names triple and triple-black still work.
+                # the M8.54 names triple and triple-black still work and mean quad and quad-black
+                # (triple view, one wide view shared by both eyes, was removed).
                 $mode = ($value.ToLowerInvariant() -replace '[\s_-]', '')
                 if (@('vrs') -ccontains $mode) { $script:VRMode = 'vrs' }
-                elseif (@('quad', 'quadview', 'quadviews') -ccontains $mode) { $script:VRMode = 'quad' }
-                elseif (@('triple', 'tripleview') -ccontains $mode) { $script:VRMode = 'triple' }
+                elseif (@('quad', 'quadview', 'quadviews', 'triple', 'tripleview') -ccontains $mode) { $script:VRMode = 'quad' }
                 elseif (@('quadblack', 'quadviewblack', 'quadviewsblack', 'tripleblack', 'tripleviewblack') -ccontains $mode) { $script:VRMode = 'quad-black' }
-                else { throw 'invalid VR mode (use vrs, quad, triple or quad-black)' }
+                else { throw 'invalid VR mode (use vrs, quad or quad-black)' }
             } elseif ($id -eq 'quadviews.widefov') {
                 # auto (default): the OpenXR layer sizes it from the headset at VR start.
                 $script:Middle.Fov = if ($value -ieq 'auto') { $null } else { Assert-IniNumber -Value $value -Low 30 -High 150 -Integer $false }
@@ -957,7 +948,7 @@ try {
     $start.EnvironmentVariables['BEAMNG_VRS_TRIPLE_FOV_FILE'] = $middleFovFile
     Update-VRMod -UserFolder $UserFolder -Scale $(if ($script:Renderer -eq 'd3d12') { $script:RenderScale } else { $null }) `
         -Distance $startDistance -IniDistance $script:VRDrawDistance `
-        -Middle $(if ($script:Renderer -eq 'd3d12' -and @('quad', 'triple') -contains $script:VRMode) { $script:Middle.Shared = $script:VRMode -eq 'triple'; $script:Middle } else { $null })
+        -Middle $(if ($script:Renderer -eq 'd3d12' -and $script:VRMode -eq 'quad') { $script:Middle } else { $null })
     if ($script:VRMode -ne 'vrs' -and $script:Renderer -ne 'd3d12') {
         Write-Warning "[VR] Mode=$($script:VRMode) needs [Renderer] API=d3d12; VRS is used instead."
     } elseif ($script:VRMode -ne 'vrs') {

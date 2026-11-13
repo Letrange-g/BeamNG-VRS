@@ -254,10 +254,9 @@ tier and the render-target sizes the game binds per frame (`M8.41` lines).
 | --- | --- |
 | `vrs` (default) | The normal eyes with variable-rate shading, scissor crop and lens mask. |
 | `quad` | Each eye renders only a small sharp focus view (`[QuadViews] FocusWidth`/`FocusHeight` of its field of view) that follows the gaze, or stays centred without eye tracking. One wide, low-resolution view per eye, at that eye's position, fills the rest. The OpenXR layer blends them into full-field-of-view eye images. |
-| `triple` | Like `quad`, but one wide view between the eyes serves both: one extra view instead of two (about 2.5 ms less GPU time, and less CPU), with a flat periphery (no stereo depth). |
 | `quad-black` | The same focus views with black around them and no wide views, so there is no wide-view cost. |
 
-Spaces, `-` and `_` are ignored, so `Mode=quad views` also works. The earlier names `triple-black` and the `[TripleView]` section with its Sharp/Middle keys are still accepted. In the quad modes, `[Foveation]`, `[Scissor]` and `[LensMask]` are not used.
+Spaces, `-` and `_` are ignored, so `Mode=quad views` also works. The earlier names `triple` and `triple-black` still work and mean `quad` and `quad-black` (triple view, one wide view shared by both eyes, was removed: its flat periphery felt jarring in motion). The `[TripleView]` section with its Sharp/Middle keys is still accepted. In the quad modes, `[Foveation]`, `[Scissor]` and `[LensMask]` are not used.
 
 The launcher creates the wide views with its small mod in `mods\unpacked\beamng_vrs`. When that mod is off, for example on a BeamMP server that turns off unlisted mods, the surround stays black, as with `quad-black`. Each extra view costs the game a mostly fixed amount of GPU time (about 2.5 ms each on an RTX 5090), so a lower `WideWidth`/`WideHeight` saves only a little.
 

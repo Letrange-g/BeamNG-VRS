@@ -305,7 +305,7 @@ void captureEye(uint64_t texture, int eye) {
  sh.valid = true;
 }
 
-bool compose(const EyeInput eyes[2], const uint64_t outputs[2], bool middleWanted, bool shared) {
+bool compose(const EyeInput eyes[2], const uint64_t outputs[2], bool middleWanted) {
  if(!isReady || !outputs[0] || !outputs[1]) return false;
  std::lock_guard<std::mutex> g(mutex);
  if(!sharp[0].valid || !sharp[1].valid) return false;
@@ -321,7 +321,7 @@ bool compose(const EyeInput eyes[2], const uint64_t outputs[2], bool middleWante
  ID3D12Resource* middleResource[2]{};
  D3D12_RESOURCE_DESC md[2]{};
  for(int eye = 0; eye < 2; ++eye) {
-  if(middleWanted && beamng_d3d12::middleTarget(shared ? 0 : eye, m[eye]) && beamng_d3d12::frameCount() - m[eye].bindFrame < 45)
+  if(middleWanted && beamng_d3d12::middleTarget(eye, m[eye]) && beamng_d3d12::frameCount() - m[eye].bindFrame < 45)
    middleResource[eye] = reinterpret_cast<ID3D12Resource*>(uintptr_t(m[eye].resource));
   if(middleResource[eye]) ID3D12Resource_GetDesc(middleResource[eye], &md[eye]);
  }
@@ -357,9 +357,7 @@ bool compose(const EyeInput eyes[2], const uint64_t outputs[2], bool middleWante
  bool middleBarrier[2]{};
  for(int eye = 0; eye < 2; ++eye) {
   middleState[eye] = D3D12_RESOURCE_STATES(m[eye].state);
-  // Shared (triple): one resource for both eyes, transitioned once.
-  middleBarrier[eye] = middleResource[eye] && !(middleState[eye] & D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) &&
-                       !(shared && eye == 1);
+  middleBarrier[eye] = middleResource[eye] && !(middleState[eye] & D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
   if(middleBarrier[eye]) {
    const auto b = transition(middleResource[eye], middleState[eye], D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
    ID3D12GraphicsCommandList_ResourceBarrier(s->list, 1, &b);
