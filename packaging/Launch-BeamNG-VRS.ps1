@@ -371,6 +371,21 @@ local function measureLag(m, dt)
     lag = best
   end
 end
+-- Exposure: each render view adapts its own auto exposure, and a wide view sees more sky
+-- and interior than its eye's focus window, so it settled brighter or darker than the
+-- eye and the focus window stood out. Each frame the wide view takes its eye's exposure
+-- (manual EV or the current auto value), as render/renderViews.lua does for captures.
+local exposureFailed = false
+local function wideExposure(view, eye)
+  if exposureFailed or not eye then return end
+  local ok, err = pcall(function()
+    view.useManualEV = eye.useManualEV
+    view.manualEV = eye.manualEV
+    local current = eye.currentExposure
+    if type(current) == 'number' and current > 0 then view.currentExposure = current end
+  end)
+  if not ok then exposureFailed = true wideSay('exposure not copied: ' .. tostring(err)) end
+end
 local function wideFollow(manager, dt)
   local m0 = manager:getView('oxrView0').cameraMatrix
   local m1 = manager:getView('oxrView1').cameraMatrix
@@ -398,7 +413,7 @@ local function wideFollow(manager, dt)
     local view = wide[i]
     if view then
       local ok = pcall(function() view.cameraMatrix = source[i] end)
-      if not ok then wide[i] = nil end
+      if not ok then wide[i] = nil else wideExposure(view, manager:getView('oxrView' .. (i - 1))) end
     end
   end
 end
