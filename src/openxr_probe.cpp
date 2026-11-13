@@ -541,6 +541,10 @@ std::mutex headMutex;
 std::unordered_set<uint64_t> viewSpaces;
 struct HeadSample { XrSpace space=XR_NULL_HANDLE,base=XR_NULL_HANDLE; XrTime time=0; XrPosef pose{}; bool valid=false; };
 HeadSample firstHead;
+// The newest located head pose for the newest display time, and the last one for the
+// display time before it: BeamNG's Lua update runs while the previous frame is still
+// being rendered, so its camera takes the last pose located for that previous frame.
+HeadSample lastHead,prevHead;
 std::atomic<uint64_t> headAligned{0};
 XrQuaternionf qMul(const XrQuaternionf& a,const XrQuaternionf& b){
  return {a.w*b.x+a.x*b.w+a.y*b.z-a.z*b.y,a.w*b.y-a.x*b.z+a.y*b.w+a.z*b.x,a.w*b.z+a.x*b.y-a.y*b.x+a.z*b.w,a.w*b.w-a.x*b.x-a.y*b.y-a.z*b.z};
@@ -586,8 +590,11 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeLocateSpace(XrSpace space,XrSpace
     (location->locationFlags&XR_SPACE_LOCATION_POSITION_VALID_BIT)){
   std::lock_guard<std::mutex> g(headMutex);
   // The first located head pose for a display time is the one the Lua camera takes.
-  if(viewSpaces.count(uint64_t(space))&&(time!=firstHead.time||baseSpace!=firstHead.base))
-   firstHead={space,baseSpace,time,location->pose,true};
+  if(viewSpaces.count(uint64_t(space))){
+   if(time!=firstHead.time||baseSpace!=firstHead.base)firstHead={space,baseSpace,time,location->pose,true};
+   if(lastHead.valid&&time>lastHead.time)prevHead=lastHead;
+   if(!lastHead.valid||time>=lastHead.time)lastHead={space,baseSpace,time,location->pose,true};
+  }
  }
  if(XR_SUCCEEDED(r)&&location&&poseTraceOn())poseTrace("locateSpace",time,&location->pose,(void*)space,(void*)baseSpace);
  return r;
@@ -1222,21 +1229,25 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeLocateViews(XrSession session,con
  bool triple=false;beamng_triple::Settings tset{};
  if(tripleActive){std::lock_guard<std::mutex> g(stateMutex);triple=session==tripleSession;tset=tripleSettings;}
  if(triple&&XR_SUCCEEDED(r)&&info&&info->viewConfigurationType==XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO&&views&&count&&*count>=2&&capacity>=2){
-  // M8.57: the eyes follow the head pose the Lua camera (and so the wide views) used.
+  // M8.57: the eyes follow the head pose the Lua camera (and so the wide views) used:
+  // the last one located for the previous display time (the camera runs during the
+  // previous frame), or failing that the first one for this display time.
   if(tset.middle&&d.locateSpace){
-   HeadSample h{};{std::lock_guard<std::mutex> g(headMutex);h=firstHead;}
+   HeadSample first{},prev{},last{};{std::lock_guard<std::mutex> g(headMutex);first=firstHead;prev=prevHead;last=lastHead;}
+   // prev is for the frame before only when this display time is the newest one seen.
+   const HeadSample& h=(last.valid&&last.time==info->displayTime&&prev.valid&&prev.time<info->displayTime&&prev.base==info->space)?prev:first;
    XrSpaceLocation now{XR_TYPE_SPACE_LOCATION};
-   if(h.valid&&h.time==info->displayTime&&h.base==info->space&&
+   if(h.valid&&h.base==info->space&&(h.time==info->displayTime||&h==&prev)&&
       XR_SUCCEEDED(d.locateSpace(h.space,info->space,info->displayTime,&now))&&
       (now.locationFlags&XR_SPACE_LOCATION_ORIENTATION_VALID_BIT)&&(now.locationFlags&XR_SPACE_LOCATION_POSITION_VALID_BIT)){
     const auto q=qMul(h.pose.orientation,qConj(now.pose.orientation));
     const double angle=2.0*std::acos(std::min(1.0,std::fabs(double(q.w))))*180.0/3.14159265358979;
     for(int i=0;i<2;++i)views[i].pose=moveWithHead(views[i].pose,now.pose,h.pose);
-    static double maxAngle=0;static double sumAngle=0;
-    maxAngle=std::max(maxAngle,angle);sumAngle+=angle;
+    static double maxAngle=0;static double sumAngle=0;static uint64_t fromPrev=0;
+    maxAngle=std::max(maxAngle,angle);sumAngle+=angle;if(&h==&prev)++fromPrev;
     const uint64_t n=headAligned.fetch_add(1)+1;
-    if(n==1||n%5400==0){char msg[200]{};sprintf_s(msg,sizeof(msg),"M8.57 eyes follow the camera's head pose: %llu frames, mean %.2f deg, max %.2f deg moved back",
-      (unsigned long long)n,sumAngle/double(n%5400==0?5400:1),maxAngle);logLine(msg);if(n%5400==0){maxAngle=0;sumAngle=0;}}
+    if(n==1||n%5400==0){char msg[220]{};sprintf_s(msg,sizeof(msg),"M8.57 eyes follow the camera's head pose: %llu frames (%llu from the previous frame's pose), mean %.2f deg, max %.2f deg moved back",
+      (unsigned long long)n,(unsigned long long)fromPrev,sumAngle/double(n%5400==0?5400:1),maxAngle);logLine(msg);if(n%5400==0){maxAngle=0;sumAngle=0;fromPrev=0;}}
    }
   }
   std::array<XrFovf,2> full{views[0].fov,views[1].fov};

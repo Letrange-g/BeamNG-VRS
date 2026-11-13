@@ -294,6 +294,10 @@ local wideFollowFailed = false
 local wideFovUsed, wideNear, wideFar = nil, 0.1, 4000
 -- Wide view pose prediction state (see wideFollow).
 local heads = {}        -- head poses: [1] this frame, [2] one frame ago, [3] two ago
+-- Learned eye offsets and the wide-vs-eye angle check (see wideFollow); declared here so
+-- the diagnostics above wideFollow see them.
+local eyeFixed, stillFrames = {}, 0
+local lastWide, mismatchSum, mismatchMax, mismatchCount = nil, 0, 0, 0
 local lag, lagSamples, lagOffset = 1, 0, {0, 0, 0}
 local predict = core_camera ~= nil -- off if the check in wideFollow fails: plain copies then
 local predictChecked = false
@@ -342,11 +346,13 @@ local function wideDiag(manager, dt)
     if not f then return 'not yet' end
     return string.format('(%.1f,%.1f,%.1f)', f.pos[1] * 1000, f.pos[2] * 1000, f.pos[3] * 1000)
   end
-  wideSay(string.format('diag t=%.0f pose lag=%d predict=%s eye offset mm at lag 0/1/2=%.1f/%.1f/%.1f samples above 8 m/s=%d learned eye offsets mm L=%s R=%s | %s | %s | %s | %s',
-    diagTime, lag, tostring(predict), lagOffset[1] * 1000, lagOffset[2] * 1000, lagOffset[3] * 1000, lagSamples, learned(1), learned(2),
+  wideSay(string.format('diag t=%.0f wide vs eye angle deg mean %.2f max %.2f over %d frames | pose lag=%d predict=%s eye offset mm at lag 0/1/2=%.1f/%.1f/%.1f samples above 8 m/s=%d learned eye offsets mm L=%s R=%s | %s | %s | %s | %s',
+    diagTime, mismatchCount > 0 and mismatchSum / mismatchCount or 0, mismatchMax, mismatchCount,
+    lag, tostring(predict), lagOffset[1] * 1000, lagOffset[2] * 1000, lagOffset[3] * 1000, lagSamples, learned(1), learned(2),
     describe('eye0', try(function() return manager:getView('oxrView0') end)),
     describe('eye1', try(function() return manager:getView('oxrView1') end)),
     describe('wide0', wide[1]), describe('wide1', wide[2])))
+  mismatchSum, mismatchMax, mismatchCount = 0, 0, 0
 end
 -- Wide view poses. The engine writes the eyes' matrices (oxrView0/1) while it renders,
 -- after Lua's onPreRender, so here they still hold the previous frame: copied as they
@@ -436,8 +442,17 @@ end
 -- against the focus view for a moment. So the offset is learned and the wide views use
 -- the learned one: from frames where the head is still (any lag gives the same answer),
 -- and from moving frames only when they agree with it within 5 mm.
-local eyeFixed = {}
-local stillFrames = 0
+-- How far each wide view's direction was from its eye's, measured a frame later when the
+-- eye's matrix becomes readable (beamng.log diag: the angle the two views disagree by).
+local function columnAngle(a, b)
+  local worst = 0
+  for c = 0, 2 do
+    local x, y = a:getColumn(c), b:getColumn(c)
+    local d = math.max(-1, math.min(1, x.x * y.x + x.y * y.y + x.z * y.z))
+    worst = math.max(worst, math.deg(math.acos(d)))
+  end
+  return worst
+end
 local function normalize(v)
   local n = math.sqrt(dot(v, v))
   if n < 1e-9 then return v end
@@ -472,6 +487,10 @@ local function learnEye(i, e, still)
 end
 local function wideFollow(manager, dt)
   local m0 = manager:getView('oxrView0').cameraMatrix
+  if lastWide and dt then
+    local ok, a = pcall(columnAngle, m0, lastWide)
+    if ok and a == a then mismatchSum = mismatchSum + a mismatchMax = math.max(mismatchMax, a) mismatchCount = mismatchCount + 1 end
+  end
   local m1 = manager:getView('oxrView1').cameraMatrix
   local source = {m0, m1}
   local h = predict and headNow()
@@ -499,6 +518,7 @@ local function wideFollow(manager, dt)
       end
     end
   end
+  lastWide = source[1]
   for i = 1, wideCount do
     local view = wide[i]
     if view then
