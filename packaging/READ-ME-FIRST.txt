@@ -1,4 +1,4 @@
-BeamNG-VRS 0.4.2 - portable Windows x64
+BeamNG-VRS 0.4.3 - portable Windows x64
 
 INSTALL
 1. Close BeamNG.

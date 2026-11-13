@@ -4,9 +4,68 @@ Foveated rendering for **BeamNG.drive VR** (Direct3D 12 or Vulkan), plus edge cr
 Keep more detail where you look and reduce rendering work around the edges.
 Works with a fixed center or supported eye tracking.
 
-**Windows x64 · Release 0.4.2 · built for BeamNG.drive 0.40.** Performance varies by headset, GPU and scene.
+**Windows x64 · Release 0.4.3 · built for BeamNG.drive 0.40.** Performance varies by headset, GPU and scene.
 
-## What's new in 0.4.2
+## What's new in 0.4.3
+
+### Quad views (experimental, Direct3D 12)
+
+Set `[VR] Mode=quad` in the INI to try a new way of rendering. Your eye only sees fine
+detail in a small area around where it looks. Quad views render that area sharp and
+everything around it cheaply:
+
+- **Focus view (sharp):** each eye renders only a small window, 40% x 40% of its field
+  of view by default. With eye tracking the window follows your gaze; without it, it
+  stays in the centre. Because it covers only part of the field of view, it gets the
+  game's full pixel density at a fraction of the pixel count.
+- **Wide view (cheap):** each eye also gets one wide view that covers its whole field of
+  view at low resolution (1280 x 880 by default) and lower detail. Live reflections,
+  mirrors, half the shadow resolution, model detail and grass, and small meshes are
+  cut there, because you can't see them in the corner of your eye.
+- **The blend:** BeamNG-VRS's OpenXR layer places each eye's focus view over its wide
+  view with a soft edge and hands the headset one full image per eye. The headset
+  runtime sees a normal stereo game.
+
+```mermaid
+flowchart LR
+    subgraph game["BeamNG.drive renders, per eye"]
+        focus["Focus view<br/>small window around your gaze<br/>full sharpness"]
+        wide["Wide view<br/>whole field of view<br/>low resolution, lower detail"]
+    end
+    layer["BeamNG-VRS OpenXR layer<br/>focus over wide, soft edge"]
+    hmd["Headset<br/>one full image per eye"]
+    gaze(["Eye tracker<br/>(optional)"])
+    gaze -. moves the window .-> focus
+    focus --> layer
+    wide --> layer
+    layer --> hmd
+```
+
+On an RTX 5090 with a Pimax Dream Air in Utah, quad views took about 6 ms of GPU time
+per frame against about 8.5-9 ms with the default `vrs` mode, at a similar CPU time
+(7-8 ms; each wide view repeats some of the game's per-view work). Your results will
+depend on your headset, GPU and map.
+
+- `Mode=vrs` stays the default. `Mode=quad-black` shows only the focus views, with
+  black around them, for comparison.
+- `[QuadViews]` sets the focus size (`FocusWidth`, `FocusHeight`), its edge
+  (`Shape`, `Feather`), gaze following, the wide views' resolution and field of view
+  (`WideFov=auto` fits your headset) and `WideDetail` (`full`, `medium` default, `low`).
+- Any OpenXR headset should work, with or without eye tracking; only the Pimax Dream
+  Air has been tested. No depth is sent to the runtime, which affects depth-based
+  reprojection.
+- The wide views come from BeamNG-VRS's small in-game mod. When a BeamMP server turns
+  that mod off, the surround stays black.
+
+### Also new
+
+- **Your own head no longer shows in VR.** BeamNG hides the driver's head in first
+  person, but its VR eye views missed that flag, so the dummy's head and helmet showed
+  when you leaned. BeamNG-VRS now sets it on the eyes in every mode.
+- **The log spots an FPS cap:** the `M8.47` verdict says `FPS-capped at N fps` when
+  a steady in-game limit holds the frame rate below the headset's.
+
+## In 0.4.2
 
 - **Multiplayer (BeamMP).** Double-click `Launch-BeamMP-VRS.cmd` instead of
   `BeamMP-Launcher.exe`: BeamMP then starts BeamNG with BeamNG-VRS. On a server,
@@ -53,7 +112,7 @@ Works with a fixed center or supported eye tracking.
 
 ## Install
 
-1. [Download the Windows ZIP](https://github.com/Letrange-g/BeamNG-VRS/releases/download/v0.4.2/BeamNG-VRS-0.4.2-windows-x64.zip) (not the source-code ZIP).
+1. [Download the Windows ZIP](https://github.com/Letrange-g/BeamNG-VRS/releases/download/v0.4.3/BeamNG-VRS-0.4.3-windows-x64.zip) (not the source-code ZIP).
 2. Close BeamNG and extract the whole ZIP into the game folder, beside `Bin64`.
 3. Double-click `Launch-BeamNG-VRS.cmd`, then enable VR in the game.
    For BeamMP multiplayer, double-click `Launch-BeamMP-VRS.cmd` instead.
