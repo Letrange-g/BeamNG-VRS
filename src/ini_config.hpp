@@ -105,6 +105,7 @@ inline Values defaults() {
  out["BEAMNG_VRS_TRIPLE_MIDDLE"] = "1";
  out["BEAMNG_VRS_TRIPLE_GAZE"] = "1";
  out["BEAMNG_VRS_TRIPLE_SHAPE"] = "circle";
+ out["BEAMNG_VRS_TRIPLE_WIDE_DETAIL"] = "medium"; // launcher-only (Lua mod)
  out["BEAMNG_VRS_TRIPLE_SHARP_WIDTH"] = "0.40";
  out["BEAMNG_VRS_TRIPLE_SHARP_HEIGHT"] = "0.40";
  out["BEAMNG_VRS_TRIPLE_FEATHER"] = "0.30";
@@ -184,6 +185,8 @@ inline void setting(Values& out, const std::string& section, const std::string& 
  }
  else if(id == "quadviews.followgaze") out["BEAMNG_VRS_TRIPLE_GAZE"] = boolean(value);
  else if(id == "quadviews.shape") out["BEAMNG_VRS_TRIPLE_SHAPE"] = choice(value, {"circle", "rectangle"});
+ // Detail of the wide views only, relative to the game's own graphics settings.
+ else if(id == "quadviews.widedetail") out["BEAMNG_VRS_TRIPLE_WIDE_DETAIL"] = choice(value, {"full", "medium", "low"});
  else if(id == "quadviews.focuswidth" || id == "quadviews.focusheight") {
   number(value, 0.1, 1);
   out[id == "quadviews.focuswidth" ? "BEAMNG_VRS_TRIPLE_SHARP_WIDTH" : "BEAMNG_VRS_TRIPLE_SHARP_HEIGHT"] = value;

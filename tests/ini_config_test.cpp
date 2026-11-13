@@ -62,6 +62,9 @@ int main() {
   assert(v.at("BEAMNG_VRS_TRIPLE_SHARP_WIDTH")=="0.3"&&v.at("BEAMNG_VRS_TRIPLE_MIDDLE_HEIGHT")=="700"&&v.at("BEAMNG_VRS_TRIPLE_MIDDLE_FOV")=="100");}
  assert(defaults.at("BEAMNG_VRS_TRIPLE_MIDDLE_WIDTH")=="1280"&&defaults.at("BEAMNG_VRS_TRIPLE_FEATHER")=="0.30");
  assert(defaults.at("BEAMNG_VRS_TRIPLE_VIEW")=="0");
+ assert(defaults.at("BEAMNG_VRS_TRIPLE_WIDE_DETAIL")=="medium");
+ {std::istringstream input("[QuadViews]\nWideDetail=LOW\n");const auto v=parse(input);assert(v.at("BEAMNG_VRS_TRIPLE_WIDE_DETAIL")=="low");}
+ {std::istringstream input("[QuadViews]\nWideDetail=ultra\n");bool threw=false;try{parse(input);}catch(const std::exception&){threw=true;}assert(threw);}
  for(const char* mode : {"[VR]\nMode=triple\n", "[vr]\nmode = Triple View\n", "[VR]\nMode=triple_view\n"}) {
   std::istringstream input(mode);const auto v=parse(input);
   assert(v.at("BEAMNG_VRS_TRIPLE_VIEW")=="1"&&v.at("BEAMNG_VRS_TRIPLE_MIDDLE")=="1");

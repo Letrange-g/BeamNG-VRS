@@ -245,9 +245,11 @@ local function onClientPostStartMission() present = {} end
         $middleW = [int]$Middle.Width; $middleH = [int]$Middle.Height
         # nil = auto: wait for the OpenXR layer's value in the settings folder.
         $middleFov = if ($null -eq $Middle.Fov) { 'nil' } else { ([double]$Middle.Fov).ToString('0.##', $invariant) }
+        $wideDetail = if ($Middle.Detail) { [string]$Middle.Detail } else { 'medium' }
         $lua += @"
 -- M8.55 quad views: wide views.
 local wideW, wideH, wideFov = $middleW, $middleH, $middleFov
+local wideDetail = '$wideDetail'
 -- core_camera first: its onPreRender sets this frame's head pose that the wide views use.
 M.dependencies = {'core_camera'}
 local wideCount = 2
@@ -400,6 +402,25 @@ local function wideFollow(manager, dt)
     end
   end
 end
+-- WideDetail: the wide views draw the game's own settings scaled down (medium, low) or as
+-- they are (full), the way the game's split screen does it (render/splitScreen.lua). Each
+-- view repeats the game's draw calls, so fewer meshes and less grass save CPU time; the
+-- blurry periphery hides the difference. Mirrors stay on: they show in the periphery.
+local wideDetailScale = {full = nil, medium = {mesh = 0.5, grass = 0.5}, low = {mesh = 0.25, grass = 0}}
+local function wideQuality(view, name)
+  local scale = wideDetailScale[wideDetail]
+  if not scale then return end
+  local ok, err = pcall(function()
+    local s = RenderSettings.getGlobals()
+    s.meshDetailAdjust = s.meshDetailAdjust * scale.mesh
+    s.groundCoverScale = s.groundCoverScale * scale.grass
+    if wideDetail == 'low' then s.vehicleDynamicReflectionsEnabled = false end
+    view.settingsOverride = s -- returned by value: the whole struct is written back
+    view.settingsOverrideEnabled = true
+  end)
+  if ok then wideSay(name .. ' detail ' .. wideDetail)
+  else wideSay(name .. ' detail not set: ' .. tostring(err)) end
+end
 local function wideCreate(manager)
   local fov = wideFov or wideAutoFov()
   if not fov then return end -- auto: not written yet, retried in a second
@@ -429,6 +450,7 @@ local function wideCreate(manager)
         -- setMeshHiddenInRenderView(mesh, player, true)); the eyes carry player 0's bit.
         local masked = pcall(function() view:maskSet(0) end)
         if not masked then wideSay(name .. ': render view mask not set, the driver head may show') end
+        wideQuality(view, name)
         -- The projection comes from the frustum alone (fov is only a label, as in the
         -- game's own render/viewDemo.lua). Frustum.construct takes the VERTICAL angle and
         -- widens it by the aspect (measured: near-plane extents 0.43 x 0.295 at 0.2 m),
@@ -812,6 +834,9 @@ function Test-BeamNGIni {
                 if (@('0', '1', 'false', 'true') -cnotcontains $value.ToLowerInvariant()) { throw 'expected 0, 1, false or true' }
             } elseif ($id -eq 'quadviews.shape') {
                 if (@('circle', 'rectangle') -cnotcontains $value.ToLowerInvariant()) { throw 'unsupported setting value' }
+            } elseif ($id -eq 'quadviews.widedetail') {
+                if (@('full', 'medium', 'low') -cnotcontains $value.ToLowerInvariant()) { throw 'unsupported setting value' }
+                $script:Middle.Detail = $value.ToLowerInvariant()
             } elseif ($id -eq 'renderer.farclip') {
                 Write-Warning "INI line ${lineNumber} [Renderer]: FarClip was removed (BeamNG ignores it in VR); this line is ignored and can be deleted."
             } else { throw 'unknown section or setting' }
@@ -835,7 +860,7 @@ try {
     $script:VRDrawDistance = [double]4000
     $script:GhostingFix = $false
     $script:VRMode = 'vrs'
-    $script:Middle = @{ Width = 1280; Height = 880; Fov = $null }
+    $script:Middle = @{ Width = 1280; Height = 880; Fov = $null; Detail = 'medium' }
     if (-not (Test-Path -LiteralPath $iniPath -PathType Leaf)) {
         throw 'BeamNG-VRS.ini not found beside Launch-BeamNG-VRS.cmd. Extract the entire ZIP; when upgrading, move your saved INI beside the CMD.'
     }
