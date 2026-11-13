@@ -288,6 +288,10 @@ local wideFovFile = '/settings/beamng_vrs_middle_fov.txt'
 local wide = {}       -- [1] left eye, [2] right eye
 local wideWait = 0
 local wideFollowFailed = false
+-- Projection of the wide views: horizontal FOV and near/far planes. far follows the left
+-- eye's far plane every frame, so a live VR draw distance change (the in-game app or the
+-- radial menu, which the OpenXR layer applies to the eyes) reaches the wide views too.
+local wideFovUsed, wideNear, wideFar = nil, 0.1, 4000
 -- Wide view pose prediction state (see wideFollow).
 local heads = {}        -- head poses: [1] this frame, [2] one frame ago, [3] two ago
 local lag, lagSamples, lagOffset = 1, 0, {0, 0, 0}
@@ -489,6 +493,28 @@ local function wideQuality(view, name)
   if ok then wideSay(name .. ' detail ' .. wideDetail .. (#skipped > 0 and (' (not available: ' .. table.concat(skipped, ', ') .. ')') or ''))
   else wideSay(name .. ' detail not set: ' .. tostring(err)) end
 end
+-- The projection comes from the frustum alone (fov is only a label, as in the game's own
+-- render/viewDemo.lua). Frustum.construct takes the VERTICAL angle and widens it by the
+-- aspect (measured: near-plane extents 0.43 x 0.295 at 0.2 m), while the FOV here is
+-- horizontal, so it is converted. i: 1 left eye, 2 right eye (two rows taller).
+local function wideFrustum(view, i, near, far)
+  local h = wideH + (i - 1) * 2
+  local vertical = 2 * math.atan(math.tan(math.rad(wideFovUsed) / 2) * h / wideW)
+  view.frustum = Frustum.construct(false, vertical, wideW / h, near, far)
+end
+-- Keeps the wide views' far plane equal to the eyes' (the VR draw distance, changeable live).
+local function wideSyncFar(manager)
+  local ok, x = pcall(function() return manager:getView('oxrView0').frustum:getFarDist() end)
+  if not ok or type(x) ~= 'number' or x <= wideNear or math.abs(x - wideFar) < 0.5 then return end
+  wideFar = x
+  for i = 1, wideCount do
+    if wide[i] then
+      local set, err = pcall(wideFrustum, wide[i], i, wideNear, wideFar)
+      if not set then wideSay('far plane not updated: ' .. tostring(err)) return end
+    end
+  end
+  wideSay('far ' .. math.floor(wideFar + 0.5) .. ' m, as the eyes (VR draw distance)')
+end
 local function wideCreate(manager)
   local info = wideAuto()
   local fov = wideFov or info.fov
@@ -504,6 +530,7 @@ local function wideCreate(manager)
     if type(n) == 'number' and n > 0 and n < 1 then near = n end
     if type(x) == 'number' and x > near then far = x end
   end)
+  wideFovUsed, wideNear, wideFar = fov, near, far
   for i = 1, wideCount do
     if not wide[i] then
       local name = 'beamngVrsWide' .. (i - 1)
@@ -521,12 +548,7 @@ local function wideCreate(manager)
         local masked = pcall(function() view:maskSet(0) end)
         if not masked then wideSay(name .. ': render view mask not set, the driver head may show') end
         wideQuality(view, name)
-        -- The projection comes from the frustum alone (fov is only a label, as in the
-        -- game's own render/viewDemo.lua). Frustum.construct takes the VERTICAL angle and
-        -- widens it by the aspect (measured: near-plane extents 0.43 x 0.295 at 0.2 m),
-        -- while fov here is horizontal, so it is converted.
-        local vertical = 2 * math.atan(math.tan(math.rad(fov) / 2) * h / wideW)
-        view.frustum = Frustum.construct(false, vertical, wideW / h, near, far)
+        wideFrustum(view, i, near, far)
         view.fov = fov
       end)
       if ok then
@@ -558,6 +580,7 @@ local function wideUpdate(dtReal)
     if wideWait >= 1 then wideWait = 0 wideCreate(manager) end
     return
   end
+  pcall(wideSyncFar, manager)
   wideDiag(manager, dtReal)
 end
 local function widePreRender(dtReal)
