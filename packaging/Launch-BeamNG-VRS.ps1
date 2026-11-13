@@ -157,10 +157,10 @@ function Get-VRDrawDistanceStart {
     return [double]$IniDistance
 }
 function Update-VRMod {
-    param([string]$UserFolder, $Scale, $Distance, $IniDistance)
+    param([string]$UserFolder, $Scale, $Distance, $IniDistance, $Middle)
     $mod = Join-Path $UserFolder 'mods\unpacked\beamng_vrs'
     $marker = Join-Path $mod 'beamng_vrs.txt'
-    if ($null -eq $Scale -and $null -eq $Distance) {
+    if ($null -eq $Scale -and $null -eq $Distance -and $null -eq $Middle) {
         # Only a folder this launcher wrote is removed.
         if (Test-Path -LiteralPath $marker -PathType Leaf) { Remove-Item -LiteralPath $mod -Recurse -Force }
         return
@@ -177,7 +177,9 @@ function Update-VRMod {
     if (Test-Path -LiteralPath $mod) { Remove-Item -LiteralPath $mod -Recurse -Force }
     $invariant = [Globalization.CultureInfo]::InvariantCulture
     $utf8 = New-Object Text.UTF8Encoding($false)
-    $lua = "-- Written by Launch-BeamNG-VRS from BeamNG-VRS.ini ([Renderer] RenderScale and VRDrawDistance).`r`nlocal M = {}`r`n"
+    $lua = "-- Written by Launch-BeamNG-VRS from BeamNG-VRS.ini ([Renderer] RenderScale and VRDrawDistance, [VR] Mode).`r`nlocal M = {}`r`n"
+    # Extension hooks are collected per name, since several features may use the same one.
+    $hooks = @{}
     if ($null -ne $Scale) {
         $scaleText = ([double]$Scale).ToString('0.###', $invariant)
         $lua += @"
@@ -210,10 +212,83 @@ local function onUpdate(dtReal)
   end
 end
 local function onClientPostStartMission() present = {} end
-M.onUpdate = onUpdate
-M.onClientPostStartMission = onClientPostStartMission
 
 "@
+        $hooks['onUpdate'] = @('onUpdate')
+        $hooks['onClientPostStartMission'] = @('onClientPostStartMission')
+    }
+    if ($null -ne $Middle) {
+        # M8.54 triple view: one wide, low-resolution middle view between the eyes. The
+        # OpenXR layer finds its render targets by their size and composes it around
+        # each eye's sharp window; without it the surround stays black.
+        $middleW = [int]$Middle.Width; $middleH = [int]$Middle.Height
+        $middleFov = ([double]$Middle.Fov).ToString('0.##', $invariant)
+        $lua += @"
+-- M8.54 triple view middle view.
+local middleName = 'beamngVrsMiddleView'
+local middleW, middleH, middleFov = $middleW, $middleH, $middleFov
+local middle
+local middleWait = 0
+local function middleSay(text) log('I', 'beamngVrs', 'BeamNG-VRS triple view: ' .. text) end
+-- Follows the head: the left eye's camera moved halfway to the right eye. The OpenXR
+-- layer assumes the left eye's orientation, so only the position is changed.
+local function middleFollow(manager)
+  if not middle then return end
+  local ok = pcall(function()
+    local left, right = manager:getView('oxrView0'), manager:getView('oxrView1')
+    local m = left.cameraMatrix
+    local a, b = m:getPosition(), right.cameraMatrix:getPosition()
+    m:setPosition(Point3F((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2))
+    middle.cameraMatrix = m
+  end)
+  if not ok then middle = nil end
+end
+local function middleCreate(manager)
+  local ok, err = pcall(function()
+    middle = manager:getOrCreateView(middleName)
+    middle.luaOwned = true
+    middle.resolution = Point2I(middleW, middleH)
+    middle.viewPort = RectI(0, 0, middleW, middleH)
+    middle.namedTexTargetColor = middleName
+    pcall(function() middle.renderEditorIcons = false end)
+    middle.fov = middleFov
+  end)
+  if ok then middleSay('middle view ' .. middleW .. 'x' .. middleH .. ', ' .. middleFov .. ' deg')
+  else middleSay('middle view not created: ' .. tostring(err)) middle = nil end
+  middleFollow(manager)
+end
+local function middleDestroy(manager)
+  if middle and manager then pcall(function() manager:destroyView(middle) end) end
+  middle = nil
+end
+local function middleUpdate(dtReal)
+  local manager = RenderViewManagerInstance
+  if not manager then return end
+  local ok, eye = pcall(function() return manager:getView('oxrView0') end)
+  if not ok or not eye then
+    if middle then middleDestroy(manager) middleSay('VR stopped, middle view removed') end
+    middleWait = 0
+    return
+  end
+  if not middle then
+    middleWait = middleWait + (dtReal or 0)
+    if middleWait >= 1 then middleWait = 0 middleCreate(manager) end
+    return
+  end
+  middleFollow(manager)
+end
+local function middlePreRender()
+  local manager = RenderViewManagerInstance
+  if manager then middleFollow(manager) end
+end
+local function middleMission() middle = nil middleWait = 0 end
+local function middleUnload() middleDestroy(RenderViewManagerInstance) end
+
+"@
+        foreach ($pair in @(@('onUpdate', 'middleUpdate'), @('onPreRender', 'middlePreRender'),
+                            @('onClientPostStartMission', 'middleMission'), @('onExtensionUnloaded', 'middleUnload'))) {
+            $hooks[$pair[0]] = @($hooks[$pair[0]]) + $pair[1] | Where-Object { $_ }
+        }
     }
     if ($null -ne $Distance) {
         $iniText = ([double]$IniDistance).ToString('0', $invariant)
@@ -274,9 +349,13 @@ M.onExtensionLoaded = registerMenus
 
 "@
     }
+    foreach ($hook in $hooks.Keys) {
+        $calls = ($hooks[$hook] | ForEach-Object { "$_(...)" }) -join ' '
+        $lua += "M.$hook = function(...) $calls end`r`n"
+    }
     $lua += "return M`r`n"
     $files = @{
-        'beamng_vrs.txt' = "Written by Launch-BeamNG-VRS at every start from BeamNG-VRS.ini. Remove RenderScale and set VRDrawDistance=off there to delete it.`r`n"
+        'beamng_vrs.txt' = "Written by Launch-BeamNG-VRS at every start from BeamNG-VRS.ini. Remove RenderScale, set VRDrawDistance=off and [VR] Mode=vrs there to delete it.`r`n"
         'scripts\beamng_vrs\modScript.lua' = "load('beamngVrs')`r`nsetExtensionUnloadMode('beamngVrs', 'manual')`r`n"
         'lua\ge\extensions\beamngVrs.lua' = $lua
     }
@@ -295,6 +374,7 @@ M.onExtensionLoaded = registerMenus
         Write-Output "VR draw distance $distanceText m; its in-game app and radial menu are added through $mod"
     }
     if ($null -ne $Scale) { Write-Output "VR render scale $scaleText applied through $mod" }
+    if ($null -ne $Middle) { Write-Output "Triple view middle view ${middleW}x${middleH} ($middleFov deg) added through $mod" }
     Enable-VRModInDatabase -UserFolder $UserFolder
 }
 
@@ -468,6 +548,13 @@ function Test-BeamNGIni {
         'tracking.gazerefreshms' = @(2, 50, $true)
         'lensmask.size' = @(0.5, 1.5, $false)
         'renderer.renderscale' = @(0.25, 1.0, $false)
+        'tripleview.sharpwidth' = @(0.1, 1, $false)
+        'tripleview.sharpheight' = @(0.1, 1, $false)
+        'tripleview.feather' = @(0, 0.5, $false)
+        'tripleview.gazedeadzone' = @(0, 10, $false)
+        'tripleview.middlewidth' = @(256, 4096, $true)
+        'tripleview.middleheight' = @(256, 4096, $true)
+        'tripleview.middlefov' = @(30, 150, $false)
     }
     foreach ($line in ($text -split "`n")) {
         ++$lineNumber
@@ -477,7 +564,7 @@ function Test-BeamNGIni {
             if ($line.StartsWith('[')) {
                 if (-not $line.EndsWith(']')) { throw 'invalid section header' }
                 $section = $line.Substring(1, $line.Length - 2).Trim($whitespace).ToLowerInvariant()
-                if (@('foveation', 'debug', 'scissor', 'lensmask', 'tracking', 'performance', 'logging', 'openxr', 'renderer') -cnotcontains $section) { throw 'unknown section' }
+                if (@('foveation', 'debug', 'scissor', 'lensmask', 'tracking', 'performance', 'logging', 'openxr', 'renderer', 'vr', 'tripleview') -cnotcontains $section) { throw 'unknown section' }
                 continue
             }
             $equals = $line.IndexOf('=')
@@ -492,6 +579,9 @@ function Test-BeamNGIni {
                 $number = Assert-IniNumber -Value $value -Low $range[0] -High $range[1] -Integer $range[2]
                 if ($sizes.ContainsKey($id)) { $sizes[$id] = $number }
                 if ($id -eq 'renderer.renderscale') { $script:RenderScale = $number }
+                if ($id -eq 'tripleview.middlewidth') { $script:Middle.Width = $number }
+                if ($id -eq 'tripleview.middleheight') { $script:Middle.Height = $number }
+                if ($id -eq 'tripleview.middlefov') { $script:Middle.Fov = $number }
             } elseif ($id -eq 'foveation.shape') {
                 if (@('circle', 'square', 'ellipse') -cnotcontains $value.ToLowerInvariant()) { throw 'unsupported setting value' }
             } elseif ($id -eq 'logging.level') {
@@ -509,6 +599,17 @@ function Test-BeamNGIni {
             } elseif ($id -eq 'renderer.ghostingfix') {
                 if (@('0', '1', 'false', 'true') -cnotcontains $value.ToLowerInvariant()) { throw 'expected 0, 1, false or true' }
                 $script:GhostingFix = @('1', 'true') -ccontains $value.ToLowerInvariant()
+            } elseif ($id -eq 'vr.mode') {
+                # Same rule as the DLL: spaces, '-' and '_' are ignored ("triple view" works).
+                $mode = ($value.ToLowerInvariant() -replace '[\s_-]', '')
+                if (@('vrs') -ccontains $mode) { $script:VRMode = 'vrs' }
+                elseif (@('triple', 'tripleview') -ccontains $mode) { $script:VRMode = 'triple' }
+                elseif (@('tripleblack', 'tripleviewblack') -ccontains $mode) { $script:VRMode = 'triple-black' }
+                else { throw 'invalid VR mode (use vrs, triple or triple-black)' }
+            } elseif ($id -eq 'tripleview.followgaze') {
+                if (@('0', '1', 'false', 'true') -cnotcontains $value.ToLowerInvariant()) { throw 'expected 0, 1, false or true' }
+            } elseif ($id -eq 'tripleview.shape') {
+                if (@('circle', 'rectangle') -cnotcontains $value.ToLowerInvariant()) { throw 'unsupported setting value' }
             } elseif ($id -eq 'renderer.farclip') {
                 Write-Warning "INI line ${lineNumber} [Renderer]: FarClip was removed (BeamNG ignores it in VR); this line is ignored and can be deleted."
             } else { throw 'unknown section or setting' }
@@ -531,6 +632,8 @@ try {
     $script:RenderScale = $null
     $script:VRDrawDistance = [double]4000
     $script:GhostingFix = $false
+    $script:VRMode = 'vrs'
+    $script:Middle = @{ Width = 1600; Height = 1152; Fov = 95 }
     if (-not (Test-Path -LiteralPath $iniPath -PathType Leaf)) {
         throw 'BeamNG-VRS.ini not found beside Launch-BeamNG-VRS.cmd. Extract the entire ZIP; when upgrading, move your saved INI beside the CMD.'
     }
@@ -637,7 +740,13 @@ try {
         $start.EnvironmentVariables['BEAMNG_VRS_VR_DRAW_DISTANCE_FILE'] = $distanceFile
     }
     Update-VRMod -UserFolder $UserFolder -Scale $(if ($script:Renderer -eq 'd3d12') { $script:RenderScale } else { $null }) `
-        -Distance $startDistance -IniDistance $script:VRDrawDistance
+        -Distance $startDistance -IniDistance $script:VRDrawDistance `
+        -Middle $(if ($script:Renderer -eq 'd3d12' -and $script:VRMode -eq 'triple') { $script:Middle } else { $null })
+    if ($script:VRMode -ne 'vrs' -and $script:Renderer -ne 'd3d12') {
+        Write-Warning "[VR] Mode=$($script:VRMode) needs [Renderer] API=d3d12; VRS is used instead."
+    } elseif ($script:VRMode -ne 'vrs') {
+        Write-Output "VR mode: $($script:VRMode) (experimental). [Foveation], [Scissor] and [LensMask] are not used in this mode."
+    }
     Update-GhostingFix -UserFolder $UserFolder -GameRoot $gameRoot `
         -FixFile (Join-Path $layerDirectory 'GhostingFix.hlsl') -Enabled $script:GhostingFix
     if ($Diagnostics) {

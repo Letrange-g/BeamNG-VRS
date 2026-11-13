@@ -2,6 +2,8 @@
 #include "openxr_turbo.hpp"
 #include "d3d12_probe.hpp"
 #include "lens_mask.hpp"
+#include "triple_view.hpp"
+#include "triple_view_d3d12.hpp"
 #include <memory>
 // OpenXR side of BeamNG-VRS: identify eye swapchains, publish resolution and
 // projected gaze, and optionally overlap frame waiting with BeamNG's CPU work.
@@ -64,6 +66,7 @@ struct Dispatch {
  PFN_xrAcquireSwapchainImage acquireSwapchainImage{};
  PFN_xrEnumerateViewConfigurationViews enumerateViews{};
  PFN_xrReleaseSwapchainImage releaseSwapchainImage{};
+ PFN_xrWaitSwapchainImage waitSwapchainImage{};
  PFN_xrGetVisibilityMaskKHR getVisibilityMask{};
  bool visibilityMaskEnabled{};
  PFN_xrDestroySpace destroySpace{};
@@ -104,6 +107,16 @@ std::unordered_map<XrSwapchain,M843Swapchain> m843Swapchains;
 std::atomic<bool> m844Active{false};
 XrSession m844Session{XR_NULL_HANDLE}; // Guarded by stateMutex.
 std::array<beamng_scissor::Margins,2> m844Margins{};
+// M8.54 triple view (triple_view.hpp). The session state is guarded by stateMutex;
+// the output swapchains are used only on the frame thread (xrEndFrame).
+std::atomic<bool> tripleActive{false};
+XrSession tripleSession{XR_NULL_HANDLE};
+beamng_triple::Settings tripleSettings{};
+std::array<XrFovf,2> tripleFull{};bool tripleFullValid=false;
+std::array<uint32_t,2> tripleFullWidth{},tripleFullHeight{}; // the runtime's own recommended sizes
+beamng_triple::GazeFilter tripleGaze{};
+struct TripleOutput { XrSwapchain swapchain{XR_NULL_HANDLE}; std::vector<uint64_t> images; uint32_t width=0,height=0; };
+TripleOutput tripleOut[2]{};bool tripleOutFailed=false;
 // Resolution is published as soon as the second matching swapchain exists;
 // waiting for xrEndFrame would be too late for initial Vulkan framebuffer creation.
 struct M814Dimensions { uint32_t width=0,height=0; };
@@ -386,9 +399,126 @@ void turboReport(const std::shared_ptr<beamng_turbo::Scheduler>& turbo){
 void eraseSessionState(XrSession session){ // Caller holds stateMutex.
  sessions.erase(session);m818Sessions.erase(session);m814PairStates.erase(session);
  if(session==m844Session){m844Session=XR_NULL_HANDLE;m844Active=false;}
+ if(session==tripleSession){tripleSession=XR_NULL_HANDLE;tripleActive=false;tripleFullValid=false;
+  for(auto& o:tripleOut){o=TripleOutput{};}
+  tripleOutFailed=false;}
  for(auto it=swapchainSessions.begin();it!=swapchainSessions.end();){
   if(it->second==session){m75SwapchainImage.erase(it->first);m843Swapchains.erase(it->first);it=swapchainSessions.erase(it);}else ++it;
  }
+}
+}
+namespace {
+// M8.54: [TripleView] from the INI (or the launcher's environment).
+double tripleNumber(const char* name,double fallback,double low,double high){
+ char v[32]{};const DWORD n=beamng_config::read(name,v,sizeof(v));
+ if(!n||n>=sizeof(v))return fallback;
+ char* end=nullptr;const double value=strtod(v,&end);
+ return end!=v && !*end && std::isfinite(value) && value>=low && value<=high ? value : fallback;
+}
+beamng_triple::Settings tripleConfig(){
+ beamng_triple::Settings t{};
+ char renderer[16]{};
+ // Direct3D 12 only (the launcher's default renderer).
+ t.enabled=enabled("BEAMNG_VRS_TRIPLE_VIEW") &&
+   (!beamng_config::read("BEAMNG_VRS_RENDERER",renderer,sizeof(renderer)) || !strcmp(renderer,"d3d12"));
+ char v[16]{};
+ t.middle=!beamng_config::read("BEAMNG_VRS_TRIPLE_MIDDLE",v,sizeof(v)) || strcmp(v,"0")!=0;
+ t.gaze=!beamng_config::read("BEAMNG_VRS_TRIPLE_GAZE",v,sizeof(v)) || strcmp(v,"0")!=0;
+ t.roundShape=!beamng_config::read("BEAMNG_VRS_TRIPLE_SHAPE",v,sizeof(v)) || _stricmp(v,"rectangle")!=0;
+ t.sharpWidth=tripleNumber("BEAMNG_VRS_TRIPLE_SHARP_WIDTH",t.sharpWidth,0.1,1);
+ t.sharpHeight=tripleNumber("BEAMNG_VRS_TRIPLE_SHARP_HEIGHT",t.sharpHeight,0.1,1);
+ t.feather=tripleNumber("BEAMNG_VRS_TRIPLE_FEATHER",t.feather,0,0.5);
+ t.deadZone=std::tan(tripleNumber("BEAMNG_VRS_TRIPLE_DEADZONE",1.5,0,10)*3.14159265358979323846/180.0);
+ t.middleWidth=uint32_t(tripleNumber("BEAMNG_VRS_TRIPLE_MIDDLE_WIDTH",t.middleWidth,256,4096));
+ t.middleHeight=uint32_t(tripleNumber("BEAMNG_VRS_TRIPLE_MIDDLE_HEIGHT",t.middleHeight,256,4096));
+ t.middleFov=tripleNumber("BEAMNG_VRS_TRIPLE_MIDDLE_FOV",t.middleFov,30,150);
+ return t;
+}
+const beamng_triple::Settings& tripleConfigured(){static const auto t=tripleConfig();return t;}
+beamng_triple::Tangents tangents(const XrFovf& f){return beamng_triple::fromAngles(f.angleLeft,f.angleRight,f.angleUp,f.angleDown);}
+XrFovf angles(const beamng_triple::Tangents& t){
+ return {float(std::atan(t.left)),float(std::atan(t.right)),float(std::atan(t.up)),float(std::atan(t.down))};
+}
+// Frame thread only. Creates this layer's two full-size output swapchains once.
+bool tripleEnsureOutputs(const Dispatch& d,XrSession session,int64_t format,uint32_t fallbackWidth,uint32_t fallbackHeight){
+ if(tripleOut[0].swapchain && tripleOut[1].swapchain)return true;
+ if(tripleOutFailed || !d.createSwapchain || !d.enumerateSwapchainImages || !d.acquireSwapchainImage || !d.waitSwapchainImage || !d.releaseSwapchainImage)return false;
+ std::array<uint32_t,2> w{},h{};
+ {std::lock_guard<std::mutex> g(stateMutex);w=tripleFullWidth;h=tripleFullHeight;}
+ for(int eye=0;eye<2;++eye){
+  auto& o=tripleOut[eye];
+  XrSwapchainCreateInfo ci{XR_TYPE_SWAPCHAIN_CREATE_INFO};
+  ci.usageFlags=XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT|XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
+  ci.format=format;ci.sampleCount=1;ci.faceCount=1;ci.arraySize=1;ci.mipCount=1;
+  ci.width=w[eye]?w[eye]:fallbackWidth;ci.height=h[eye]?h[eye]:fallbackHeight;
+  XrResult r=d.createSwapchain(session,&ci,&o.swapchain);
+  uint32_t count=0;
+  if(XR_SUCCEEDED(r))r=d.enumerateSwapchainImages(o.swapchain,0,&count,nullptr);
+  std::vector<D3D12SwapchainImage> images(count,D3D12SwapchainImage{XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR,nullptr,nullptr});
+  if(XR_SUCCEEDED(r)&&count)r=d.enumerateSwapchainImages(o.swapchain,count,&count,reinterpret_cast<XrSwapchainImageBaseHeader*>(images.data()));
+  char msg[200]{};
+  sprintf_s(msg,sizeof(msg),"M8.54 triple view output swapchain eye=%d %ux%u format=%lld images=%u result=%d",eye,ci.width,ci.height,(long long)format,count,int(r));
+  logLine(msg);
+  if(XR_FAILED(r)||!count){tripleOutFailed=true;return false;}
+  for(const auto& image:images)o.images.push_back(uint64_t(reinterpret_cast<uintptr_t>(image.texture)));
+  o.width=ci.width;o.height=ci.height;
+ }
+ return true;
+}
+// Frame thread. Composes and returns true when `out` replaces the game's projection layer.
+bool tripleCompose(const Dispatch& d,XrSession session,const XrCompositionLayerProjection& projection,
+                   XrCompositionLayerProjection& out,XrCompositionLayerProjectionView views[2]){
+ if(projection.viewCount!=2 || !projection.views || !beamng_triple_d3d12::ready())return false;
+ std::array<XrFovf,2> full{};int64_t format=0;bool fullValid=false;beamng_triple::Settings set{};
+ {std::lock_guard<std::mutex> g(stateMutex);full=tripleFull;fullValid=tripleFullValid;set=tripleSettings;
+  auto sc=m843Swapchains.find(projection.views[0].subImage.swapchain);if(sc!=m843Swapchains.end())format=sc->second.format;}
+ if(!fullValid || !format)return false;
+ const auto& rect=projection.views[0].subImage.imageRect;
+ const double shareW=std::max(.05,set.sharpWidth),shareH=std::max(.05,set.sharpHeight);
+ if(!tripleEnsureOutputs(d,session,format,uint32_t(rect.extent.width/shareW),uint32_t(rect.extent.height/shareH)))return false;
+ uint32_t index[2]{};bool acquired[2]{};
+ bool ok=true;
+ for(int eye=0;eye<2&&ok;++eye){
+  ok=XR_SUCCEEDED(d.acquireSwapchainImage(tripleOut[eye].swapchain,nullptr,&index[eye]));
+  if(!ok)break;
+  acquired[eye]=true;
+  XrSwapchainImageWaitInfo wait{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};wait.timeout=100000000; // 100 ms
+  ok=XR_SUCCEEDED(d.waitSwapchainImage(tripleOut[eye].swapchain,&wait)) && index[eye]<tripleOut[eye].images.size();
+ }
+ if(ok){
+  beamng_triple_d3d12::EyeInput in[2]{};
+  double halfX=1,halfY=1;beamng_triple::middleHalf(set,halfX,halfY);
+  const auto& middlePose=projection.views[0].pose.orientation;
+  for(int eye=0;eye<2;++eye){
+   const auto& v=projection.views[eye];auto& c=in[eye].constants;
+   const auto o=tangents(full[eye]),w=tangents(v.fov);
+   c.out[0]=float(o.left);c.out[1]=float(o.right);c.out[2]=float(o.up);c.out[3]=float(o.down);
+   c.win[0]=float(w.left);c.win[1]=float(w.right);c.win[2]=float(w.up);c.win[3]=float(w.down);
+   c.middle[0]=float(halfX);c.middle[1]=float(halfY);c.middle[2]=float(set.feather);
+   float rows[3][4]{};
+   beamng_triple::relativeRotation({middlePose.x,middlePose.y,middlePose.z,middlePose.w},
+     {v.pose.orientation.x,v.pose.orientation.y,v.pose.orientation.z,v.pose.orientation.w},rows);
+   std::copy(rows[0],rows[0]+4,c.rot0);std::copy(rows[1],rows[1]+4,c.rot1);std::copy(rows[2],rows[2]+4,c.rot2);
+   c.flags[0]=set.roundShape?1.f:0.f;
+   in[eye].rectX=v.subImage.imageRect.offset.x;in[eye].rectY=v.subImage.imageRect.offset.y;
+   in[eye].rectWidth=v.subImage.imageRect.extent.width;in[eye].rectHeight=v.subImage.imageRect.extent.height;
+  }
+  const uint64_t outputs[2]{tripleOut[0].images[index[0]],tripleOut[1].images[index[1]]};
+  ok=beamng_triple_d3d12::compose(in,outputs,set.middle);
+ }
+ for(int eye=0;eye<2;++eye)if(acquired[eye])d.releaseSwapchainImage(tripleOut[eye].swapchain,nullptr);
+ if(!ok)return false;
+ out=projection;
+ for(int eye=0;eye<2;++eye){
+  views[eye]=projection.views[eye];
+  views[eye].next=nullptr; // The game's depth images no longer match the submitted colour.
+  views[eye].fov=full[eye];
+  views[eye].subImage.swapchain=tripleOut[eye].swapchain;
+  views[eye].subImage.imageArrayIndex=0;
+  views[eye].subImage.imageRect={{0,0},{int32_t(tripleOut[eye].width),int32_t(tripleOut[eye].height)}};
+ }
+ out.views=views;
+ return true;
 }
 }
 extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeBeginSession(XrSession session,const XrSessionBeginInfo* info){
@@ -407,6 +537,10 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeEndSession(XrSession session){
 extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeDestroySession(XrSession session){
  auto c=frameContext(session);if(!c.dispatch.destroySession)return XR_ERROR_FUNCTION_UNSUPPORTED;
  if(c.turbo){c.turbo->stop();turboReport(c.turbo);}
+ if(tripleActive && c.dispatch.destroySwapchain){
+  bool ours=false;{std::lock_guard<std::mutex> g(stateMutex);ours=session==tripleSession;}
+  if(ours)for(auto& o:tripleOut)if(o.swapchain){c.dispatch.destroySwapchain(o.swapchain);o=TripleOutput{};}
+ }
  const auto result=c.dispatch.destroySession(session);
  if(XR_SUCCEEDED(result)){std::lock_guard<std::mutex> lock(stateMutex);eraseSessionState(session);}
  return result;
@@ -528,7 +662,11 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeReleaseSwapchainImage(XrSwapchain
   }
  }
  if(!d.releaseSwapchainImage)return XR_ERROR_FUNCTION_UNSUPPORTED;
- if(texture&&eye>=0)beamng_d3d12::finishEyeImage(texture,eye,uint32_t(format));
+ if(texture&&eye>=0){
+  // M8.54: the runtime owns the image after release, so the sharp window is copied now.
+  if(tripleActive)beamng_triple_d3d12::captureEye(texture,eye);
+  else beamng_d3d12::finishEyeImage(texture,eye,uint32_t(format));
+ }
  return d.releaseSwapchainImage(swapchain,info);
 }
 extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeEndFrame(XrSession session,const XrFrameEndInfo* info){
@@ -577,6 +715,24 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeEndFrame(XrSession session,const 
  }
  beamng_d3d12::frame();
  const auto c=frameContext(session);
+ // M8.54: submit this layer's full-field-of-view images in place of the narrow eyes.
+ XrFrameEndInfo tripleInfo{};std::vector<const XrCompositionLayerBaseHeader*> tripleLayers;
+ XrCompositionLayerProjection tripleProjection{};XrCompositionLayerProjectionView tripleViews[2]{};
+ bool ours=false;
+ if(tripleActive && info && info->layers){{std::lock_guard<std::mutex> g(stateMutex);ours=session==tripleSession;}}
+ if(ours){
+  for(uint32_t li=0;li<info->layerCount;++li){
+   const auto* layer=info->layers[li];
+   if(!layer || layer->type!=XR_TYPE_COMPOSITION_LAYER_PROJECTION)continue;
+   if(tripleCompose(d,session,*reinterpret_cast<const XrCompositionLayerProjection*>(layer),tripleProjection,tripleViews)){
+    tripleLayers.assign(info->layers,info->layers+info->layerCount);
+    tripleLayers[li]=reinterpret_cast<const XrCompositionLayerBaseHeader*>(&tripleProjection);
+    tripleInfo=*info;tripleInfo.layers=tripleLayers.data();
+    info=&tripleInfo;
+   }
+   break;
+  }
+ }
  return c.turbo?c.turbo->end(info):d.endFrame(session,info);
 }
 extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeGetInstanceProcAddr(XrInstance instance,const char* name,PFN_xrVoidFunction* function);
@@ -717,7 +873,28 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateSession(XrInstance inst,con
        100*(1-fx.margins[0].left-fx.margins[0].right),100*(1-fx.margins[1].left-fx.margins[1].right),100*(1-fx.margins[0].top-fx.margins[0].bottom));
      logLine(m);
     }else m844Active=false;
-    beamng_d3d12::attach(b->device,b->queue,logLine,m817Verbose(),m842Foveation(d.gazeExtension),fx);
+    // M8.54 triple view ([VR] Mode=triple or triple-black) replaces VRS, the crop and the lens effects.
+    const auto t=tripleConfigured();
+    if(t.enabled){
+     m844Active=false;
+     {std::lock_guard<std::mutex> g(stateMutex);m844Session=XR_NULL_HANDLE;}
+     beamng_d3d12::Effects tfx{};
+     // Set in triple-black too, so the hooks (and the M8.47 GPU line) stay on; no target has that size then.
+     tfx.middleWidth=t.middleWidth;tfx.middleHeight=t.middleHeight;
+     beamng_d3d12::attach(b->device,b->queue,logLine,m817Verbose(),beamng_d3d12::Foveation{},tfx);
+     if(beamng_triple_d3d12::init(b->device,b->queue,logLine)){
+      {std::lock_guard<std::mutex> g(stateMutex);tripleSettings=t;tripleSession=*session;tripleGaze=beamng_triple::GazeFilter{};
+       tripleFullValid=false;tripleOutFailed=false;}
+      tripleActive=true;
+      double hx=1,hy=1;beamng_triple::middleHalf(t,hx,hy);
+      char m[300]{};sprintf_s(m,sizeof(m),"M8.54 triple view active: window %.0f%%x%.0f%% gaze=%d shape=%s middle=%s",
+        100*t.sharpWidth,100*t.sharpHeight,int(t.gaze),t.roundShape?"circle":"rectangle",
+        t.middle?"on":"off (black)");
+      logLine(m);
+      if(t.middle){sprintf_s(m,sizeof(m),"M8.54 middle view %ux%u fov %.0f deg (half-extent tan %.2f x %.2f)",
+        t.middleWidth,t.middleHeight,t.middleFov,hx,hy);logLine(m);}
+     }else logLine("M8.54 triple view WARNING: compositor unavailable; the game's narrow eyes are shown as they are");
+    }else beamng_d3d12::attach(b->device,b->queue,logLine,m817Verbose(),m842Foveation(d.gazeExtension),fx);
    }
   }
   if(vulkan)logLine("M8.40 graphics=Vulkan");
@@ -885,6 +1062,20 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeEnumerateViewConfigurationViews(X
  {std::lock_guard<std::mutex> g(stateMutex);auto it=instances.find(instance);if(it!=instances.end())d=it->second;margins=m844Margins;}
  if(!d.enumerateViews)return XR_ERROR_FUNCTION_UNSUPPORTED;
  const XrResult r=d.enumerateViews(instance,system,type,capacity,count,views);
+ // M8.54: the eyes render only the sharp window; the output keeps the runtime's size.
+ if(XR_SUCCEEDED(r)&&views&&count&&*count>=2&&capacity>=2&&type==XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO&&tripleConfigured().enabled){
+  const auto& t=tripleConfigured();
+  {std::lock_guard<std::mutex> g(stateMutex);
+   for(int i=0;i<2;++i){tripleFullWidth[i]=views[i].recommendedImageRectWidth;tripleFullHeight[i]=views[i].recommendedImageRectHeight;}}
+  for(int i=0;i<2;++i){
+   views[i].recommendedImageRectWidth=beamng_triple::scaledSize(views[i].recommendedImageRectWidth,t.sharpWidth);
+   views[i].recommendedImageRectHeight=beamng_triple::scaledSize(views[i].recommendedImageRectHeight,t.sharpHeight);
+  }
+  char msg[220]{};sprintf_s(msg,sizeof(msg),"M8.54 triple view: eyes render %ux%u of %ux%u",
+    views[0].recommendedImageRectWidth,views[0].recommendedImageRectHeight,tripleFullWidth[0],tripleFullHeight[0]);
+  logLine(msg);
+  return r;
+ }
  if(XR_SUCCEEDED(r)&&m844Active&&views&&count&&*count>=2&&capacity>=2&&type==XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO){
   for(int i=0;i<2;++i){
    auto& v=views[i];const auto& m=margins[i];
@@ -915,6 +1106,38 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeLocateViews(XrSession session,con
   static std::atomic<bool> logged{false};
   if(!logged.exchange(true)){char msg[240]{};sprintf_s(msg,sizeof(msg),"M8.44 FOV crop L=(%.3f,%.3f,%.3f,%.3f) rad",
     views[0].fov.angleLeft,views[0].fov.angleRight,views[0].fov.angleUp,views[0].fov.angleDown);logLine(msg);}
+ }
+ // M8.54 triple view: keep the full field of view for the composition and hand the
+ // game a window of it around the gaze (or straight ahead). The gaze projection below
+ // then reports positions inside the window, as it does for the M8.44 crop.
+ bool triple=false;beamng_triple::Settings tset{};
+ if(tripleActive){std::lock_guard<std::mutex> g(stateMutex);triple=session==tripleSession;tset=tripleSettings;}
+ if(triple&&XR_SUCCEEDED(r)&&info&&info->viewConfigurationType==XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO&&views&&count&&*count>=2&&capacity>=2){
+  std::array<XrFovf,2> full{views[0].fov,views[1].fov};
+  double gx[2]{},gy[2]{};uint32_t valid=0;
+  if(tset.gaze&&gs.ready&&gs.gazeSpace&&d.locateSpace&&state&&(state->viewStateFlags&XR_VIEW_STATE_ORIENTATION_VALID_BIT)){
+   XrSpaceLocation gaze{XR_TYPE_SPACE_LOCATION};
+   if(XR_SUCCEEDED(d.locateSpace(gs.gazeSpace,info->space,info->displayTime,&gaze))&&(gaze.locationFlags&XR_SPACE_LOCATION_ORIENTATION_VALID_BIT)){
+    const V3 forward=rotateQ(gaze.pose.orientation,{0.f,0.f,-1.f});
+    for(int i=0;i<2;++i){
+     const auto q=views[i].pose.orientation;
+     const V3 ray=rotateQ(XrQuaternionf{-q.x,-q.y,-q.z,q.w},forward);
+     if(ray.z>=-0.0001f)continue;
+     gx[i]=ray.x/-ray.z;gy[i]=ray.y/-ray.z;
+     if(std::isfinite(gx[i])&&std::isfinite(gy[i]))valid|=1u<<i;
+    }
+   }
+  }
+  double cx[2]{},cy[2]{};
+  {std::lock_guard<std::mutex> g(stateMutex);
+   tripleFull=full;tripleFullValid=true;
+   if(tset.gaze){tripleGaze.update(gx,gy,valid,tset.deadZone,GetTickCount64());
+    for(int i=0;i<2;++i){cx[i]=tripleGaze.cx[i];cy[i]=tripleGaze.cy[i];}}
+  }
+  for(int i=0;i<2;++i)views[i].fov=angles(beamng_triple::window(tangents(full[i]),tset.sharpWidth,tset.sharpHeight,cx[i],cy[i]));
+  static std::atomic<bool> logged{false};
+  if(!logged.exchange(true)){char msg[240]{};sprintf_s(msg,sizeof(msg),"M8.54 triple view window L=(%.3f,%.3f,%.3f,%.3f) rad gaze=%d",
+    views[0].fov.angleLeft,views[0].fov.angleRight,views[0].fov.angleUp,views[0].fov.angleDown,int(tset.gaze));logLine(msg);}
  }
  if(XR_SUCCEEDED(r)&&info&&views&&count&&*count>=2&&capacity>=2)
    m818Publish(session,d,views);
@@ -1118,6 +1341,7 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateApiLayerInstance(const XrIn
  RESOLVE_XR(acquireSwapchainImage,"xrAcquireSwapchainImage",PFN_xrAcquireSwapchainImage)
  RESOLVE_XR(enumerateViews,"xrEnumerateViewConfigurationViews",PFN_xrEnumerateViewConfigurationViews)
  RESOLVE_XR(releaseSwapchainImage,"xrReleaseSwapchainImage",PFN_xrReleaseSwapchainImage)
+ RESOLVE_XR(waitSwapchainImage,"xrWaitSwapchainImage",PFN_xrWaitSwapchainImage)
  RESOLVE_XR(destroySpace,"xrDestroySpace",PFN_xrDestroySpace)
  RESOLVE_XR(destroyActionSet,"xrDestroyActionSet",PFN_xrDestroyActionSet)
 #undef RESOLVE_XR

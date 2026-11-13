@@ -246,6 +246,22 @@ A GPU without VRS Tier 2 keeps normal rendering and logs
 `M8.42 D3D12 foveation unavailable`; the FOV crop and the black lens corners still work. `Diagnose-BeamNG-VRS.cmd` also logs the VRS
 tier and the render-target sizes the game binds per frame (`M8.41` lines).
 
+## Triple view (experimental)
+
+`[VR] Mode` picks how BeamNG-VRS speeds up VR (Direct3D 12 only for the triple modes):
+
+| Mode | What renders |
+| --- | --- |
+| `vrs` (default) | The normal eyes with variable-rate shading, scissor crop and lens mask. |
+| `triple` | Each eye renders only a small sharp window (`[TripleView] SharpWidth`/`SharpHeight` of its field of view) that follows the gaze. One wide, low-resolution middle view, a camera between the eyes, fills the rest. The OpenXR layer composes the two into full-field-of-view eye images. |
+| `triple-black` | The same sharp window with black around it and no middle view, so there is no middle-view cost. |
+
+Spaces, `-` and `_` are ignored, so `Mode=triple view` also works. In the triple modes, `[Foveation]`, `[Scissor]` and `[LensMask]` are not used.
+
+The launcher creates the middle view with its small mod in `mods\unpacked\beamng_vrs`. When that mod is off, for example on a BeamMP server that turns off unlisted mods, the surround stays black, as with `triple-black`. The middle view has no depth correction: it is one flat, low-resolution picture for the periphery. Black edges mean it does not cover the eyes' field of view, so raise `MiddleFov` or `MiddleWidth`.
+
+`[TripleView]` keys: `SharpWidth`, `SharpHeight` (0.1-1), `Shape` (`circle` or `rectangle`), `Feather` (0-0.5), `FollowGaze` (true/false), `GazeDeadZone` (degrees, 0-10), `MiddleWidth`, `MiddleHeight` (256-4096) and `MiddleFov` (vertical degrees, 30-150). The layer log has `M8.54` lines for the mode, the window, the output swapchains and the middle view's render target.
+
 ## Ghosting fix
 
 `[Renderer] GhostingFix=true` (off by default) fixes the right-eye ghosting of BeamNG

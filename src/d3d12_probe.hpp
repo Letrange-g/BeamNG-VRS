@@ -40,6 +40,9 @@ struct Effects {
  // so eye images are the kept part only; crop is then off and margins place the
  // lens ellipse, which stays relative to the full eye image.
  bool fovCrop = false;
+ // M8.54 triple view: size of the middle view's render targets to follow (0 = off).
+ // Not an eye-image effect, so any() leaves it out.
+ uint32_t middleWidth = 0, middleHeight = 0;
  bool any() const { return crop || lensMask || outline; }
 };
 // Installs the hooks once per process and selects this device for VRS and
@@ -63,4 +66,13 @@ void setGaze(const float u[2], const float v[2], uint32_t mask);
 void frameWaited(double waitMs, double periodMs);
 // Called once per xrEndFrame: updates shading-rate images, logs diagnostics.
 void frame();
+// M8.54: the middle view's latest color target (ID3D12Resource*), its render-target
+// format and its last recorded resource state. False until the game has drawn into
+// a target of the middle view's size.
+struct MiddleTarget { uint64_t resource = 0; uint32_t format = 0, state = 0; uint64_t bindFrame = 0; };
+bool middleTarget(MiddleTarget& out);
+// The number of frame() calls so far, to tell a current middle target from a stale one.
+uint64_t frameCount();
+// Submits one of this DLL's own command lists (counted as "mod" GPU time).
+void executeOwn(void* queue, void* list);
 }

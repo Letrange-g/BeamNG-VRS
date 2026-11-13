@@ -38,6 +38,11 @@ try {
         @{ Text = "[Renderer]`nVRDrawDistance=800"; Valid = $true },
         @{ Text = "[Renderer]`nVRDrawDistance=off"; Valid = $true },
         @{ Text = "[Renderer]`nGhostingFix=false"; Valid = $true },
+        @{ Text = "[VR]`nMode=triple"; Valid = $true },
+        @{ Text = "[vr]`nmode = Triple View"; Valid = $true },
+        @{ Text = "[VR]`nMode=triple-black"; Valid = $true },
+        @{ Text = "[VR]`nMode=vrs"; Valid = $true },
+        @{ Text = "[TripleView]`nFollowGaze=false`nShape=rectangle`nSharpWidth=0.5`nSharpHeight=0.45`nFeather=0.2`nGazeDeadZone=2`nMiddleWidth=1280`nMiddleHeight=960`nMiddleFov=100"; Valid = $true },
         @{ Text = "[renderer]`nvrdrawdistance = Off"; Valid = $true },
         @{ Text = "[OpenXR]`nDisableLayers=*"; Valid = $true },
         @{ Text = "[openxr]`ndisablelayers = XR_APILAYER_A_overlay , XR_APILAYER_b.2-x"; Valid = $true },
@@ -65,7 +70,7 @@ try {
         "[Tracking]`nGazeRefreshMs=8e0", "[Foveation]`nShape=triangle",
         "[Debug]`nDrawOutline=1 ; inline comment",
         "[OpenXR]`nDisableLayers=XR layer", "[OpenXR]`nDisableLayers=A,,B", "[OpenXR]`nDisableLayers=A,", "[OpenXR]`nDisableLayers=A,*",
-        "[OpenXR]`nDisableLayers=A`ndisablelayers=B", "[OpenXR]`nTypo=1", "[Renderer]`nAPI=dx12", "[Renderer]`nRenderScale=1.5", "[Renderer]`nRenderScale=0.2", "[Renderer]`nRenderScale=auto", "[Renderer]`nVRDrawDistance=50", "[Renderer]`nVRDrawDistance=20000", "[Renderer]`nVRDrawDistance=on", "[Renderer]`nGhostingFix=maybe", "[Renderer]`nVRDrawDistance=","[Renderer]`nAPI=", "[Debug", "DrawOutline=1", "# empty`n",
+        "[OpenXR]`nDisableLayers=A`ndisablelayers=B", "[OpenXR]`nTypo=1", "[Renderer]`nAPI=dx12", "[Renderer]`nRenderScale=1.5", "[Renderer]`nRenderScale=0.2", "[Renderer]`nRenderScale=auto", "[Renderer]`nVRDrawDistance=50", "[Renderer]`nVRDrawDistance=20000", "[Renderer]`nVRDrawDistance=on", "[Renderer]`nGhostingFix=maybe", "[Renderer]`nVRDrawDistance=","[Renderer]`nAPI=", "[VR]`nMode=quad", "[VR]`nMode=", "[TripleView]`nEnabled=true", "[TripleView]`nSharpWidth=0.05", "[TripleView]`nMiddleWidth=1000.5", "[TripleView]`nShape=square", "[Debug", "DrawOutline=1", "# empty`n",
         '', "[Debug]`nDrawOutline="
     )) { $cases += @{ Text = $bad; Valid = $false } }
     $caseNumber = 0

@@ -115,6 +115,23 @@ double pacingIntervalMs=0,pacingIntervalSqMs=0,pacingWaitMs=0,pacingPeriodMs=0;
 unsigned pacingFrames=0,pacingWaits=0;
 LARGE_INTEGER lastFrameEnd{};
 thread_local bool ownSubmit=false; // Our uploads and eye-image effects, reported separately.
+// M8.54 triple view: the middle view's render targets, found by size. The color
+// target is the 8-bit one (the views' final images are 8-bit; HDR passes are 16-bit
+// float) last bound in the frame. Its state is the last transition recorded for it.
+std::atomic<uint32_t> middleWidth{0},middleHeight{0};
+std::atomic<uint64_t> frameCounter{0};
+std::mutex middleMutex;
+std::unordered_set<uint64_t> middleResources;
+std::unordered_map<uint64_t,uint32_t> middleStates;
+struct MiddleSeen { uint32_t format=0; uint64_t binds=0; };
+std::map<uint64_t,MiddleSeen> middleSeen;  // For the one-time log of what was found.
+MiddleTarget middleLast{};
+decltype(ID3D12GraphicsCommandListVtbl::ResourceBarrier) nextResourceBarrier=nullptr;
+bool eightBit(uint32_t f){
+ return f==DXGI_FORMAT_R8G8B8A8_UNORM||f==DXGI_FORMAT_R8G8B8A8_UNORM_SRGB||f==DXGI_FORMAT_R8G8B8A8_TYPELESS||
+   f==DXGI_FORMAT_B8G8R8A8_UNORM||f==DXGI_FORMAT_B8G8R8A8_UNORM_SRGB||f==DXGI_FORMAT_B8G8R8A8_TYPELESS||
+   f==DXGI_FORMAT_R10G10B10A2_UNORM||f==DXGI_FORMAT_R10G10B10A2_TYPELESS;
+}
 // Ctrl+Shift+V pauses VRS for an A/B in the same scene; the GPU report says which.
 std::atomic<bool> vrsPaused{false};
 
@@ -214,6 +231,12 @@ void bind(ID3D12GraphicsCommandList* list,SIZE_T first,UINT count,bool renderPas
   else if(target){nextRSSetScissorRects(list,1,&c.keep);c.assumed=true;assumedScissors.fetch_add(1,std::memory_order_relaxed);}
   else if(c.assumed){const D3D12_RECT all{0,0,D3D12_VIEWPORT_BOUNDS_MAX,D3D12_VIEWPORT_BOUNDS_MAX};nextRSSetScissorRects(list,1,&all);c.assumed=false;}
  }
+ if(known && count && middleWidth.load(std::memory_order_relaxed) && t.width==middleWidth.load(std::memory_order_relaxed) &&
+    t.height==middleHeight.load(std::memory_order_relaxed) && t.samples==1){
+  std::lock_guard<std::mutex> g(middleMutex);
+  auto& seen=middleSeen[t.resource];seen.format=t.format;++seen.binds;
+  if(eightBit(t.format)){middleLast.resource=t.resource;middleLast.format=t.format;middleLast.bindFrame=frameCounter.load(std::memory_order_relaxed);}
+ }
  if(!diagnostics && !foveating)return;
  std::lock_guard<std::mutex> g(statsMutex);
  if(image){++vrsBinds;if(source==1)++vrsLaterTarget;else if(source==2)++vrsDepthOnly;}
@@ -244,8 +267,26 @@ void STDMETHODCALLTYPE hookCreateRtv(ID3D12Device* device,ID3D12Resource* resour
  t.width=std::max<uint32_t>(1,uint32_t(rd.Width>>mip));t.height=std::max<uint32_t>(1,rd.Height>>mip);
  t.format=uint32_t(desc && desc->Format!=DXGI_FORMAT_UNKNOWN?desc->Format:rd.Format);t.samples=rd.SampleDesc.Count;
  t.resource=uint64_t(reinterpret_cast<uintptr_t>(resource));t.device=device;
+ if(middleWidth.load(std::memory_order_relaxed) && t.width==middleWidth.load(std::memory_order_relaxed) && t.height==middleHeight.load(std::memory_order_relaxed)){
+  std::lock_guard<std::mutex> g(middleMutex);middleResources.insert(t.resource);
+ }
  std::unique_lock<std::shared_mutex> g(targetsMutex);
  targets[destination.ptr]=t;
+}
+
+// M8.54: the last transition recorded for each middle-view target. Recording order
+// stands in for execution order: the game records and submits one frame at a time.
+void STDMETHODCALLTYPE hookResourceBarrier(ID3D12GraphicsCommandList* list,UINT count,const D3D12_RESOURCE_BARRIER* barriers){
+ nextResourceBarrier(list,count,barriers);
+ if(!barriers || !middleWidth.load(std::memory_order_relaxed))return;
+ std::lock_guard<std::mutex> g(middleMutex);
+ if(middleResources.empty())return;
+ for(UINT i=0;i<count;++i){
+  const auto& b=barriers[i];
+  if(b.Type!=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION || (b.Flags&D3D12_RESOURCE_BARRIER_FLAG_BEGIN_ONLY))continue;
+  const uint64_t r=uint64_t(reinterpret_cast<uintptr_t>(b.Transition.pResource));
+  if(middleResources.count(r))middleStates[r]=uint32_t(b.Transition.StateAfter);
+ }
 }
 
 void STDMETHODCALLTYPE hookOMSetRenderTargets(ID3D12GraphicsCommandList* list,UINT count,
@@ -416,6 +457,8 @@ bool install(ID3D12Device* device){
    decltype(ID3D12GraphicsCommandListVtbl::RSSetScissorRects)(&hookRSSetScissorRects),nextRSSetScissorRects);
  ok=ok&&patch(&list->lpVtbl->Reset,
    decltype(ID3D12GraphicsCommandListVtbl::Reset)(&hookReset),nextReset);
+ ok=ok&&patch(&list->lpVtbl->ResourceBarrier,
+   decltype(ID3D12GraphicsCommandListVtbl::ResourceBarrier)(&hookResourceBarrier),nextResourceBarrier);
  bool renderPasses=false;
  ID3D12GraphicsCommandList4* list4=nullptr;
  if(ok && SUCCEEDED(ID3D12GraphicsCommandList_QueryInterface(list,IID_ID3D12GraphicsCommandList4,reinterpret_cast<void**>(&list4)))){
@@ -685,7 +728,8 @@ void outlineRects(uint32_t w,uint32_t h,int eye,float cu,float cv,float size,Rec
 }
 
 bool attach(void* device,void* queue,LogFn fn,bool diag,const Foveation& f,const Effects& e){
- if(!device || (!diag && !f.enabled && !e.any()))return false;
+ if(!device || (!diag && !f.enabled && !e.any() && !e.middleWidth))return false;
+ if(e.middleWidth && e.middleHeight){middleHeight=e.middleHeight;middleWidth=e.middleWidth;}
  auto* d=static_cast<ID3D12Device*>(device);
  std::call_once(hookOnce,[&]{logFn=fn;hooked=install(d);});
  if(!hooked)return false;
@@ -809,8 +853,41 @@ void frameWaited(double waitMs,double periodMs){
  pacingWaitMs+=waitMs;pacingPeriodMs+=periodMs;++pacingWaits;
 }
 
+bool middleTarget(MiddleTarget& out){
+ std::lock_guard<std::mutex> g(middleMutex);
+ if(!middleLast.resource)return false;
+ out=middleLast;
+ const auto it=middleStates.find(middleLast.resource);
+ // Never transitioned: a render target is created and drawn in RENDER_TARGET state.
+ out.state=it!=middleStates.end()?it->second:uint32_t(D3D12_RESOURCE_STATE_RENDER_TARGET);
+ return true;
+}
+uint64_t frameCount(){return frameCounter.load(std::memory_order_relaxed);}
+void executeOwn(void* queue,void* list){
+ auto* q=static_cast<ID3D12CommandQueue*>(queue);
+ ID3D12CommandList* lists[]{static_cast<ID3D12CommandList*>(list)};
+ ownSubmit=true;ID3D12CommandQueue_ExecuteCommandLists(q,1,lists);ownSubmit=false;
+}
+
 void frame(){
  if(!hooked)return;
+ const uint64_t frameNumber=frameCounter.fetch_add(1,std::memory_order_relaxed)+1;
+ // M8.54: once, what the middle view's targets look like, so a wrong pick can be spotted.
+ if(frameNumber==600 && middleWidth.load(std::memory_order_relaxed)){
+  std::lock_guard<std::mutex> g(middleMutex);
+  char msg[256]{};
+  sprintf_s(msg,"M8.54 middle view %ux%u: %zu targets seen, color target %p format %u",
+    middleWidth.load(),middleHeight.load(),middleSeen.size(),(void*)uintptr_t(middleLast.resource),middleLast.format);
+  log(msg);
+  int listed=0;
+  for(const auto& [resource,seen]:middleSeen){
+   if(++listed>8)break;
+   const auto st=middleStates.find(resource);
+   sprintf_s(msg,"M8.54 middle target %p format %u binds %llu state 0x%X",(void*)uintptr_t(resource),seen.format,
+     (unsigned long long)seen.binds,st!=middleStates.end()?st->second:0u);
+   log(msg);
+  }
+ }
  // M8.43: report a lost device once, with its reason, before the game shuts down.
  static unsigned checks=0;static bool removedLogged=false;
  if(ID3D12Device* d=fxDevice?fxDevice:vrsDevice; d && !removedLogged && (++checks%8)==1){
