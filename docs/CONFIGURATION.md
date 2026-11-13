@@ -37,8 +37,10 @@ With the default `Shape=circle`, `Size1x1=0.25` makes the sharp circle's diamete
 
 ## Scissor crop
 
-Since beta.11, the two outer edges default to `0.10` (10%) and the two nose-side
-edges default to `0`. Scissor remains disabled by default. Left/right refer to
+Scissor works in both VR modes: `vrs` (the default) and, since 0.4.4, quad views
+(`quad`, see [Quad views](#quad-views-experimental)), where the cut edges are removed from the composed
+eyes and the wide views render only the kept part. Scissor is enabled by default.
+The two outer edges default to `0.10` (10%) and the two nose-side edges to `0`. Left/right refer to
 the image as seen by that eye; they are not mirrored. Top/bottom remain shared.
 
 For **outside-only** cropping, start with:
