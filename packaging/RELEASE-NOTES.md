@@ -28,8 +28,10 @@ BeamNG-VRS 0.4.4 — portable Windows x64, for BeamNG.drive 0.40.
   from the quad-view eyes too: the headset shows black there, as in vrs mode.
   The wide views then cover only the kept part, with a narrower field of view
   and fewer pixels (60% fewer rows by default) at the same sharpness, and the
-  focus view stays inside the kept part. Set `[Scissor] Enabled=false` to see
-  the full field of view again. The layer log reports it (`M8.58`).
+  focus view stays inside the kept part. A well-configured quad view already
+  renders the edges cheaply, so scissor is mostly redundant there: it stays
+  for maximum gain. Set `[Scissor] Enabled=false` to see the full field of
+  view again. The layer log reports it (`M8.58`).
 
 ## In 0.4.3
 

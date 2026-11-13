@@ -120,7 +120,7 @@ Windows PowerShell is included in Windows 10/11; the package adds no EXE.
 - **Size2x2:** size of the medium-quality region around it. Default `0.55`.
 - **Shape:** `circle` (default), `ellipse`, or `square`.
 - **DrawOutline:** shows the quality-region borders for checking settings. Leave `false` for gameplay.
-- **Scissor:** crops image edges to save rendering work. Works in both VR modes, VRS and quad views (in quad views the wide views shrink to the kept part). Enabled by default; check the edges in your headset.
+- **Scissor:** crops image edges to save rendering work. Works in both VR modes, VRS and quad views (in quad views the wide views shrink to the kept part). Enabled by default; check the edges in your headset. A well-configured quad view is already cheap at the edges, so there scissor is mostly redundant; keep it only if you want every last bit of performance and don't mind the black edges.
 - **RenderScale:** Direct3D 12 VR render scale, `0.25` to `1.0`. Not set by default (game uses `0.5`); set `1.0` for the sharpest picture.
 - **VRDrawDistance:** VR draw distance in metres, `100` to `10000`. Default `4000`; `off` keeps the game's 10000 m. Also changeable in game from the radial menu.
 - **LensMask:** skips the image corners hidden by the lenses. Enabled by default (`Size=1.15`); increase `Size` if you see black corners.
