@@ -104,7 +104,7 @@ and map.
 
 ## Install
 
-1. [Download the Windows ZIP](https://github.com/Letrange-g/BeamNG-VRS/releases/download/v0.4.3/BeamNG-VRS-0.4.3-windows-x64.zip) (not the source-code ZIP).
+1. [Download the Windows ZIP](https://github.com/Letrange-g/BeamNG-VRS/releases) (not the source-code ZIP).
 2. Close BeamNG and extract the whole ZIP into the game folder, beside `Bin64`.
 3. Double-click `Launch-BeamNG-VRS.cmd`, then enable VR in the game.
    For BeamMP multiplayer, double-click `Launch-BeamMP-VRS.cmd` instead.
