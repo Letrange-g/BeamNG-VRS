@@ -218,33 +218,32 @@ local function onClientPostStartMission() present = {} end
         $hooks['onClientPostStartMission'] = @('onClientPostStartMission')
     }
     if ($null -ne $Middle) {
-        # M8.54 triple view: one wide, low-resolution middle view between the eyes. The
-        # OpenXR layer finds its render targets by their size and composes it around
-        # each eye's sharp window; without it the surround stays black.
+        # M8.55 quad views: one wide, low-resolution view per eye. The OpenXR layer finds
+        # their render targets by size (the right one is two rows taller) and composes each
+        # around its eye's sharp focus view; without them the surround stays black.
         $middleW = [int]$Middle.Width; $middleH = [int]$Middle.Height
         # nil = auto: wait for the OpenXR layer's value in the settings folder.
         $middleFov = if ($null -eq $Middle.Fov) { 'nil' } else { ([double]$Middle.Fov).ToString('0.##', $invariant) }
         $lua += @"
--- M8.54 triple view middle view.
-local middleName = 'beamngVrsMiddleView'
-local middleW, middleH, middleFov = $middleW, $middleH, $middleFov
-local middleFovFile = '/settings/beamng_vrs_middle_fov.txt'
-local middle
-local middleWait = 0
--- MiddleFov=auto: the OpenXR layer writes "fov=N" once it knows the headset's field of view.
-local function middleAutoFov()
-  local ok, text = pcall(readFile, middleFovFile)
+-- M8.55 quad views: wide views.
+local wideW, wideH, wideFov = $middleW, $middleH, $middleFov
+local wideFovFile = '/settings/beamng_vrs_middle_fov.txt'
+local wide = {}       -- [1] left eye, [2] right eye
+local wideWait = 0
+-- WideFov=auto: the OpenXR layer writes "fov=N" once it knows the headset's field of view.
+local function wideAutoFov()
+  local ok, text = pcall(readFile, wideFovFile)
   if not ok or type(text) ~= 'string' then return nil end
   local fov = tonumber(text:match('fov=([%d%.]+)'))
   if fov and fov >= 30 and fov <= 150 then return fov end
   return nil
 end
-local function middleSay(text) log('I', 'beamngVrs', 'BeamNG-VRS triple view: ' .. text) end
--- Diagnostics (beamng.log): camera position, axes and frustum of the left eye and the
--- middle view, every 3 s for the first 30 s and every 30 s after.
+local function wideSay(text) log('I', 'beamngVrs', 'BeamNG-VRS quad views: ' .. text) end
+local function try(fn) local ok, r = pcall(fn) if ok then return r end return nil end
+-- Diagnostics (beamng.log): camera position, axes and frustum of each eye and wide view,
+-- every 3 s for the first 30 s and every 30 s after.
 local diagTime, diagNext = 0, 0
 local function fmt3(v) if not v then return '?' end return string.format('(%.3f,%.3f,%.3f)', v.x or 0, v.y or 0, v.z or 0) end
-local function try(fn) local ok, r = pcall(fn) if ok then return r end return nil end
 local function describe(name, view)
   if not view then return name .. '=nil' end
   local m = try(function() return view.cameraMatrix end)
@@ -258,95 +257,104 @@ local function describe(name, view)
       local v = try(function() return f[k](f) end)
       if v ~= nil then parts[#parts + 1] = k:sub(4) .. '=' .. string.format('%.4f', v) end
     end
-    if #parts == 0 then
-      local mt = getmetatable(f)
-      local keys = {}
-      if mt then for k in pairs(type(mt.__index) == 'table' and mt.__index or mt) do keys[#keys + 1] = tostring(k) end end
-      parts[1] = 'methods=' .. table.concat(keys, ',')
-    end
     text = text .. ' frustum ' .. table.concat(parts, ' ')
   end
+  text = text .. ' cameraObject=' .. tostring(try(function() return view:getCameraObject() end))
   return text
 end
-local function middleDiag(manager, dt)
+local function wideDiag(manager, dt)
   diagTime = diagTime + (dt or 0)
   if diagTime < diagNext then return end
   diagNext = diagTime + (diagTime < 30 and 3 or 30)
-  middleSay(string.format('diag t=%.0f %s | %s | %s', diagTime,
+  wideSay(string.format('diag t=%.0f %s | %s | %s | %s', diagTime,
     describe('eye0', try(function() return manager:getView('oxrView0') end)),
     describe('eye1', try(function() return manager:getView('oxrView1') end)),
-    describe('middle', middle)))
+    describe('wide0', wide[1]), describe('wide1', wide[2])))
 end
--- Follows the head: the left eye's camera moved halfway to the right eye. The OpenXR
--- layer assumes the left eye's orientation, so only the position is changed.
-local function middleFollow(manager)
-  if not middle then return end
-  local ok = pcall(function()
-    local left, right = manager:getView('oxrView0'), manager:getView('oxrView1')
-    local m = left.cameraMatrix
-    local a, b = m:getPosition(), right.cameraMatrix:getPosition()
-    m:setPosition(Point3F((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2))
-    middle.cameraMatrix = m
-  end)
-  if not ok then middle = nil end
+-- Each wide view takes its eye's camera as it is: same position, same orientation.
+local function wideFollow(manager)
+  for i = 1, 2 do
+    local view = wide[i]
+    if view then
+      local ok = pcall(function() view.cameraMatrix = manager:getView('oxrView' .. (i - 1)).cameraMatrix end)
+      if not ok then wide[i] = nil end
+    end
+  end
 end
-local function middleCreate(manager)
-  local fov = middleFov or middleAutoFov()
+local function wideCreate(manager)
+  local fov = wideFov or wideAutoFov()
   if not fov then return end -- auto: not written yet, retried in a second
-  local ok, err = pcall(function()
-    middle = manager:getOrCreateView(middleName)
-    middle.luaOwned = true
-    middle.resolution = Point2I(middleW, middleH)
-    middle.viewPort = RectI(0, 0, middleW, middleH)
-    middle.namedTexTargetColor = middleName
-    pcall(function() middle.renderEditorIcons = false end)
-    -- The projection comes from the frustum alone (fov is only a label, as in the game's
-    -- own render/viewDemo.lua). Its angle is horizontal; the height follows the aspect.
-    -- Near and far follow the left eye when its frustum can be read.
-    local near, far = 0.05, 4000
-    pcall(function()
-      local f = manager:getView('oxrView0').frustum
-      local n, x = f:getNearDist(), f:getFarDist()
-      if type(n) == 'number' and n > 0 and type(x) == 'number' and x > n then near, far = n, x end
-    end)
-    middle.frustum = Frustum.construct(false, math.rad(fov), middleW / middleH, near, far)
-    middle.fov = fov
+  -- Near and far follow the left eye when its frustum can be read.
+  local near, far = 0.05, 4000
+  pcall(function()
+    local f = manager:getView('oxrView0').frustum
+    local n, x = f:getNearDist(), f:getFarDist()
+    if type(n) == 'number' and n > 0 and type(x) == 'number' and x > n then near, far = n, x end
   end)
-  if ok then middleSay('middle view ' .. middleW .. 'x' .. middleH .. ', ' .. fov .. ' deg horizontal' .. (middleFov and '' or ' (auto)') .. ', view reports ' .. tostring(middle.fov))
-  else middleSay('middle view not created: ' .. tostring(err)) middle = nil end
-  middleFollow(manager)
+  for i = 1, 2 do
+    if not wide[i] then
+      local name = 'beamngVrsWide' .. (i - 1)
+      local h = wideH + (i - 1) * 2
+      local eye = try(function() return manager:getView('oxrView' .. (i - 1)) end)
+      local view
+      local ok, err = pcall(function()
+        view = manager:getOrCreateView(name)
+        view.luaOwned = true
+        view.resolution = Point2I(wideW, h)
+        view.viewPort = RectI(0, 0, wideW, h)
+        view.namedTexTargetColor = name
+        pcall(function() view.renderEditorIcons = false end)
+        -- The projection comes from the frustum alone (fov is only a label, as in the
+        -- game's own render/viewDemo.lua). Its angle is horizontal; the height follows the aspect.
+        view.frustum = Frustum.construct(false, math.rad(fov), wideW / h, near, far)
+        view.fov = fov
+      end)
+      if ok then
+        wide[i] = view
+        -- The eyes hide the driver's own body from the inside; the wide views do the same
+        -- when they share the eye's camera object.
+        local object = eye and try(function() return eye:getCameraObject() end)
+        local shared = object and pcall(function() view:setCameraObject(object) end)
+        wideSay(name .. ' ' .. wideW .. 'x' .. h .. ', ' .. fov .. ' deg horizontal' .. (wideFov and '' or ' (auto)') ..
+          ', camera object ' .. (shared and tostring(object) or 'not shared (' .. tostring(object) .. ')'))
+      else wideSay(name .. ' not created: ' .. tostring(err)) end
+    end
+  end
+  wideFollow(manager)
 end
-local function middleDestroy(manager)
-  if middle and manager then pcall(function() manager:destroyView(middle) end) end
-  middle = nil
+local function wideDestroy(manager)
+  for i = 1, 2 do
+    if wide[i] and manager then local view = wide[i] pcall(function() manager:destroyView(view) end) end
+    wide[i] = nil
+  end
 end
-local function middleUpdate(dtReal)
+local function wideUpdate(dtReal)
   local manager = RenderViewManagerInstance
   if not manager then return end
   local ok, eye = pcall(function() return manager:getView('oxrView0') end)
   if not ok or not eye then
-    if middle then middleDestroy(manager) middleSay('VR stopped, middle view removed') end
-    middleWait = 0
+    if wide[1] or wide[2] then wideDestroy(manager) wideSay('VR stopped, wide views removed') end
+    wideWait = 0
     return
   end
-  if not middle then
-    middleWait = middleWait + (dtReal or 0)
-    if middleWait >= 1 then middleWait = 0 middleCreate(manager) end
+  if not wide[1] or not wide[2] then
+    wideWait = wideWait + (dtReal or 0)
+    if wideWait >= 1 then wideWait = 0 wideCreate(manager) end
     return
   end
-  middleFollow(manager)
-  middleDiag(manager, dtReal)
+  wideFollow(manager)
+  wideDiag(manager, dtReal)
 end
-local function middlePreRender()
+local function widePreRender()
   local manager = RenderViewManagerInstance
-  if manager then middleFollow(manager) end
+  if manager then wideFollow(manager) end
 end
-local function middleMission() middle = nil middleWait = 0 end
-local function middleUnload() middleDestroy(RenderViewManagerInstance) end
+local function wideMission() wide = {} wideWait = 0 end
+local function wideUnload() wideDestroy(RenderViewManagerInstance) end
 
 "@
-        foreach ($pair in @(@('onUpdate', 'middleUpdate'), @('onPreRender', 'middlePreRender'),
-                            @('onClientPostStartMission', 'middleMission'), @('onExtensionUnloaded', 'middleUnload'))) {
+        foreach ($pair in @(@('onUpdate', 'wideUpdate'), @('onPreRender', 'widePreRender'),
+                            @('onClientPostStartMission', 'wideMission'), @('onExtensionUnloaded', 'wideUnload'))) {
             $hooks[$pair[0]] = @($hooks[$pair[0]]) + $pair[1] | Where-Object { $_ }
         }
     }
@@ -434,7 +442,7 @@ M.onExtensionLoaded = registerMenus
         Write-Output "VR draw distance $distanceText m; its in-game app and radial menu are added through $mod"
     }
     if ($null -ne $Scale) { Write-Output "VR render scale $scaleText applied through $mod" }
-    if ($null -ne $Middle) { Write-Output "Triple view middle view ${middleW}x${middleH} (FOV $(if ($null -eq $Middle.Fov) { 'auto' } else { $middleFov + ' deg' })) added through $mod" }
+    if ($null -ne $Middle) { Write-Output "Quad views: wide views ${middleW}x${middleH} (FOV $(if ($null -eq $Middle.Fov) { 'auto' } else { $middleFov + ' deg' })) added through $mod" }
     Enable-VRModInDatabase -UserFolder $UserFolder
 }
 
@@ -608,12 +616,12 @@ function Test-BeamNGIni {
         'tracking.gazerefreshms' = @(2, 50, $true)
         'lensmask.size' = @(0.5, 1.5, $false)
         'renderer.renderscale' = @(0.25, 1.0, $false)
-        'tripleview.sharpwidth' = @(0.1, 1, $false)
-        'tripleview.sharpheight' = @(0.1, 1, $false)
-        'tripleview.feather' = @(0, 0.5, $false)
-        'tripleview.gazedeadzone' = @(0, 10, $false)
-        'tripleview.middlewidth' = @(256, 4096, $true)
-        'tripleview.middleheight' = @(256, 4096, $true)
+        'quadviews.focuswidth' = @(0.1, 1, $false)
+        'quadviews.focusheight' = @(0.1, 1, $false)
+        'quadviews.feather' = @(0, 0.5, $false)
+        'quadviews.gazedeadzone' = @(0, 10, $false)
+        'quadviews.widewidth' = @(256, 4096, $true)
+        'quadviews.wideheight' = @(256, 4096, $true)
     }
     foreach ($line in ($text -split "`n")) {
         ++$lineNumber
@@ -623,7 +631,7 @@ function Test-BeamNGIni {
             if ($line.StartsWith('[')) {
                 if (-not $line.EndsWith(']')) { throw 'invalid section header' }
                 $section = $line.Substring(1, $line.Length - 2).Trim($whitespace).ToLowerInvariant()
-                if (@('foveation', 'debug', 'scissor', 'lensmask', 'tracking', 'performance', 'logging', 'openxr', 'renderer', 'vr', 'tripleview') -cnotcontains $section) { throw 'unknown section' }
+                if (@('foveation', 'debug', 'scissor', 'lensmask', 'tracking', 'performance', 'logging', 'openxr', 'renderer', 'vr', 'quadviews', 'tripleview') -cnotcontains $section) { throw 'unknown section' }
                 continue
             }
             $equals = $line.IndexOf('=')
@@ -633,13 +641,18 @@ function Test-BeamNGIni {
             $id = $section + '.' + $key
             if ($seen.ContainsKey($id)) { throw 'duplicate setting' }
             $seen[$id] = $true
+            # M8.55: the unreleased M8.54 [TripleView] names still work (same rule as the DLL).
+            if ($section -eq 'tripleview') {
+                $renamed = @{ sharpwidth = 'focuswidth'; sharpheight = 'focusheight'; middlewidth = 'widewidth'; middleheight = 'wideheight'; middlefov = 'widefov' }
+                $id = 'quadviews.' + $(if ($renamed.ContainsKey($key)) { $renamed[$key] } else { $key })
+            }
             if ($ranges.ContainsKey($id)) {
                 $range = $ranges[$id]
                 $number = Assert-IniNumber -Value $value -Low $range[0] -High $range[1] -Integer $range[2]
                 if ($sizes.ContainsKey($id)) { $sizes[$id] = $number }
                 if ($id -eq 'renderer.renderscale') { $script:RenderScale = $number }
-                if ($id -eq 'tripleview.middlewidth') { $script:Middle.Width = $number }
-                if ($id -eq 'tripleview.middleheight') { $script:Middle.Height = $number }
+                if ($id -eq 'quadviews.widewidth') { $script:Middle.Width = $number }
+                if ($id -eq 'quadviews.wideheight') { $script:Middle.Height = $number }
             } elseif ($id -eq 'foveation.shape') {
                 if (@('circle', 'square', 'ellipse') -cnotcontains $value.ToLowerInvariant()) { throw 'unsupported setting value' }
             } elseif ($id -eq 'logging.level') {
@@ -658,18 +671,19 @@ function Test-BeamNGIni {
                 if (@('0', '1', 'false', 'true') -cnotcontains $value.ToLowerInvariant()) { throw 'expected 0, 1, false or true' }
                 $script:GhostingFix = @('1', 'true') -ccontains $value.ToLowerInvariant()
             } elseif ($id -eq 'vr.mode') {
-                # Same rule as the DLL: spaces, '-' and '_' are ignored ("triple view" works).
+                # Same rule as the DLL: spaces, '-' and '_' are ignored ("quad views" works);
+                # the M8.54 names triple and triple-black still work.
                 $mode = ($value.ToLowerInvariant() -replace '[\s_-]', '')
                 if (@('vrs') -ccontains $mode) { $script:VRMode = 'vrs' }
-                elseif (@('triple', 'tripleview') -ccontains $mode) { $script:VRMode = 'triple' }
-                elseif (@('tripleblack', 'tripleviewblack') -ccontains $mode) { $script:VRMode = 'triple-black' }
-                else { throw 'invalid VR mode (use vrs, triple or triple-black)' }
-            } elseif ($id -eq 'tripleview.middlefov') {
+                elseif (@('quad', 'quadview', 'quadviews', 'triple', 'tripleview') -ccontains $mode) { $script:VRMode = 'quad' }
+                elseif (@('quadblack', 'quadviewblack', 'quadviewsblack', 'tripleblack', 'tripleviewblack') -ccontains $mode) { $script:VRMode = 'quad-black' }
+                else { throw 'invalid VR mode (use vrs, quad or quad-black)' }
+            } elseif ($id -eq 'quadviews.widefov') {
                 # auto (default): the OpenXR layer sizes it from the headset at VR start.
                 $script:Middle.Fov = if ($value -ieq 'auto') { $null } else { Assert-IniNumber -Value $value -Low 30 -High 150 -Integer $false }
-            } elseif ($id -eq 'tripleview.followgaze') {
+            } elseif ($id -eq 'quadviews.followgaze') {
                 if (@('0', '1', 'false', 'true') -cnotcontains $value.ToLowerInvariant()) { throw 'expected 0, 1, false or true' }
-            } elseif ($id -eq 'tripleview.shape') {
+            } elseif ($id -eq 'quadviews.shape') {
                 if (@('circle', 'rectangle') -cnotcontains $value.ToLowerInvariant()) { throw 'unsupported setting value' }
             } elseif ($id -eq 'renderer.farclip') {
                 Write-Warning "INI line ${lineNumber} [Renderer]: FarClip was removed (BeamNG ignores it in VR); this line is ignored and can be deleted."
@@ -694,7 +708,7 @@ try {
     $script:VRDrawDistance = [double]4000
     $script:GhostingFix = $false
     $script:VRMode = 'vrs'
-    $script:Middle = @{ Width = 1600; Height = 1152; Fov = $null }
+    $script:Middle = @{ Width = 1280; Height = 880; Fov = $null }
     if (-not (Test-Path -LiteralPath $iniPath -PathType Leaf)) {
         throw 'BeamNG-VRS.ini not found beside Launch-BeamNG-VRS.cmd. Extract the entire ZIP; when upgrading, move your saved INI beside the CMD.'
     }
@@ -807,7 +821,7 @@ try {
     $start.EnvironmentVariables['BEAMNG_VRS_TRIPLE_FOV_FILE'] = $middleFovFile
     Update-VRMod -UserFolder $UserFolder -Scale $(if ($script:Renderer -eq 'd3d12') { $script:RenderScale } else { $null }) `
         -Distance $startDistance -IniDistance $script:VRDrawDistance `
-        -Middle $(if ($script:Renderer -eq 'd3d12' -and $script:VRMode -eq 'triple') { $script:Middle } else { $null })
+        -Middle $(if ($script:Renderer -eq 'd3d12' -and $script:VRMode -eq 'quad') { $script:Middle } else { $null })
     if ($script:VRMode -ne 'vrs' -and $script:Renderer -ne 'd3d12') {
         Write-Warning "[VR] Mode=$($script:VRMode) needs [Renderer] API=d3d12; VRS is used instead."
     } elseif ($script:VRMode -ne 'vrs') {

@@ -348,7 +348,7 @@ int m817MessageLevel(const char* msg){
     strstr(msg,"M8.31 TURBO") || strstr(msg,"Next xrCreateApiLayerInstance") || strstr(msg,"Opt-in:") ||
     // D3D12 setup and first-use lines are flushed at once, so a crash right after still leaves them.
     strstr(msg,"M8.40 graphics") || strstr(msg,"hooks=") || strstr(msg,"foveation active") ||
-    strstr(msg,"M8.42 shading-rate image") || strstr(msg,"foveation frames") || strstr(msg,"M8.43") || strstr(msg,"M8.44") || strstr(msg,"M8.47") || strstr(msg,"M8.50") || strstr(msg,"M8.51") || strstr(msg,"M8.54"))return 1;
+    strstr(msg,"M8.42 shading-rate image") || strstr(msg,"foveation frames") || strstr(msg,"M8.43") || strstr(msg,"M8.44") || strstr(msg,"M8.47") || strstr(msg,"M8.50") || strstr(msg,"M8.51") || strstr(msg,"M8.54") || strstr(msg,"M8.55"))return 1;
  return 2;
 }
 void logLine(const char* msg) {
@@ -458,7 +458,7 @@ bool tripleEnsureOutputs(const Dispatch& d,XrSession session,int64_t format,uint
   std::vector<D3D12SwapchainImage> images(count,D3D12SwapchainImage{XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR,nullptr,nullptr});
   if(XR_SUCCEEDED(r)&&count)r=d.enumerateSwapchainImages(o.swapchain,count,&count,reinterpret_cast<XrSwapchainImageBaseHeader*>(images.data()));
   char msg[200]{};
-  sprintf_s(msg,sizeof(msg),"M8.54 triple view output swapchain eye=%d %ux%u format=%lld images=%u result=%d",eye,ci.width,ci.height,(long long)format,count,int(r));
+  sprintf_s(msg,sizeof(msg),"M8.55 quad views output swapchain eye=%d %ux%u format=%lld images=%u result=%d",eye,ci.width,ci.height,(long long)format,count,int(r));
   logLine(msg);
   if(XR_FAILED(r)||!count){tripleOutFailed=true;return false;}
   for(const auto& image:images)o.images.push_back(uint64_t(reinterpret_cast<uintptr_t>(image.texture)));
@@ -488,10 +488,13 @@ bool tripleCompose(const Dispatch& d,XrSession session,const XrCompositionLayerP
  }
  if(ok){
   beamng_triple_d3d12::EyeInput in[2]{};
-  double halfX=1,halfY=1;beamng_triple::middleHalf(set,halfX,halfY);
-  const auto& middlePose=projection.views[0].pose.orientation;
   for(int eye=0;eye<2;++eye){
    const auto& v=projection.views[eye];auto& c=in[eye].constants;
+   // M8.55: each eye's wide view sits at that eye and faces its way (the Lua mod copies
+   // the eye's camera); the right one is two rows taller, which tells them apart.
+   auto wideSet=set;if(eye==1)wideSet.middleHeight+=2;
+   double halfX=1,halfY=1;beamng_triple::middleHalf(wideSet,halfX,halfY);
+   const auto& middlePose=v.pose.orientation;
    const auto o=tangents(full[eye]),w=tangents(v.fov);
    c.out[0]=float(o.left);c.out[1]=float(o.right);c.out[2]=float(o.up);c.out[3]=float(o.down);
    c.win[0]=float(w.left);c.win[1]=float(w.right);c.win[2]=float(w.up);c.win[3]=float(w.down);
@@ -889,13 +892,13 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateSession(XrInstance inst,con
        tripleFullValid=false;tripleOutFailed=false;}
       tripleActive=true;
       double hx=1,hy=1;beamng_triple::middleHalf(t,hx,hy);
-      char m[300]{};sprintf_s(m,sizeof(m),"M8.54 triple view active: window %.0f%%x%.0f%% gaze=%d shape=%s middle=%s",
+      char m[300]{};sprintf_s(m,sizeof(m),"M8.55 quad views active: focus %.0f%%x%.0f%% gaze=%d shape=%s middle=%s",
         100*t.sharpWidth,100*t.sharpHeight,int(t.gaze),t.roundShape?"circle":"rectangle",
         t.middle?"on":"off (black)");
       logLine(m);
-      if(t.middle && t.middleFov>0){sprintf_s(m,sizeof(m),"M8.54 middle view %ux%u fov %.0f deg horizontal (half-extent tan %.2f x %.2f)",
+      if(t.middle && t.middleFov>0){sprintf_s(m,sizeof(m),"M8.55 wide views %ux%u fov %.0f deg horizontal (half-extent tan %.2f x %.2f)",
         t.middleWidth,t.middleHeight,t.middleFov,hx,hy);logLine(m);}
-     }else logLine("M8.54 triple view WARNING: compositor unavailable; the game's narrow eyes are shown as they are");
+     }else logLine("M8.55 quad views WARNING: compositor unavailable; the game's narrow eyes are shown as they are");
     }else beamng_d3d12::attach(b->device,b->queue,logLine,m817Verbose(),m842Foveation(d.gazeExtension),fx);
    }
   }
@@ -1073,7 +1076,7 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeEnumerateViewConfigurationViews(X
    views[i].recommendedImageRectWidth=beamng_triple::scaledSize(views[i].recommendedImageRectWidth,t.sharpWidth);
    views[i].recommendedImageRectHeight=beamng_triple::scaledSize(views[i].recommendedImageRectHeight,t.sharpHeight);
   }
-  char msg[220]{};sprintf_s(msg,sizeof(msg),"M8.54 triple view: eyes render %ux%u of %ux%u",
+  char msg[220]{};sprintf_s(msg,sizeof(msg),"M8.55 quad views: focus views render %ux%u of %ux%u",
     views[0].recommendedImageRectWidth,views[0].recommendedImageRectHeight,tripleFullWidth[0],tripleFullHeight[0]);
   logLine(msg);
   return r;
@@ -1094,7 +1097,7 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeEnumerateViewConfigurationViews(X
 // game's settings folder; its Lua mod waits for "fov=N" there before creating the middle view.
 void tripleWriteFov(double fov){
  std::wstring p(32768,L'\0');const DWORD n=GetEnvironmentVariableW(L"BEAMNG_VRS_TRIPLE_FOV_FILE",p.data(),DWORD(p.size()));
- if(!n||n>=p.size()){logLine("M8.54 triple view WARNING: no middle-view FOV file named by the launcher");return;}
+ if(!n||n>=p.size()){logLine("M8.55 quad views WARNING: no wide-view FOV file named by the launcher");return;}
  p.resize(n);
  const std::wstring temp=p+L".tmp";
  char text[64]{};const int len=sprintf_s(text,sizeof(text),"fov=%.3f\n",fov);
@@ -1103,7 +1106,7 @@ void tripleWriteFov(double fov){
  const bool ok=file!=INVALID_HANDLE_VALUE && WriteFile(file,text,DWORD(len),&written,nullptr) && written==DWORD(len);
  if(file!=INVALID_HANDLE_VALUE)CloseHandle(file);
  if(!ok || !MoveFileExW(temp.c_str(),p.c_str(),MOVEFILE_REPLACE_EXISTING))
-  logLine("M8.54 triple view WARNING: middle-view FOV file not written");
+  logLine("M8.55 quad views WARNING: wide-view FOV file not written");
 }
 // Image rows and columns are linear in the tangent of the view angle.
 void m844CropFov(XrFovf& fov,const beamng_scissor::Margins& m){
@@ -1149,13 +1152,16 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeLocateViews(XrSession session,con
   double autoFov=0;
   {std::lock_guard<std::mutex> g(stateMutex);
    tripleFull=full;tripleFullValid=true;
-   // MiddleFov=auto: sized once from the headset's full fields of view, facing the left eye
-   // as the Lua middle view and the compositor do. Rounded as written for the Lua side.
+   // WideFov=auto: sized once so each eye's wide view, facing that eye's way, covers its
+   // full field of view; one value for both. Rounded as written for the Lua side.
    if(!tripleFovResolved && tset.middle){
-    const beamng_triple::Tangents t2[2]{tangents(full[0]),tangents(full[1])};
-    beamng_triple::Quat q[2];
-    for(int i=0;i<2;++i){const auto& o=views[i].pose.orientation;q[i]={o.x,o.y,o.z,o.w};}
-    autoFov=std::round(beamng_triple::autoMiddleFov(t2,q,q[0],tset.middleWidth,tset.middleHeight)*1000)/1000;
+    double fov=0;
+    for(int i=0;i<2;++i){
+     const beamng_triple::Tangents t2[2]{tangents(full[i]),tangents(full[i])};
+     const auto& o=views[i].pose.orientation;const beamng_triple::Quat q[2]{{o.x,o.y,o.z,o.w},{o.x,o.y,o.z,o.w}};
+     fov=std::max(fov,beamng_triple::autoMiddleFov(t2,q,q[0],tset.middleWidth,tset.middleHeight+uint32_t(i)*2));
+    }
+    autoFov=std::round(fov*1000)/1000;
     tripleSettings.middleFov=autoFov;tripleFovResolved=true;
    }
    if(tset.gaze){tripleGaze.update(gx,gy,valid,tset.deadZone,GetTickCount64());
@@ -1163,11 +1169,11 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeLocateViews(XrSession session,con
   }
   if(autoFov>0){
    tripleWriteFov(autoFov);
-   char msg[200]{};sprintf_s(msg,sizeof(msg),"M8.54 middle view FOV auto: %.1f deg horizontal for %ux%u",autoFov,tset.middleWidth,tset.middleHeight);logLine(msg);
+   char msg[200]{};sprintf_s(msg,sizeof(msg),"M8.55 wide views FOV auto: %.1f deg horizontal for %ux%u",autoFov,tset.middleWidth,tset.middleHeight);logLine(msg);
   }
   for(int i=0;i<2;++i)views[i].fov=angles(beamng_triple::window(tangents(full[i]),tset.sharpWidth,tset.sharpHeight,cx[i],cy[i]));
   static std::atomic<bool> logged{false};
-  if(!logged.exchange(true)){char msg[240]{};sprintf_s(msg,sizeof(msg),"M8.54 triple view window L=(%.3f,%.3f,%.3f,%.3f) rad gaze=%d",
+  if(!logged.exchange(true)){char msg[240]{};sprintf_s(msg,sizeof(msg),"M8.55 quad views focus L=(%.3f,%.3f,%.3f,%.3f) rad gaze=%d",
     views[0].fov.angleLeft,views[0].fov.angleRight,views[0].fov.angleUp,views[0].fov.angleDown,int(tset.gaze));logLine(msg);}
  }
  if(XR_SUCCEEDED(r)&&info&&views&&count&&*count>=2&&capacity>=2)

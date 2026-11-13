@@ -30,9 +30,9 @@ struct Settings {
  bool roundShape = true;    // ellipse inside the window; false: the whole rectangle.
  double sharpWidth = 0.40;  // window share of each eye's full tangent width
  double sharpHeight = 0.40; // and height
- double feather = 0.15;     // edge blend, share of the window radius
+ double feather = 0.30;     // edge blend, share of the window radius
  double deadZone = 0.03;    // tangent units (~1.7 deg) the gaze moves before the window follows
- uint32_t middleWidth = 1600, middleHeight = 1152;
+ uint32_t middleWidth = 1280, middleHeight = 880; // left wide view; the right one is 2 rows taller
  double middleFov = 0;      // horizontal field of view of the middle view, degrees (BeamNG's fov is
                             // horizontal); 0 = auto, from the headset (autoMiddleFov)
 };

@@ -246,21 +246,21 @@ A GPU without VRS Tier 2 keeps normal rendering and logs
 `M8.42 D3D12 foveation unavailable`; the FOV crop and the black lens corners still work. `Diagnose-BeamNG-VRS.cmd` also logs the VRS
 tier and the render-target sizes the game binds per frame (`M8.41` lines).
 
-## Triple view (experimental)
+## Quad views (experimental)
 
-`[VR] Mode` picks how BeamNG-VRS speeds up VR (Direct3D 12 only for the triple modes):
+`[VR] Mode` picks how BeamNG-VRS speeds up VR (Direct3D 12 only for the quad modes):
 
 | Mode | What renders |
 | --- | --- |
 | `vrs` (default) | The normal eyes with variable-rate shading, scissor crop and lens mask. |
-| `triple` | Each eye renders only a small sharp window (`[TripleView] SharpWidth`/`SharpHeight` of its field of view) that follows the gaze. One wide, low-resolution middle view, a camera between the eyes, fills the rest. The OpenXR layer composes the two into full-field-of-view eye images. |
-| `triple-black` | The same sharp window with black around it and no middle view, so there is no middle-view cost. |
+| `quad` | Each eye renders only a small sharp focus view (`[QuadViews] FocusWidth`/`FocusHeight` of its field of view) that follows the gaze, or stays centred without eye tracking. One wide, low-resolution view per eye, at that eye's position, fills the rest. The OpenXR layer blends them into full-field-of-view eye images. |
+| `quad-black` | The same focus views with black around them and no wide views, so there is no wide-view cost. |
 
-Spaces, `-` and `_` are ignored, so `Mode=triple view` also works. In the triple modes, `[Foveation]`, `[Scissor]` and `[LensMask]` are not used.
+Spaces, `-` and `_` are ignored, so `Mode=quad views` also works. The names of the earlier triple-view test (`triple`, `triple-black` and the `[TripleView]` section with its Sharp/Middle keys) are still accepted. In the quad modes, `[Foveation]`, `[Scissor]` and `[LensMask]` are not used.
 
-The launcher creates the middle view with its small mod in `mods\unpacked\beamng_vrs`. When that mod is off, for example on a BeamMP server that turns off unlisted mods, the surround stays black, as with `triple-black`. The middle view has no depth correction: it is one flat, low-resolution picture for the periphery. Black edges mean it does not cover the eyes' field of view, so set `MiddleFov=auto` or raise it.
+The launcher creates the wide views with its small mod in `mods\unpacked\beamng_vrs`. When that mod is off, for example on a BeamMP server that turns off unlisted mods, the surround stays black, as with `quad-black`. Each extra view costs the game a mostly fixed amount of GPU time (about 2.5 ms each on an RTX 5090), so a lower `WideWidth`/`WideHeight` saves only a little.
 
-`[TripleView]` keys: `SharpWidth`, `SharpHeight` (0.1-1), `Shape` (`circle` or `rectangle`), `Feather` (0-0.5), `FollowGaze` (true/false), `GazeDeadZone` (degrees, 0-10), `MiddleWidth`, `MiddleHeight` (256-4096) and `MiddleFov` (`auto`, the default, sizes it to the headset at VR start; or horizontal degrees, 30-150, with the vertical angle following from the resolution). The layer log has `M8.54` lines for the mode, the window, the output swapchains and the middle view's render target.
+`[QuadViews]` keys: `FocusWidth`, `FocusHeight` (0.1-1), `Shape` (`circle` or `rectangle`), `Feather` (0-0.5, default 0.30), `FollowGaze` (true/false), `GazeDeadZone` (degrees, 0-10), `WideWidth`, `WideHeight` (256-4096; the right eye's view is two rows taller so the layer can tell them apart) and `WideFov` (`auto`, the default, sizes it to the headset at VR start; or horizontal degrees, 30-150). The layer log has `M8.55` lines for the mode, the focus views, the output swapchains and the wide views' render targets; beamng.log has `BeamNG-VRS quad views` lines with camera diagnostics.
 
 ## Ghosting fix
 

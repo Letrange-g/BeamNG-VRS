@@ -125,7 +125,14 @@ std::unordered_set<uint64_t> middleResources;
 std::unordered_map<uint64_t,uint32_t> middleStates;
 struct MiddleSeen { uint32_t format=0; uint64_t binds=0; };
 std::map<uint64_t,MiddleSeen> middleSeen;  // For the one-time log of what was found.
-MiddleTarget middleLast{};
+MiddleTarget middleLast[2]{};
+// M8.55 quad views: two wide views, one per eye, told apart by height: the right
+// eye's is two rows taller (see the launcher's Lua mod). -1: not a wide view.
+int wideIndex(uint32_t width,uint32_t height){
+ const uint32_t w=middleWidth.load(std::memory_order_relaxed),h=middleHeight.load(std::memory_order_relaxed);
+ if(!w || width!=w)return -1;
+ return height==h?0:height==h+2?1:-1;
+}
 decltype(ID3D12GraphicsCommandListVtbl::ResourceBarrier) nextResourceBarrier=nullptr;
 bool eightBit(uint32_t f){
  return f==DXGI_FORMAT_R8G8B8A8_UNORM||f==DXGI_FORMAT_R8G8B8A8_UNORM_SRGB||f==DXGI_FORMAT_R8G8B8A8_TYPELESS||
@@ -231,11 +238,10 @@ void bind(ID3D12GraphicsCommandList* list,SIZE_T first,UINT count,bool renderPas
   else if(target){nextRSSetScissorRects(list,1,&c.keep);c.assumed=true;assumedScissors.fetch_add(1,std::memory_order_relaxed);}
   else if(c.assumed){const D3D12_RECT all{0,0,D3D12_VIEWPORT_BOUNDS_MAX,D3D12_VIEWPORT_BOUNDS_MAX};nextRSSetScissorRects(list,1,&all);c.assumed=false;}
  }
- if(known && count && middleWidth.load(std::memory_order_relaxed) && t.width==middleWidth.load(std::memory_order_relaxed) &&
-    t.height==middleHeight.load(std::memory_order_relaxed) && t.samples==1){
+ if(const int wide=known && count && t.samples==1 ? wideIndex(t.width,t.height) : -1; wide>=0){
   std::lock_guard<std::mutex> g(middleMutex);
   auto& seen=middleSeen[t.resource];seen.format=t.format;++seen.binds;
-  if(eightBit(t.format)){middleLast.resource=t.resource;middleLast.format=t.format;middleLast.bindFrame=frameCounter.load(std::memory_order_relaxed);}
+  if(eightBit(t.format)){auto& l=middleLast[wide];l.resource=t.resource;l.format=t.format;l.bindFrame=frameCounter.load(std::memory_order_relaxed);}
  }
  if(!diagnostics && !foveating)return;
  std::lock_guard<std::mutex> g(statsMutex);
@@ -267,7 +273,7 @@ void STDMETHODCALLTYPE hookCreateRtv(ID3D12Device* device,ID3D12Resource* resour
  t.width=std::max<uint32_t>(1,uint32_t(rd.Width>>mip));t.height=std::max<uint32_t>(1,rd.Height>>mip);
  t.format=uint32_t(desc && desc->Format!=DXGI_FORMAT_UNKNOWN?desc->Format:rd.Format);t.samples=rd.SampleDesc.Count;
  t.resource=uint64_t(reinterpret_cast<uintptr_t>(resource));t.device=device;
- if(middleWidth.load(std::memory_order_relaxed) && t.width==middleWidth.load(std::memory_order_relaxed) && t.height==middleHeight.load(std::memory_order_relaxed)){
+ if(wideIndex(t.width,t.height)>=0){
   std::lock_guard<std::mutex> g(middleMutex);middleResources.insert(t.resource);
  }
  std::unique_lock<std::shared_mutex> g(targetsMutex);
@@ -853,11 +859,13 @@ void frameWaited(double waitMs,double periodMs){
  pacingWaitMs+=waitMs;pacingPeriodMs+=periodMs;++pacingWaits;
 }
 
-bool middleTarget(MiddleTarget& out){
+bool middleTarget(int view,MiddleTarget& out){
+ if(view<0||view>1)return false;
  std::lock_guard<std::mutex> g(middleMutex);
- if(!middleLast.resource)return false;
- out=middleLast;
- const auto it=middleStates.find(middleLast.resource);
+ const auto& last=middleLast[view];
+ if(!last.resource)return false;
+ out=last;
+ const auto it=middleStates.find(last.resource);
  // Never transitioned: a render target is created and drawn in RENDER_TARGET state.
  out.state=it!=middleStates.end()?it->second:uint32_t(D3D12_RESOURCE_STATE_RENDER_TARGET);
  return true;
@@ -876,14 +884,15 @@ void frame(){
  if(frameNumber==600 && middleWidth.load(std::memory_order_relaxed)){
   std::lock_guard<std::mutex> g(middleMutex);
   char msg[256]{};
-  sprintf_s(msg,"M8.54 middle view %ux%u: %zu targets seen, color target %p format %u",
-    middleWidth.load(),middleHeight.load(),middleSeen.size(),(void*)uintptr_t(middleLast.resource),middleLast.format);
+  sprintf_s(msg,"M8.55 wide views %ux%u/%u: %zu targets seen, color targets %p (format %u) and %p (format %u)",
+    middleWidth.load(),middleHeight.load(),middleHeight.load()+2,middleSeen.size(),(void*)uintptr_t(middleLast[0].resource),middleLast[0].format,
+    (void*)uintptr_t(middleLast[1].resource),middleLast[1].format);
   log(msg);
   int listed=0;
   for(const auto& [resource,seen]:middleSeen){
    if(++listed>8)break;
    const auto st=middleStates.find(resource);
-   sprintf_s(msg,"M8.54 middle target %p format %u binds %llu state 0x%X",(void*)uintptr_t(resource),seen.format,
+   sprintf_s(msg,"M8.55 wide target %p format %u binds %llu state 0x%X",(void*)uintptr_t(resource),seen.format,
      (unsigned long long)seen.binds,st!=middleStates.end()?st->second:0u);
    log(msg);
   }

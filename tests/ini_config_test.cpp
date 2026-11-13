@@ -50,7 +50,16 @@ int main() {
   std::istringstream input(off);
   assert(!parse(input).count("BEAMNG_VRS_VR_DRAW_DISTANCE"));
  }
- // M8.54 [VR] Mode
+ // M8.55 [VR] Mode and [QuadViews] (the M8.54 triple names stay accepted)
+ for(const char* mode : {"[VR]\nMode=quad\n", "[vr]\nmode = Quad Views\n"}) {
+  std::istringstream input(mode);const auto v=parse(input);
+  assert(v.at("BEAMNG_VRS_TRIPLE_VIEW")=="1"&&v.at("BEAMNG_VRS_TRIPLE_MIDDLE")=="1");
+ }
+ {std::istringstream input("[VR]\nMode=quad-black\n");const auto v=parse(input);
+  assert(v.at("BEAMNG_VRS_TRIPLE_VIEW")=="1"&&v.at("BEAMNG_VRS_TRIPLE_MIDDLE")=="0");}
+ {std::istringstream input("[QuadViews]\nFocusWidth=0.3\nWideHeight=700\nWideFov=100\nFeather=0.4\n");const auto v=parse(input);
+  assert(v.at("BEAMNG_VRS_TRIPLE_SHARP_WIDTH")=="0.3"&&v.at("BEAMNG_VRS_TRIPLE_MIDDLE_HEIGHT")=="700"&&v.at("BEAMNG_VRS_TRIPLE_MIDDLE_FOV")=="100");}
+ assert(defaults.at("BEAMNG_VRS_TRIPLE_MIDDLE_WIDTH")=="1280"&&defaults.at("BEAMNG_VRS_TRIPLE_FEATHER")=="0.30");
  assert(defaults.at("BEAMNG_VRS_TRIPLE_VIEW")=="0");
  for(const char* mode : {"[VR]\nMode=triple\n", "[vr]\nmode = Triple View\n", "[VR]\nMode=triple_view\n"}) {
   std::istringstream input(mode);const auto v=parse(input);
@@ -157,7 +166,7 @@ int main() {
      "[Tracking]\nGazeRefreshMs=8.5", "[Tracking]\nGazeRefreshMs=8.0",
      "[Foveation]\nShape=triangle", "[Debug]\nDrawOutline=1 ; inline comment",
      "[OpenXR]\nDisableLayers=XR layer", "[OpenXR]\nDisableLayers=A,,B", "[OpenXR]\nDisableLayers=A,", "[OpenXR]\nDisableLayers=A,*",
-     "[OpenXR]\nDisableLayers=A\ndisablelayers=B", "[OpenXR]\nTypo=1", "[Renderer]\nAPI=dx12", "[Renderer]\nRenderScale=1.5", "[Renderer]\nRenderScale=0.2", "[Renderer]\nRenderScale=auto", "[Renderer]\nVRDrawDistance=50", "[Renderer]\nVRDrawDistance=20000", "[Renderer]\nVRDrawDistance=far", "[Renderer]\nVRDrawDistance=on", "[Renderer]\nGhostingFix=maybe", "[Renderer]\nVRDrawDistance=","[Renderer]\nAPI=vulkan\napi=d3d12", "[VR]\nMode=quad", "[VR]\nMode=", "[TripleView]\nEnabled=true", "[TripleView]\nSharpWidth=0.05", "[TripleView]\nMiddleWidth=1000.5", "[TripleView]\nShape=square", "[TripleView]\nMiddleFov=20", "[TripleView]\nMiddleFov=wide", "[Debug", "DrawOutline=1", "# empty\n"}) {
+     "[OpenXR]\nDisableLayers=A\ndisablelayers=B", "[OpenXR]\nTypo=1", "[Renderer]\nAPI=dx12", "[Renderer]\nRenderScale=1.5", "[Renderer]\nRenderScale=0.2", "[Renderer]\nRenderScale=auto", "[Renderer]\nVRDrawDistance=50", "[Renderer]\nVRDrawDistance=20000", "[Renderer]\nVRDrawDistance=far", "[Renderer]\nVRDrawDistance=on", "[Renderer]\nGhostingFix=maybe", "[Renderer]\nVRDrawDistance=","[Renderer]\nAPI=vulkan\napi=d3d12", "[VR]\nMode=octo", "[QuadViews]\nSharpWidth=0.4", "[QuadViews]\nWideFov=10", "[VR]\nMode=", "[TripleView]\nEnabled=true", "[TripleView]\nSharpWidth=0.05", "[TripleView]\nMiddleWidth=1000.5", "[TripleView]\nShape=square", "[TripleView]\nMiddleFov=20", "[TripleView]\nMiddleFov=wide", "[Debug", "DrawOutline=1", "# empty\n"}) {
   bool rejected = false;
   try { std::istringstream input(bad); (void)parse(input); } catch(const std::runtime_error&) { rejected = true; }
   assert(rejected);

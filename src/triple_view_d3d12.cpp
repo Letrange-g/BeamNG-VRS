@@ -151,7 +151,7 @@ bool compile(CompileFn compileFn, const char* entry, const char* target, ID3DBlo
    0x800 /* D3DCOMPILE_OPTIMIZATION_LEVEL3 */, 0, code, &errors);
  if(FAILED(hr)) {
   char msg[600]{};
-  sprintf_s(msg, "M8.54 triple view WARNING: shader %s failed hr=0x%08lX %s", entry, hr,
+  sprintf_s(msg, "M8.55 quad views WARNING: shader %s failed hr=0x%08lX %s", entry, hr,
     errors ? static_cast<const char*>(ID3D10Blob_GetBufferPointer(errors)) : "");
   log(msg);
  }
@@ -178,14 +178,14 @@ bool createRootSignature() {
  desc.NumParameters = 2;desc.pParameters = params;desc.NumStaticSamplers = 1;desc.pStaticSamplers = &sampler;
  auto serialize = reinterpret_cast<PFN_D3D12_SERIALIZE_ROOT_SIGNATURE>(
    reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"d3d12.dll"), "D3D12SerializeRootSignature")));
- if(!serialize) { log("M8.54 triple view WARNING: D3D12SerializeRootSignature not found"); return false; }
+ if(!serialize) { log("M8.55 quad views WARNING: D3D12SerializeRootSignature not found"); return false; }
  ID3DBlob* blob = nullptr;ID3DBlob* errors = nullptr;
  HRESULT hr = serialize(&desc, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &errors);
  if(errors) ID3D10Blob_Release(errors);
  if(SUCCEEDED(hr)) hr = ID3D12Device_CreateRootSignature(device, 0, ID3D10Blob_GetBufferPointer(blob), ID3D10Blob_GetBufferSize(blob),
    IID_ID3D12RootSignature, reinterpret_cast<void**>(&rootSignature));
  if(blob) ID3D10Blob_Release(blob);
- if(FAILED(hr)) { char msg[160]{};sprintf_s(msg, "M8.54 triple view WARNING: root signature failed hr=0x%08lX", hr);log(msg); }
+ if(FAILED(hr)) { char msg[160]{};sprintf_s(msg, "M8.55 quad views WARNING: root signature failed hr=0x%08lX", hr);log(msg); }
  return SUCCEEDED(hr);
 }
 
@@ -204,7 +204,7 @@ bool ensurePipeline(DXGI_FORMAT format) {
  d.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
  d.NumRenderTargets = 1;d.RTVFormats[0] = format;d.SampleDesc.Count = 1;
  const HRESULT hr = ID3D12Device_CreateGraphicsPipelineState(device, &d, IID_ID3D12PipelineState, reinterpret_cast<void**>(&pipeline));
- if(FAILED(hr)) { char msg[160]{};sprintf_s(msg, "M8.54 triple view WARNING: pipeline for format %u failed hr=0x%08lX", unsigned(format), hr);log(msg);return false; }
+ if(FAILED(hr)) { char msg[160]{};sprintf_s(msg, "M8.55 quad views WARNING: pipeline for format %u failed hr=0x%08lX", unsigned(format), hr);log(msg);return false; }
  pipelineFormat = format;
  return true;
 }
@@ -221,7 +221,7 @@ bool ensureSharp(int eye, const D3D12_RESOURCE_DESC& source) {
  d.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
  const HRESULT hr = ID3D12Device_CreateCommittedResource(device, &heap, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
    IID_ID3D12Resource, reinterpret_cast<void**>(&s.copy));
- if(FAILED(hr)) { char msg[160]{};sprintf_s(msg, "M8.54 triple view WARNING: eye copy %llux%u failed hr=0x%08lX", (unsigned long long)d.Width, d.Height, hr);log(msg);return false; }
+ if(FAILED(hr)) { char msg[160]{};sprintf_s(msg, "M8.55 quad views WARNING: eye copy %llux%u failed hr=0x%08lX", (unsigned long long)d.Width, d.Height, hr);log(msg);return false; }
  s.desc = d;s.state = D3D12_RESOURCE_STATE_COPY_DEST;
  return true;
 }
@@ -255,7 +255,7 @@ bool init(void* d, void* q, LogFn fn) {
  if(!device || !queue) return false;
  HMODULE compiler = LoadLibraryW(L"d3dcompiler_47.dll");
  auto compileFn = compiler ? reinterpret_cast<CompileFn>(reinterpret_cast<void*>(GetProcAddress(compiler, "D3DCompile"))) : nullptr;
- if(!compileFn) { log("M8.54 triple view WARNING: d3dcompiler_47.dll not found; triple view off");return false; }
+ if(!compileFn) { log("M8.55 quad views WARNING: d3dcompiler_47.dll not found; quad views off");return false; }
  if(!compile(compileFn, "vs", "vs_5_0", &vsCode) || !compile(compileFn, "ps", "ps_5_0", &psCode) || !createRootSignature()) return false;
  D3D12_DESCRIPTOR_HEAP_DESC sd{};sd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;sd.NumDescriptors = ringSize * 4;
  sd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
@@ -271,12 +271,12 @@ bool init(void* d, void* q, LogFn fn) {
   if(SUCCEEDED(hr)) ID3D12GraphicsCommandList_Close(s.list);
  }
  fenceEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
- if(FAILED(hr) || !fenceEvent) { char msg[160]{};sprintf_s(msg, "M8.54 triple view WARNING: device objects failed hr=0x%08lX; triple view off", hr);log(msg);return false; }
+ if(FAILED(hr) || !fenceEvent) { char msg[160]{};sprintf_s(msg, "M8.55 quad views WARNING: device objects failed hr=0x%08lX; quad views off", hr);log(msg);return false; }
  srvIncrement = ID3D12Device_GetDescriptorHandleIncrementSize(device, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
  rtvIncrement = ID3D12Device_GetDescriptorHandleIncrementSize(device, D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
  ID3D12Device_AddRef(device);ID3D12CommandQueue_AddRef(queue);
  isReady = true;
- log("M8.54 triple view: composition shader ready");
+ log("M8.55 quad views: composition shader ready");
  return true;
 }
 
@@ -316,11 +316,15 @@ bool compose(const EyeInput eyes[2], const uint64_t outputs[2], bool middleWante
  const bool outSrgb = isSrgb(outFormat);
  if(!ensurePipeline(outFormat)) return false;
 
- beamng_d3d12::MiddleTarget m{};
- const bool middle = middleWanted && beamng_d3d12::middleTarget(m) && beamng_d3d12::frameCount() - m.bindFrame < 45;
- ID3D12Resource* middleResource = middle ? reinterpret_cast<ID3D12Resource*>(uintptr_t(m.resource)) : nullptr;
- D3D12_RESOURCE_DESC md{};
- if(middleResource) ID3D12Resource_GetDesc(middleResource, &md);
+ // M8.55: each eye's own wide view; a view not drawn for 45 frames reads black.
+ beamng_d3d12::MiddleTarget m[2]{};
+ ID3D12Resource* middleResource[2]{};
+ D3D12_RESOURCE_DESC md[2]{};
+ for(int eye = 0; eye < 2; ++eye) {
+  if(middleWanted && beamng_d3d12::middleTarget(eye, m[eye]) && beamng_d3d12::frameCount() - m[eye].bindFrame < 45)
+   middleResource[eye] = reinterpret_cast<ID3D12Resource*>(uintptr_t(m[eye].resource));
+  if(middleResource[eye]) ID3D12Resource_GetDesc(middleResource[eye], &md[eye]);
+ }
 
  Slot* s = takeSlot();
  if(!s) { skipped.fetch_add(1);return false; }
@@ -329,7 +333,7 @@ bool compose(const EyeInput eyes[2], const uint64_t outputs[2], bool middleWante
  ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(srvHeap, &cpu);
  ID3D12DescriptorHeap_GetGPUDescriptorHandleForHeapStart(srvHeap, &gpu);
 
- float sharpMode[2]{}, middleMode = 0;
+ float sharpMode[2]{}, middleMode[2]{};
  for(int eye = 0; eye < 2; ++eye) {
   const DXGI_FORMAT sf = viewFormat(sharp[eye].desc.Format, outSrgb && isTypeless(sharp[eye].desc.Format));
   D3D12_SHADER_RESOURCE_VIEW_DESC v{};v.Format = sf;v.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
@@ -339,21 +343,25 @@ bool compose(const EyeInput eyes[2], const uint64_t outputs[2], bool middleWante
   // The game's eye images hold sRGB-encoded colours.
   sharpMode[eye] = conversion(true, isSrgb(sf), outSrgb);
   D3D12_SHADER_RESOURCE_VIEW_DESC mv = v;
-  ID3D12Resource* mr = middleResource;
+  ID3D12Resource* mr = middleResource[eye];
   if(mr) {
-   mv.Format = viewFormat(md.Format, outSrgb && isTypeless(md.Format));
-   // The middle view's final 8-bit image is sRGB-encoded like the eyes' (BeamNG's UNORM targets hold encoded bytes).
-   middleMode = conversion(true, isSrgb(mv.Format), outSrgb);
+   mv.Format = viewFormat(md[eye].Format, outSrgb && isTypeless(md[eye].Format));
+   // The wide view's final 8-bit image is sRGB-encoded like the eyes' (BeamNG's UNORM targets hold encoded bytes).
+   middleMode[eye] = conversion(true, isSrgb(mv.Format), outSrgb);
   } else mv.Format = DXGI_FORMAT_R8G8B8A8_UNORM; // Null descriptor: reads black.
   h.ptr += srvIncrement;
   ID3D12Device_CreateShaderResourceView(device, mr, &mv, h);
  }
 
- const auto middleState = D3D12_RESOURCE_STATES(m.state);
- const bool middleBarrier = middleResource && !(middleState & D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
- if(middleBarrier) {
-  const auto b = transition(middleResource, middleState, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-  ID3D12GraphicsCommandList_ResourceBarrier(s->list, 1, &b);
+ D3D12_RESOURCE_STATES middleState[2]{};
+ bool middleBarrier[2]{};
+ for(int eye = 0; eye < 2; ++eye) {
+  middleState[eye] = D3D12_RESOURCE_STATES(m[eye].state);
+  middleBarrier[eye] = middleResource[eye] && !(middleState[eye] & D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+  if(middleBarrier[eye]) {
+   const auto b = transition(middleResource[eye], middleState[eye], D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+   ID3D12GraphicsCommandList_ResourceBarrier(s->list, 1, &b);
+  }
  }
  ID3D12GraphicsCommandList_SetGraphicsRootSignature(s->list, rootSignature);
  ID3D12GraphicsCommandList_SetPipelineState(s->list, pipeline);
@@ -373,25 +381,26 @@ bool compose(const EyeInput eyes[2], const uint64_t outputs[2], bool middleWante
   const double sw = double(sharp[eye].desc.Width), sh = double(sharp[eye].desc.Height);
   c.rect[0] = float(eyes[eye].rectX / sw);c.rect[1] = float(eyes[eye].rectY / sh);
   c.rect[2] = float((eyes[eye].rectX + eyes[eye].rectWidth) / sw);c.rect[3] = float((eyes[eye].rectY + eyes[eye].rectHeight) / sh);
-  c.middle[3] = middleResource ? 1.f : 0.f;
-  c.flags[1] = sharpMode[eye];c.flags[2] = middleMode;
+  c.middle[3] = middleResource[eye] ? 1.f : 0.f;
+  c.flags[1] = sharpMode[eye];c.flags[2] = middleMode[eye];
   ID3D12GraphicsCommandList_SetGraphicsRoot32BitConstants(s->list, 0, 32, &c, 0);
   D3D12_GPU_DESCRIPTOR_HANDLE table = gpu;table.ptr += UINT64(base + eye * 2) * srvIncrement;
   ID3D12GraphicsCommandList_SetGraphicsRootDescriptorTable(s->list, 1, table);
   ID3D12GraphicsCommandList_DrawInstanced(s->list, 3, 1, 0, 0);
  }
- if(middleBarrier) {
-  const auto b = transition(middleResource, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, middleState);
-  ID3D12GraphicsCommandList_ResourceBarrier(s->list, 1, &b);
- }
+ for(int eye = 0; eye < 2; ++eye)
+  if(middleBarrier[eye]) {
+   const auto b = transition(middleResource[eye], D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, middleState[eye]);
+   ID3D12GraphicsCommandList_ResourceBarrier(s->list, 1, &b);
+  }
  submit(*s);
  const uint64_t n = composed.fetch_add(1) + 1;
  if(n == 1 || n % 5400 == 0) {
   char msg[320]{};
-  sprintf_s(msg, "M8.54 triple view composed=%llu skipped=%llu output %llux%u format %u, sharp %llux%u, middle %s (format %u state 0x%X)",
+  auto status = [&](int eye) { return middleResource[eye] ? "on" : middleWanted ? "not found yet" : "off"; };
+  sprintf_s(msg, "M8.55 quad views composed=%llu skipped=%llu output %llux%u format %u, focus %llux%u, wide L %s R %s (format %u state 0x%X)",
     (unsigned long long)n, (unsigned long long)skipped.load(), (unsigned long long)od.Width, od.Height, unsigned(outFormat),
-    (unsigned long long)sharp[0].desc.Width, sharp[0].desc.Height,
-    middleResource ? "on" : middleWanted ? "not found yet" : "off", unsigned(md.Format), m.state);
+    (unsigned long long)sharp[0].desc.Width, sharp[0].desc.Height, status(0), status(1), unsigned(md[0].Format), m[0].state);
   log(msg);
  }
  return true;
