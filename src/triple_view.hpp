@@ -32,10 +32,24 @@ struct Settings {
  double sharpHeight = 0.35; // and height
  double feather = 0.30;     // edge blend, share of the window radius
  double deadZone = 0.03;    // tangent units (~1.7 deg) the gaze moves before the window follows
- uint32_t middleWidth = 1280, middleHeight = 880; // left wide view; the right one is 2 rows taller
+ uint32_t middleWidth = 0, middleHeight = 0; // left wide view (0 = from wideScale); the right one is 2 rows taller
+ double wideScale = 0.25;   // wide view size as a share of the headset's per-eye resolution
  double middleFov = 0;      // horizontal field of view of the middle view, degrees (BeamNG's fov is
                             // horizontal); 0 = auto, from the headset (autoMiddleFov)
 };
+
+// WideResolution: unless both sizes are set, the wide views take wideScale of the
+// headset's recommended per-eye size (same aspect as the eye), kept within 256-4096
+// pixels and even. Without a headset size yet, 1280 x 880 as before.
+inline void resolveWideSize(Settings& s, uint32_t fullWidth, uint32_t fullHeight) {
+ if(s.middleWidth && s.middleHeight) return;
+ if(!fullWidth || !fullHeight) { s.middleWidth = 1280; s.middleHeight = 880; return; }
+ const auto size = [&](uint32_t full) {
+  const double v = std::min(4096.0, std::max(256.0, double(full) * s.wideScale));
+  return uint32_t(std::lround(v / 2.0) * 2);
+ };
+ s.middleWidth = size(fullWidth); s.middleHeight = size(fullHeight);
+}
 
 // A window of the given share of `full`, centred on (cx, cy) and slid back
 // inside `full` where it would cross an edge.

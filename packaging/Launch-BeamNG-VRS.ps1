@@ -242,8 +242,12 @@ local function onClientPostStartMission() present = {} end
         # M8.55 quad views: one wide, low-resolution view per eye. The OpenXR layer finds
         # their render targets by size (the right one is two rows taller) and composes each
         # around its eye's sharp focus view; without them the surround stays black.
-        $middleW = [int]$Middle.Width; $middleH = [int]$Middle.Height
-        # nil = auto: wait for the OpenXR layer's value in the settings folder.
+        # nil = auto: wait for the OpenXR layer's values in the settings folder. The size is
+        # fixed only when WideWidth and WideHeight are both set; otherwise the layer sizes
+        # the views from WideResolution and the headset.
+        $fixedSize = $null -ne $Middle.Width -and $null -ne $Middle.Height
+        $middleW = if ($fixedSize) { [string][int]$Middle.Width } else { 'nil' }
+        $middleH = if ($fixedSize) { [string][int]$Middle.Height } else { 'nil' }
         $middleFov = if ($null -eq $Middle.Fov) { 'nil' } else { ([double]$Middle.Fov).ToString('0.##', $invariant) }
         $wideDetail = if ($Middle.Detail) { [string]$Middle.Detail } else { 'medium' }
         $lua += @"
@@ -262,13 +266,17 @@ local heads = {}        -- head poses: [1] this frame, [2] one frame ago, [3] tw
 local lag, lagSamples, lagOffset = 1, 0, {0, 0, 0}
 local predict = core_camera ~= nil -- off if the check in wideFollow fails: plain copies then
 local predictChecked = false
--- WideFov=auto: the OpenXR layer writes "fov=N" once it knows the headset's field of view.
-local function wideAutoFov()
+-- The OpenXR layer writes "fov=N width=W height=H" once it knows the headset: the wide
+-- views' field of view (WideFov=auto) and size (WideResolution x the headset's eye size).
+local function wideAuto()
   local ok, text = pcall(readFile, wideFovFile)
-  if not ok or type(text) ~= 'string' then return nil end
-  local fov = tonumber(text:match('fov=([%d%.]+)'))
-  if fov and fov >= 30 and fov <= 150 then return fov end
-  return nil
+  if not ok or type(text) ~= 'string' then return {} end
+  local info = {fov = tonumber(text:match('fov=([%d%.]+)')), width = tonumber(text:match('width=(%d+)')),
+    height = tonumber(text:match('height=(%d+)'))}
+  if not (info.fov and info.fov >= 30 and info.fov <= 150) then info.fov = nil end
+  if not (info.width and info.width >= 256 and info.width <= 4096) then info.width = nil end
+  if not (info.height and info.height >= 256 and info.height <= 4096) then info.height = nil end
+  return info
 end
 local function wideSay(text) log('I', 'beamngVrs', 'BeamNG-VRS quad views: ' .. text) end
 local function try(fn) local ok, r = pcall(fn) if ok then return r end return nil end
@@ -455,8 +463,10 @@ local function wideQuality(view, name)
   else wideSay(name .. ' detail not set: ' .. tostring(err)) end
 end
 local function wideCreate(manager)
-  local fov = wideFov or wideAutoFov()
-  if not fov then return end -- auto: not written yet, retried in a second
+  local info = wideAuto()
+  local fov = wideFov or info.fov
+  wideW, wideH = wideW or info.width, wideH or info.height
+  if not (fov and wideW and wideH) then return end -- auto: not written yet, retried in a second
   -- Near and far follow the left eye when its frustum can be read (0.1 m and 4000 m in
   -- BeamNG 0.40). The driver's head is hidden by the render view mask set below, as in
   -- the eyes, so nothing needs clipping: a farther near plane cut the roof liner away.
@@ -623,7 +633,7 @@ M.onExtensionLoaded = registerMenus
         Write-Output "VR draw distance $distanceText m; its in-game app and radial menu are added through $mod"
     }
     if ($null -ne $Scale) { Write-Output "VR render scale $scaleText applied through $mod" }
-    if ($null -ne $Middle) { Write-Output "Quad views: wide views ${middleW}x${middleH} (FOV $(if ($null -eq $Middle.Fov) { 'auto' } else { $middleFov + ' deg' })) added through $mod" }
+    if ($null -ne $Middle) { Write-Output "Quad views: wide views $(if ($fixedSize) { "${middleW}x${middleH}" } else { 'sized from the headset' }) (FOV $(if ($null -eq $Middle.Fov) { 'auto' } else { $middleFov + ' deg' })) added through $mod" }
     Enable-VRModInDatabase -UserFolder $UserFolder
 }
 
@@ -801,6 +811,7 @@ function Test-BeamNGIni {
         'quadviews.focusheight' = @(0.1, 1, $false)
         'quadviews.feather' = @(0, 0.5, $false)
         'quadviews.gazedeadzone' = @(0, 10, $false)
+        'quadviews.wideresolution' = @(0.1, 1, $false)
         'quadviews.widewidth' = @(256, 4096, $true)
         'quadviews.wideheight' = @(256, 4096, $true)
     }
@@ -893,7 +904,7 @@ try {
     $script:VRDrawDistance = [double]4000
     $script:GhostingFix = $false
     $script:VRMode = 'vrs'
-    $script:Middle = @{ Width = 1280; Height = 880; Fov = $null; Detail = 'medium' }
+    $script:Middle = @{ Width = $null; Height = $null; Fov = $null; Detail = 'medium' }
     if (-not (Test-Path -LiteralPath $iniPath -PathType Leaf)) {
         throw 'BeamNG-VRS.ini not found beside Launch-BeamNG-VRS.cmd. Extract the entire ZIP; when upgrading, move your saved INI beside the CMD.'
     }

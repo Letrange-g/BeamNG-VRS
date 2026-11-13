@@ -19,7 +19,8 @@ everything around it cheaply:
   stays in the centre. Because it covers only part of the field of view, it gets the
   game's full pixel density at a fraction of the pixel count.
 - **Wide view (cheap):** each eye also gets one wide view that covers its whole field of
-  view at low resolution (1280 x 880 by default) and lower detail. Live reflections,
+  view at low resolution (a quarter of your headset's per-eye width and height by
+  default, `WideResolution=0.25`) and lower detail. Live reflections,
   mirrors, half the shadow resolution, model detail and grass, and small meshes are
   cut there, because you can't see them in the corner of your eye.
 - **The blend:** BeamNG-VRS's OpenXR layer places each eye's focus view over its wide

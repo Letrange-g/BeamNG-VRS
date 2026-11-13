@@ -17,7 +17,8 @@ BeamNG-VRS 0.4.3 — portable Windows x64, for BeamNG.drive 0.40.
   Utah (8.5-9 ms in the default `vrs` mode) and 7.5-9.5 ms on Jungle Rock Island
   (about 10-11 ms in earlier `vrs` runs), at a similar CPU time.
   `[QuadViews]` sets the focus size and edge, gaze following, the wide views'
-  resolution, field of view (`WideFov=auto` fits your headset) and detail
+  resolution (`WideResolution`, a share of your headset's per-eye resolution,
+  default 0.25), field of view (`WideFov=auto` fits your headset) and detail
   (`WideDetail=full`, `medium` (default) or `low`; medium turns off live
   reflections and mirrors there and halves shadows, model detail and grass).
   `Mode=quad-black` shows the focus views alone for comparison. Only tested on
