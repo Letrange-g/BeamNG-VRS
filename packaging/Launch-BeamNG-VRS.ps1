@@ -419,28 +419,39 @@ local function wideFollow(manager, dt)
 end
 -- WideDetail: the wide views draw the game's own settings scaled down (medium, low) or as
 -- they are (full), the way the game's split screen does it (render/splitScreen.lua). Each
--- view repeats the game's draw calls, so fewer meshes and less grass save CPU time; the
--- blurry periphery hides the difference. Mirrors stay on: they show in the periphery.
-local wideDetailScale = {full = nil, medium = {mesh = 0.5, grass = 0.5, cull = 2}, low = {mesh = 0.25, grass = 0, cull = 4}}
+-- view repeats the game's work, so less model detail, grass, small meshes, shadow map
+-- resolution and no live reflections save time; the blurry periphery hides the difference.
+-- Low also turns off the mirrors there (the focus view still shows them when you look).
+local wideDetailScale = {
+  full = nil,
+  medium = {mesh = 0.5, grass = 0.5, cull = 2, shadow = 0.5, mirrors = true},
+  low = {mesh = 0.25, grass = 0, cull = 4, shadow = 0.25, mirrors = false},
+}
 local function wideQuality(view, name)
   local scale = wideDetailScale[wideDetail]
   if not scale then return end
+  local skipped = {}
   local ok, err = pcall(function()
     local s = RenderSettings.getGlobals()
-    s.meshDetailAdjust = s.meshDetailAdjust * scale.mesh
-    s.groundCoverScale = s.groundCoverScale * scale.grass
+    -- Each field on its own, so one a game version lacks does not stop the others.
+    local function set(field, fn)
+      if not pcall(function() local v = s[field] if v == nil then error('missing') end s[field] = fn(v) end) then
+        skipped[#skipped + 1] = field
+      end
+    end
+    set('meshDetailAdjust', function(v) return v * scale.mesh end)
+    set('groundCoverScale', function(v) return v * scale.grass end)
     -- Meshes smaller than this many pixels are skipped. The wide views have about a
     -- quarter of the eyes' pixels per degree, so the game's value already culls more
     -- there; this culls more again.
-    pcall(function()
-      local px = s.meshSmallestPixelSize
-      if type(px) == 'number' and px > 0 then s.meshSmallestPixelSize = px * scale.cull end
-    end)
-    if wideDetail == 'low' then s.vehicleDynamicReflectionsEnabled = false end
+    set('meshSmallestPixelSize', function(v) if v > 0 then return v * scale.cull end return v end)
+    set('shadowTexScalar', function(v) return v * scale.shadow end)
+    set('vehicleDynamicReflectionsEnabled', function() return false end)
+    if not scale.mirrors then set('vehicleMirrorsEnabled', function() return false end) end
     view.settingsOverride = s -- returned by value: the whole struct is written back
     view.settingsOverrideEnabled = true
   end)
-  if ok then wideSay(name .. ' detail ' .. wideDetail)
+  if ok then wideSay(name .. ' detail ' .. wideDetail .. (#skipped > 0 and (' (not available: ' .. table.concat(skipped, ', ') .. ')') or ''))
   else wideSay(name .. ' detail not set: ' .. tostring(err)) end
 end
 local function wideCreate(manager)
