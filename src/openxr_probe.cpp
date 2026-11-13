@@ -527,6 +527,31 @@ bool tripleCompose(const Dispatch& d,XrSession session,const XrCompositionLayerP
  return true;
 }
 }
+// M8.56 pose timeline (quad views): which head poses the game asks for and when, over
+// 90 frames from the 1800th xrWaitFrame. The wide views take the head pose BeamNG's Lua
+// gets while it updates the camera; if the engine asks the runtime again just before it
+// renders the eyes, the two differ while the head turns and the views slip apart.
+std::atomic<uint64_t> poseTraceWaits{0};
+bool poseTraceOn(){const uint64_t n=poseTraceWaits.load(std::memory_order_relaxed);return tripleActive&&n>=1800&&n<1890;}
+void poseTrace(const char* what,XrTime time,const XrPosef* pose,const void* a=nullptr,const void* b=nullptr){
+ if(!poseTraceOn())return;
+ LARGE_INTEGER now{},freq{};QueryPerformanceCounter(&now);QueryPerformanceFrequency(&freq);
+ char msg[300]{};
+ if(pose)sprintf_s(msg,sizeof(msg),"M8.56 f=%llu t=%.3f ms %s display=%lld q=(%.4f,%.4f,%.4f,%.4f) p=(%.4f,%.4f,%.4f) %p %p",
+   (unsigned long long)poseTraceWaits.load(),double(now.QuadPart)*1000.0/double(freq.QuadPart),what,(long long)time,
+   pose->orientation.x,pose->orientation.y,pose->orientation.z,pose->orientation.w,pose->position.x,pose->position.y,pose->position.z,a,b);
+ else sprintf_s(msg,sizeof(msg),"M8.56 f=%llu t=%.3f ms %s display=%lld",(unsigned long long)poseTraceWaits.load(),
+   double(now.QuadPart)*1000.0/double(freq.QuadPart),what,(long long)time);
+ logLine(msg);
+}
+extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeLocateSpace(XrSpace space,XrSpace baseSpace,XrTime time,XrSpaceLocation* location){
+ Dispatch d{};
+ {std::lock_guard<std::mutex> g(stateMutex);if(!instances.empty())d=instances.begin()->second;}
+ if(!d.locateSpace)return XR_ERROR_FUNCTION_UNSUPPORTED;
+ const XrResult r=d.locateSpace(space,baseSpace,time,location);
+ if(XR_SUCCEEDED(r)&&location&&poseTraceOn())poseTrace("locateSpace",time,&location->pose,(void*)space,(void*)baseSpace);
+ return r;
+}
 extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeBeginSession(XrSession session,const XrSessionBeginInfo* info){
  auto c=frameContext(session);if(!c.dispatch.beginSession)return XR_ERROR_FUNCTION_UNSUPPORTED;
  const auto result=c.dispatch.beginSession(session,info);
@@ -553,6 +578,7 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeDestroySession(XrSession session)
 }
 extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeBeginFrame(XrSession session,const XrFrameBeginInfo* info){
  auto c=frameContext(session);if(!c.dispatch.beginFrame)return XR_ERROR_FUNCTION_UNSUPPORTED;
+ poseTrace("beginFrame",0,nullptr);
  return c.turbo?c.turbo->begin(info):c.dispatch.beginFrame(session,info);
 }
 extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeDestroySwapchain(XrSwapchain swapchain){
@@ -679,6 +705,11 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeEndFrame(XrSession session,const 
  Dispatch d{};
  {std::lock_guard<std::mutex> g(stateMutex);auto s=sessions.find(session);if(s!=sessions.end()){auto i=instances.find(s->second.instance);if(i!=instances.end())d=i->second;}}
  if(!d.endFrame)return XR_ERROR_FUNCTION_UNSUPPORTED;
+ if(info&&poseTraceOn())for(uint32_t li=0;li<info->layerCount;++li){
+  const auto* l=reinterpret_cast<const XrCompositionLayerProjection*>(info->layers[li]);
+  if(l&&l->type==XR_TYPE_COMPOSITION_LAYER_PROJECTION&&l->viewCount>=1&&l->views)
+   poseTrace("endFrame L",info->displayTime,&l->views[0].pose,(void*)l->space);
+ }
  static unsigned reported=0;
  if(info && reported<64){
   for(uint32_t li=0;li<info->layerCount && reported<64;++li){
@@ -1045,6 +1076,7 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeWaitFrame(XrSession session,const
  LARGE_INTEGER waitStart{},waitEnd{},freq{};QueryPerformanceCounter(&waitStart);
  XrResult r=c.turbo?c.turbo->wait(info,state):d.waitFrame(session,info,state);
  QueryPerformanceCounter(&waitEnd);QueryPerformanceFrequency(&freq);
+ if(XR_SUCCEEDED(r)&&tripleActive){poseTraceWaits.fetch_add(1,std::memory_order_relaxed);if(state)poseTrace("waitFrame",state->predictedDisplayTime,nullptr);}
  // M8.52: how long the runtime held the game here, for the M8.47 frame-pacing verdict.
  if(XR_SUCCEEDED(r))beamng_d3d12::frameWaited(double(waitEnd.QuadPart-waitStart.QuadPart)*1000.0/double(freq.QuadPart),
    state&&state->predictedDisplayPeriod>0?double(state->predictedDisplayPeriod)/1e6:0.0);
@@ -1135,6 +1167,7 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeLocateViews(XrSession session,con
   crop=m844Active&&session==m844Session;margins=m844Margins;}
  if(!d.locateViews)return XR_ERROR_FUNCTION_UNSUPPORTED;
  XrResult r=d.locateViews(session,info,state,capacity,count,views);
+ if(XR_SUCCEEDED(r)&&info&&views&&count&&*count>=1&&capacity>=1&&poseTraceOn())poseTrace("locateViews L",info->displayTime,&views[0].pose,(void*)info->space);
  // Everything below, the gaze projection included, then sees the kept views.
  if(crop&&XR_SUCCEEDED(r)&&info&&info->viewConfigurationType==XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO&&views&&count&&*count>=2&&capacity>=2){
   for(int i=0;i<2;++i)m844CropFov(views[i].fov,margins[i]);
@@ -1274,6 +1307,7 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeGetInstanceProcAddr(XrInstance in
  if(!strcmp(name,"xrAttachSessionActionSets")){*function=reinterpret_cast<PFN_xrVoidFunction>(probeAttachSessionActionSets);return XR_SUCCESS;}
  if(!strcmp(name,"xrSyncActions")){*function=reinterpret_cast<PFN_xrVoidFunction>(probeSyncActions);return XR_SUCCESS;}
  if(!strcmp(name,"xrLocateViews")){*function=reinterpret_cast<PFN_xrVoidFunction>(probeLocateViews);return XR_SUCCESS;}
+ if(!strcmp(name,"xrLocateSpace")){if(!d.locateSpace)return d.next(instance,name,function);*function=reinterpret_cast<PFN_xrVoidFunction>(probeLocateSpace);return XR_SUCCESS;}
  if(!strcmp(name,"xrEnumerateViewConfigurationViews")){if(!d.enumerateViews)return d.next(instance,name,function);*function=reinterpret_cast<PFN_xrVoidFunction>(probeEnumerateViewConfigurationViews);return XR_SUCCESS;}
  if(!strcmp(name,"xrBeginFrame")){if(!d.beginFrame)return d.next(instance,name,function);*function=reinterpret_cast<PFN_xrVoidFunction>(probeBeginFrame);return XR_SUCCESS;}
  if(!strcmp(name,"xrBeginSession")){if(!d.beginSession)return d.next(instance,name,function);*function=reinterpret_cast<PFN_xrVoidFunction>(probeBeginSession);return XR_SUCCESS;}

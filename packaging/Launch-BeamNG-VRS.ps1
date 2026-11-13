@@ -337,8 +337,13 @@ local function wideDiag(manager, dt)
   diagTime = diagTime + (dt or 0)
   if diagTime < diagNext then return end
   diagNext = diagTime + (diagTime < 30 and 3 or 30)
-  wideSay(string.format('diag t=%.0f pose lag=%d predict=%s eye offset mm at lag 0/1/2=%.1f/%.1f/%.1f samples above 8 m/s=%d | %s | %s | %s | %s',
-    diagTime, lag, tostring(predict), lagOffset[1] * 1000, lagOffset[2] * 1000, lagOffset[3] * 1000, lagSamples,
+  local function learned(i)
+    local f = eyeFixed and eyeFixed[i]
+    if not f then return 'not yet' end
+    return string.format('(%.1f,%.1f,%.1f)', f.pos[1] * 1000, f.pos[2] * 1000, f.pos[3] * 1000)
+  end
+  wideSay(string.format('diag t=%.0f pose lag=%d predict=%s eye offset mm at lag 0/1/2=%.1f/%.1f/%.1f samples above 8 m/s=%d learned eye offsets mm L=%s R=%s | %s | %s | %s | %s',
+    diagTime, lag, tostring(predict), lagOffset[1] * 1000, lagOffset[2] * 1000, lagOffset[3] * 1000, lagSamples, learned(1), learned(2),
     describe('eye0', try(function() return manager:getView('oxrView0') end)),
     describe('eye1', try(function() return manager:getView('oxrView1') end)),
     describe('wide0', wide[1]), describe('wide1', wide[2])))
@@ -432,6 +437,7 @@ end
 -- the learned one: from frames where the head is still (any lag gives the same answer),
 -- and from moving frames only when they agree with it within 5 mm.
 local eyeFixed = {}
+local stillFrames = 0
 local function normalize(v)
   local n = math.sqrt(dot(v, v))
   if n < 1e-9 then return v end
@@ -443,9 +449,13 @@ local function headStill(a, b)
   return dot(d, d) < 0.005 ^ 2 and dot(a.f, b.f) > 0.999994 and dot(a.r, b.r) > 0.999994
 end
 local function learnEye(i, e, still)
+  -- An eye sits a few cm from the head; anything farther is a stale matrix (loading,
+  -- a camera jump), never an offset to keep.
+  if dot(e.pos, e.pos) > 0.12 ^ 2 then return end
   local f = eyeFixed[i]
   if not f then
-    if still then eyeFixed[i] = {pos = e.pos, [0] = e[0], e[1], e[2]} end
+    -- The first value only after half a second of a still head.
+    if still and stillFrames >= 45 then eyeFixed[i] = {pos = e.pos, [0] = e[0], e[1], e[2]} end
     return
   end
   local d = {e.pos[1] - f.pos[1], e.pos[2] - f.pos[2], e.pos[3] - f.pos[3]}
@@ -481,6 +491,7 @@ local function wideFollow(manager, dt)
     end
     if predict then
       local still = headStill(heads[1], heads[2]) and headStill(heads[2], heads[3])
+      stillFrames = still and stillFrames + 1 or 0
       for i = 1, #source do
         local e = eyeLocal(then_, source[i])
         learnEye(i, e, still)
@@ -630,7 +641,7 @@ local function widePreRender(dtReal)
     if not ok and not wideFollowFailed then wideFollowFailed = true wideSay('pose update failed: ' .. tostring(err)) end
   end
 end
-local function wideMission() wide = {} wideWait = 0 heads = {} eyeFixed = {} end
+local function wideMission() wide = {} wideWait = 0 heads = {} eyeFixed = {} stillFrames = 0 end
 local function wideUnload() wideDestroy(RenderViewManagerInstance) end
 
 "@
