@@ -421,10 +421,10 @@ end
 -- they are (full), the way the game's split screen does it (render/splitScreen.lua). Each
 -- view repeats the game's work, so less model detail, grass, small meshes, shadow map
 -- resolution and no live reflections save time; the blurry periphery hides the difference.
--- Low also turns off the mirrors there (the focus view still shows them when you look).
+-- Mirrors are off there too (the focus view still shows them when you look).
 local wideDetailScale = {
   full = nil,
-  medium = {mesh = 0.5, grass = 0.5, cull = 2, shadow = 0.5, mirrors = true},
+  medium = {mesh = 0.5, grass = 0.5, cull = 2, shadow = 0.5, mirrors = false},
   low = {mesh = 0.25, grass = 0, cull = 4, shadow = 0.25, mirrors = false},
 }
 local function wideQuality(view, name)
