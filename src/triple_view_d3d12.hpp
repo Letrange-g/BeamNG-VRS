@@ -20,6 +20,7 @@ struct EyeInput {
  int32_t rectX = 0, rectY = 0, rectWidth = 0, rectHeight = 0; // sharp window in the game's image
 };
 // outputs: this layer's swapchain images (ID3D12Resource*, RENDER_TARGET state).
-// middle: compose the middle view (false: black around the sharp window).
-bool compose(const EyeInput eyes[2], const uint64_t outputs[2], bool middle);
+// middle: compose the wide views (false: black around the sharp window).
+// shared: triple view, both eyes use wide view 0 (M8.54); otherwise one per eye (M8.55).
+bool compose(const EyeInput eyes[2], const uint64_t outputs[2], bool middle, bool shared);
 }

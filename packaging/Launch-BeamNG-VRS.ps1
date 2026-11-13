@@ -224,9 +224,13 @@ local function onClientPostStartMission() present = {} end
         $middleW = [int]$Middle.Width; $middleH = [int]$Middle.Height
         # nil = auto: wait for the OpenXR layer's value in the settings folder.
         $middleFov = if ($null -eq $Middle.Fov) { 'nil' } else { ([double]$Middle.Fov).ToString('0.##', $invariant) }
+        # Triple view: one wide view between the eyes, shared by both (cheaper, flat periphery).
+        $wideShared = if ($Middle.Shared) { 'true' } else { 'false' }
         $lua += @"
 -- M8.55 quad views: wide views.
 local wideW, wideH, wideFov = $middleW, $middleH, $middleFov
+local wideShared = $wideShared -- triple view: one view (index 1) between the eyes
+local wideCount = wideShared and 1 or 2
 local wideFovFile = '/settings/beamng_vrs_middle_fov.txt'
 local wide = {}       -- [1] left eye, [2] right eye
 local wideWait = 0
@@ -272,11 +276,21 @@ local function wideDiag(manager, dt)
     describe('wide0', wide[1]), describe('wide1', wide[2])))
 end
 -- Each wide view takes its eye's camera as it is: same position, same orientation.
+-- Triple view: the left eye's camera moved halfway to the right eye.
 local function wideFollow(manager)
-  for i = 1, 2 do
+  for i = 1, wideCount do
     local view = wide[i]
     if view then
-      local ok = pcall(function() view.cameraMatrix = manager:getView('oxrView' .. (i - 1)).cameraMatrix end)
+      local ok = pcall(function()
+        if wideShared then
+          local m = manager:getView('oxrView0').cameraMatrix
+          local a, b = m:getPosition(), manager:getView('oxrView1').cameraMatrix:getPosition()
+          m:setPosition(Point3F((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2))
+          view.cameraMatrix = m
+        else
+          view.cameraMatrix = manager:getView('oxrView' .. (i - 1)).cameraMatrix
+        end
+      end)
       if not ok then wide[i] = nil end
     end
   end
@@ -292,7 +306,7 @@ local function wideCreate(manager)
     local x = manager:getView('oxrView0').frustum:getFarDist()
     if type(x) == 'number' and x > near then far = x end
   end)
-  for i = 1, 2 do
+  for i = 1, wideCount do
     if not wide[i] then
       local name = 'beamngVrsWide' .. (i - 1)
       local h = wideH + (i - 1) * 2
@@ -336,7 +350,7 @@ local function wideUpdate(dtReal)
     wideWait = 0
     return
   end
-  if not wide[1] or not wide[2] then
+  if not wide[1] or (wideCount == 2 and not wide[2]) then
     wideWait = wideWait + (dtReal or 0)
     if wideWait >= 1 then wideWait = 0 wideCreate(manager) end
     return
@@ -674,9 +688,10 @@ function Test-BeamNGIni {
                 # the M8.54 names triple and triple-black still work.
                 $mode = ($value.ToLowerInvariant() -replace '[\s_-]', '')
                 if (@('vrs') -ccontains $mode) { $script:VRMode = 'vrs' }
-                elseif (@('quad', 'quadview', 'quadviews', 'triple', 'tripleview') -ccontains $mode) { $script:VRMode = 'quad' }
+                elseif (@('quad', 'quadview', 'quadviews') -ccontains $mode) { $script:VRMode = 'quad' }
+                elseif (@('triple', 'tripleview') -ccontains $mode) { $script:VRMode = 'triple' }
                 elseif (@('quadblack', 'quadviewblack', 'quadviewsblack', 'tripleblack', 'tripleviewblack') -ccontains $mode) { $script:VRMode = 'quad-black' }
-                else { throw 'invalid VR mode (use vrs, quad or quad-black)' }
+                else { throw 'invalid VR mode (use vrs, quad, triple or quad-black)' }
             } elseif ($id -eq 'quadviews.widefov') {
                 # auto (default): the OpenXR layer sizes it from the headset at VR start.
                 $script:Middle.Fov = if ($value -ieq 'auto') { $null } else { Assert-IniNumber -Value $value -Low 30 -High 150 -Integer $false }
@@ -820,7 +835,7 @@ try {
     $start.EnvironmentVariables['BEAMNG_VRS_TRIPLE_FOV_FILE'] = $middleFovFile
     Update-VRMod -UserFolder $UserFolder -Scale $(if ($script:Renderer -eq 'd3d12') { $script:RenderScale } else { $null }) `
         -Distance $startDistance -IniDistance $script:VRDrawDistance `
-        -Middle $(if ($script:Renderer -eq 'd3d12' -and $script:VRMode -eq 'quad') { $script:Middle } else { $null })
+        -Middle $(if ($script:Renderer -eq 'd3d12' -and @('quad', 'triple') -contains $script:VRMode) { $script:Middle.Shared = $script:VRMode -eq 'triple'; $script:Middle } else { $null })
     if ($script:VRMode -ne 'vrs' -and $script:Renderer -ne 'd3d12') {
         Write-Warning "[VR] Mode=$($script:VRMode) needs [Renderer] API=d3d12; VRS is used instead."
     } elseif ($script:VRMode -ne 'vrs') {

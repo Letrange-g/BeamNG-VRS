@@ -424,6 +424,7 @@ beamng_triple::Settings tripleConfig(){
    (!beamng_config::read("BEAMNG_VRS_RENDERER",renderer,sizeof(renderer)) || !strcmp(renderer,"d3d12"));
  char v[16]{};
  t.middle=!beamng_config::read("BEAMNG_VRS_TRIPLE_MIDDLE",v,sizeof(v)) || strcmp(v,"0")!=0;
+ t.shared=beamng_config::read("BEAMNG_VRS_TRIPLE_SHARED",v,sizeof(v)) && strcmp(v,"1")==0;
  t.gaze=!beamng_config::read("BEAMNG_VRS_TRIPLE_GAZE",v,sizeof(v)) || strcmp(v,"0")!=0;
  t.roundShape=!beamng_config::read("BEAMNG_VRS_TRIPLE_SHAPE",v,sizeof(v)) || _stricmp(v,"rectangle")!=0;
  t.sharpWidth=tripleNumber("BEAMNG_VRS_TRIPLE_SHARP_WIDTH",t.sharpWidth,0.1,1);
@@ -492,9 +493,10 @@ bool tripleCompose(const Dispatch& d,XrSession session,const XrCompositionLayerP
    const auto& v=projection.views[eye];auto& c=in[eye].constants;
    // M8.55: each eye's wide view sits at that eye and faces its way (the Lua mod copies
    // the eye's camera); the right one is two rows taller, which tells them apart.
-   auto wideSet=set;if(eye==1)wideSet.middleHeight+=2;
+   // Triple view (shared): one view between the eyes, facing the left eye's way.
+   auto wideSet=set;if(eye==1&&!set.shared)wideSet.middleHeight+=2;
    double halfX=1,halfY=1;beamng_triple::middleHalf(wideSet,halfX,halfY);
-   const auto& middlePose=v.pose.orientation;
+   const auto& middlePose=set.shared?projection.views[0].pose.orientation:v.pose.orientation;
    const auto o=tangents(full[eye]),w=tangents(v.fov);
    c.out[0]=float(o.left);c.out[1]=float(o.right);c.out[2]=float(o.up);c.out[3]=float(o.down);
    c.win[0]=float(w.left);c.win[1]=float(w.right);c.win[2]=float(w.up);c.win[3]=float(w.down);
@@ -508,7 +510,7 @@ bool tripleCompose(const Dispatch& d,XrSession session,const XrCompositionLayerP
    in[eye].rectWidth=v.subImage.imageRect.extent.width;in[eye].rectHeight=v.subImage.imageRect.extent.height;
   }
   const uint64_t outputs[2]{tripleOut[0].images[index[0]],tripleOut[1].images[index[1]]};
-  ok=beamng_triple_d3d12::compose(in,outputs,set.middle);
+  ok=beamng_triple_d3d12::compose(in,outputs,set.middle,set.shared);
  }
  for(int eye=0;eye<2;++eye)if(acquired[eye])d.releaseSwapchainImage(tripleOut[eye].swapchain,nullptr);
  if(!ok)return false;
@@ -892,7 +894,7 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateSession(XrInstance inst,con
        tripleFullValid=false;tripleOutFailed=false;}
       tripleActive=true;
       double hx=1,hy=1;beamng_triple::middleHalf(t,hx,hy);
-      char m[300]{};sprintf_s(m,sizeof(m),"M8.55 quad views active: focus %.0f%%x%.0f%% gaze=%d shape=%s middle=%s",
+      char m[300]{};sprintf_s(m,sizeof(m),"M8.55 %s active: focus %.0f%%x%.0f%% gaze=%d shape=%s wide=%s",t.shared?"triple view":"quad views",
         100*t.sharpWidth,100*t.sharpHeight,int(t.gaze),t.roundShape?"circle":"rectangle",
         t.middle?"on":"off (black)");
       logLine(m);
@@ -1156,7 +1158,12 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeLocateViews(XrSession session,con
    // full field of view; one value for both. Rounded as written for the Lua side.
    if(!tripleFovResolved && tset.middle){
     double fov=0;
-    for(int i=0;i<2;++i){
+    if(tset.shared){ // triple: one view facing the left eye's way covers both eyes
+     const beamng_triple::Tangents t2[2]{tangents(full[0]),tangents(full[1])};
+     beamng_triple::Quat q[2];
+     for(int i=0;i<2;++i){const auto& o=views[i].pose.orientation;q[i]={o.x,o.y,o.z,o.w};}
+     fov=beamng_triple::autoMiddleFov(t2,q,q[0],tset.middleWidth,tset.middleHeight);
+    }else for(int i=0;i<2;++i){
      const beamng_triple::Tangents t2[2]{tangents(full[i]),tangents(full[i])};
      const auto& o=views[i].pose.orientation;const beamng_triple::Quat q[2]{{o.x,o.y,o.z,o.w},{o.x,o.y,o.z,o.w}};
      fov=std::max(fov,beamng_triple::autoMiddleFov(t2,q,q[0],tset.middleWidth,tset.middleHeight+uint32_t(i)*2));

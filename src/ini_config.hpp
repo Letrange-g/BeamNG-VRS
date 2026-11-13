@@ -103,6 +103,7 @@ inline Values defaults() {
  // M8.55 quad views (off by default; see triple_view.hpp). The names keep M8.54's "triple".
  out["BEAMNG_VRS_TRIPLE_VIEW"] = "0";
  out["BEAMNG_VRS_TRIPLE_MIDDLE"] = "1";
+ out["BEAMNG_VRS_TRIPLE_SHARED"] = "0";
  out["BEAMNG_VRS_TRIPLE_GAZE"] = "1";
  out["BEAMNG_VRS_TRIPLE_SHAPE"] = "circle";
  out["BEAMNG_VRS_TRIPLE_SHARP_WIDTH"] = "0.40";
@@ -170,15 +171,18 @@ inline void setting(Values& out, const std::string& section, const std::string& 
  // M8.55 quad views: a gaze-following sharp focus view per eye plus one wide, low-resolution
  // view per eye (created by the launcher's Lua mod), composed by the OpenXR layer.
  // [VR] Mode picks the rendering mode: vrs (foveated shading, the default), quad (focus +
- // wide views) or quad-black (focus views in a black void, no wide views). Spaces, '-'
+ // one wide view per eye), triple (focus + one wide view between the eyes, cheaper, no
+ // stereo in the periphery) or quad-black (focus views in a black void, no wide views). Spaces, '-'
  // and '_' are ignored ("quad views" works); the M8.54 names triple/triple-black still work.
  else if(id == "vr.mode") {
   std::string m;
   for(char c : lower(value)) if(c != ' ' && c != '-' && c != '_' && c != '\t') m += c;
+  out["BEAMNG_VRS_TRIPLE_SHARED"] = "0";
   if(m == "vrs") out["BEAMNG_VRS_TRIPLE_VIEW"] = "0";
-  else if(m == "quad" || m == "quadview" || m == "quadviews" || m == "triple" || m == "tripleview") { out["BEAMNG_VRS_TRIPLE_VIEW"] = "1"; out["BEAMNG_VRS_TRIPLE_MIDDLE"] = "1"; }
+  else if(m == "quad" || m == "quadview" || m == "quadviews") { out["BEAMNG_VRS_TRIPLE_VIEW"] = "1"; out["BEAMNG_VRS_TRIPLE_MIDDLE"] = "1"; }
+  else if(m == "triple" || m == "tripleview") { out["BEAMNG_VRS_TRIPLE_VIEW"] = "1"; out["BEAMNG_VRS_TRIPLE_MIDDLE"] = "1"; out["BEAMNG_VRS_TRIPLE_SHARED"] = "1"; }
   else if(m == "quadblack" || m == "quadviewblack" || m == "quadviewsblack" || m == "tripleblack" || m == "tripleviewblack") { out["BEAMNG_VRS_TRIPLE_VIEW"] = "1"; out["BEAMNG_VRS_TRIPLE_MIDDLE"] = "0"; }
-  else throw std::runtime_error("invalid VR mode (use vrs, quad or quad-black)");
+  else throw std::runtime_error("invalid VR mode (use vrs, quad, triple or quad-black)");
  }
  else if(id == "quadviews.followgaze") out["BEAMNG_VRS_TRIPLE_GAZE"] = boolean(value);
  else if(id == "quadviews.shape") out["BEAMNG_VRS_TRIPLE_SHAPE"] = choice(value, {"circle", "rectangle"});
