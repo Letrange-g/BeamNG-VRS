@@ -13,6 +13,12 @@ BeamNG-VRS 0.4.4 — portable Windows x64, for BeamNG.drive 0.40.
   for a frame or two. The layer now keeps the target it found and moves to
   another only when the old one is no longer drawn or the new one has been last
   for 30 frames. The layer log notes each move and any black stretch.
+- **Fix: the wide views swam when you turned your head.** BeamNG's camera
+  (which the wide views follow) reads the head pose early in each frame, and the
+  engine asks the headset again about 5 ms later for the eyes, so while your
+  head turned the two disagreed and the wide views moved around the world. The
+  eyes now use the same head pose as the camera, so focus and wide views move
+  together. The layer log reports how much was corrected (`M8.57`).
 - **Fix: a wide view could slip against the focus view for a moment.** The
   wide views' eye offset is now learned while your head is still and then kept,
   so uneven frame timing no longer shifts it.

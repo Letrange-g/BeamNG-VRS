@@ -25,6 +25,7 @@
 #include <atomic>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <array>
 #include <utility>
@@ -348,7 +349,7 @@ int m817MessageLevel(const char* msg){
     strstr(msg,"M8.31 TURBO") || strstr(msg,"Next xrCreateApiLayerInstance") || strstr(msg,"Opt-in:") ||
     // D3D12 setup and first-use lines are flushed at once, so a crash right after still leaves them.
     strstr(msg,"M8.40 graphics") || strstr(msg,"hooks=") || strstr(msg,"foveation active") ||
-    strstr(msg,"M8.42 shading-rate image") || strstr(msg,"foveation frames") || strstr(msg,"M8.43") || strstr(msg,"M8.44") || strstr(msg,"M8.47") || strstr(msg,"M8.50") || strstr(msg,"M8.51") || strstr(msg,"M8.54") || strstr(msg,"M8.55") || strstr(msg,"M8.56"))return 1;
+    strstr(msg,"M8.42 shading-rate image") || strstr(msg,"foveation frames") || strstr(msg,"M8.43") || strstr(msg,"M8.44") || strstr(msg,"M8.47") || strstr(msg,"M8.50") || strstr(msg,"M8.51") || strstr(msg,"M8.54") || strstr(msg,"M8.55") || strstr(msg,"M8.56") || strstr(msg,"M8.57"))return 1;
  return 2;
 }
 void logLine(const char* msg) {
@@ -527,6 +528,38 @@ bool tripleCompose(const Dispatch& d,XrSession session,const XrCompositionLayerP
  return true;
 }
 }
+// M8.57 quad views: one head pose for the focus and wide views. BeamNG's Lua camera (and
+// so the wide views) takes the head pose the game locates early in the frame (the first
+// xrLocateSpace of a VIEW space for that display time); the engine then calls
+// xrLocateViews about 5 ms later and the runtime's newer prediction moves the eyes. While
+// the head turns the two differ (M8.56 timeline: about 0.4 deg at 100 deg/s, more when
+// frames run late), so the wide views swam around the world while the focus views held
+// still. The eyes are now built from that first head pose too: each eye keeps its offset
+// from the runtime's head but follows the camera's head pose, and the game submits what
+// it rendered, so the runtime still reprojects correctly.
+std::mutex headMutex;
+std::unordered_set<uint64_t> viewSpaces;
+struct HeadSample { XrSpace space=XR_NULL_HANDLE,base=XR_NULL_HANDLE; XrTime time=0; XrPosef pose{}; bool valid=false; };
+HeadSample firstHead;
+std::atomic<uint64_t> headAligned{0};
+XrQuaternionf qMul(const XrQuaternionf& a,const XrQuaternionf& b){
+ return {a.w*b.x+a.x*b.w+a.y*b.z-a.z*b.y,a.w*b.y-a.x*b.z+a.y*b.w+a.z*b.x,a.w*b.z+a.x*b.y-a.y*b.x+a.z*b.w,a.w*b.w-a.x*b.x-a.y*b.y-a.z*b.z};
+}
+XrQuaternionf qConj(const XrQuaternionf& q){return {-q.x,-q.y,-q.z,q.w};}
+XrVector3f qRotate(const XrQuaternionf& q,const XrVector3f& v){
+ const XrQuaternionf p{v.x,v.y,v.z,0};const XrQuaternionf r=qMul(qMul(q,p),qConj(q));return {r.x,r.y,r.z};
+}
+// The eye pose `eye` moved from head `from` to head `to`, keeping its offset from the head.
+XrPosef moveWithHead(const XrPosef& eye,const XrPosef& from,const XrPosef& to){
+ const XrQuaternionf inv=qConj(from.orientation);
+ const XrQuaternionf relQ=qMul(inv,eye.orientation);
+ const XrVector3f relP=qRotate(inv,{eye.position.x-from.position.x,eye.position.y-from.position.y,eye.position.z-from.position.z});
+ XrPosef out{};out.orientation=qMul(to.orientation,relQ);
+ const XrVector3f w=qRotate(to.orientation,relP);
+ out.position={to.position.x+w.x,to.position.y+w.y,to.position.z+w.z};
+ return out;
+}
+
 // M8.56 pose timeline (quad views): which head poses the game asks for and when, over
 // 90 frames from the 1800th xrWaitFrame. The wide views take the head pose BeamNG's Lua
 // gets while it updates the camera; if the engine asks the runtime again just before it
@@ -549,6 +582,13 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeLocateSpace(XrSpace space,XrSpace
  {std::lock_guard<std::mutex> g(stateMutex);if(!instances.empty())d=instances.begin()->second;}
  if(!d.locateSpace)return XR_ERROR_FUNCTION_UNSUPPORTED;
  const XrResult r=d.locateSpace(space,baseSpace,time,location);
+ if(XR_SUCCEEDED(r)&&location&&tripleActive&&(location->locationFlags&XR_SPACE_LOCATION_ORIENTATION_VALID_BIT)&&
+    (location->locationFlags&XR_SPACE_LOCATION_POSITION_VALID_BIT)){
+  std::lock_guard<std::mutex> g(headMutex);
+  // The first located head pose for a display time is the one the Lua camera takes.
+  if(viewSpaces.count(uint64_t(space))&&(time!=firstHead.time||baseSpace!=firstHead.base))
+   firstHead={space,baseSpace,time,location->pose,true};
+ }
  if(XR_SUCCEEDED(r)&&location&&poseTraceOn())poseTrace("locateSpace",time,&location->pose,(void*)space,(void*)baseSpace);
  return r;
 }
@@ -1095,6 +1135,7 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateReferenceSpace(XrSession se
  else if(!instances.empty())fn=instances.begin()->second.createReferenceSpace;}
  if(!fn)return XR_ERROR_FUNCTION_UNSUPPORTED;
  XrResult r=fn(session,info,space);
+ if(XR_SUCCEEDED(r)&&info&&space&&info->referenceSpaceType==XR_REFERENCE_SPACE_TYPE_VIEW){std::lock_guard<std::mutex> g(headMutex);viewSpaces.insert(uint64_t(*space));}
  char msg[128]{};sprintf_s(msg,sizeof(msg),"M7.2b xrCreateReferenceSpace type=%d result=%d",info?(int)info->referenceSpaceType:-1,(int)r);logLine(msg);
  return r;
 }
@@ -1181,6 +1222,23 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeLocateViews(XrSession session,con
  bool triple=false;beamng_triple::Settings tset{};
  if(tripleActive){std::lock_guard<std::mutex> g(stateMutex);triple=session==tripleSession;tset=tripleSettings;}
  if(triple&&XR_SUCCEEDED(r)&&info&&info->viewConfigurationType==XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO&&views&&count&&*count>=2&&capacity>=2){
+  // M8.57: the eyes follow the head pose the Lua camera (and so the wide views) used.
+  if(tset.middle&&d.locateSpace){
+   HeadSample h{};{std::lock_guard<std::mutex> g(headMutex);h=firstHead;}
+   XrSpaceLocation now{XR_TYPE_SPACE_LOCATION};
+   if(h.valid&&h.time==info->displayTime&&h.base==info->space&&
+      XR_SUCCEEDED(d.locateSpace(h.space,info->space,info->displayTime,&now))&&
+      (now.locationFlags&XR_SPACE_LOCATION_ORIENTATION_VALID_BIT)&&(now.locationFlags&XR_SPACE_LOCATION_POSITION_VALID_BIT)){
+    const auto q=qMul(h.pose.orientation,qConj(now.pose.orientation));
+    const double angle=2.0*std::acos(std::min(1.0,std::fabs(double(q.w))))*180.0/3.14159265358979;
+    for(int i=0;i<2;++i)views[i].pose=moveWithHead(views[i].pose,now.pose,h.pose);
+    static double maxAngle=0;static double sumAngle=0;
+    maxAngle=std::max(maxAngle,angle);sumAngle+=angle;
+    const uint64_t n=headAligned.fetch_add(1)+1;
+    if(n==1||n%5400==0){char msg[200]{};sprintf_s(msg,sizeof(msg),"M8.57 eyes follow the camera's head pose: %llu frames, mean %.2f deg, max %.2f deg moved back",
+      (unsigned long long)n,sumAngle/double(n%5400==0?5400:1),maxAngle);logLine(msg);if(n%5400==0){maxAngle=0;sumAngle=0;}}
+   }
+  }
   std::array<XrFovf,2> full{views[0].fov,views[1].fov};
   double gx[2]{},gy[2]{};uint32_t valid=0;
   if(tset.gaze&&gs.ready&&gs.gazeSpace&&d.locateSpace&&state&&(state->viewStateFlags&XR_VIEW_STATE_ORIENTATION_VALID_BIT)){
