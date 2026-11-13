@@ -240,6 +240,43 @@ local function middleAutoFov()
   return nil
 end
 local function middleSay(text) log('I', 'beamngVrs', 'BeamNG-VRS triple view: ' .. text) end
+-- Diagnostics (beamng.log): camera position, axes and frustum of the left eye and the
+-- middle view, every 3 s for the first 30 s and every 30 s after.
+local diagTime, diagNext = 0, 0
+local function fmt3(v) if not v then return '?' end return string.format('(%.3f,%.3f,%.3f)', v.x or 0, v.y or 0, v.z or 0) end
+local function try(fn) local ok, r = pcall(fn) if ok then return r end return nil end
+local function describe(name, view)
+  if not view then return name .. '=nil' end
+  local m = try(function() return view.cameraMatrix end)
+  local text = name .. ' pos=' .. fmt3(m and try(function() return m:getPosition() end))
+  for i = 0, 2 do text = text .. ' c' .. i .. '=' .. fmt3(m and try(function() return m:getColumn(i) end)) end
+  text = text .. ' fov=' .. tostring(try(function() return view.fov end))
+  local f = try(function() return view.frustum end)
+  if f then
+    local parts = {}
+    for _, k in ipairs({'getNearLeft', 'getNearRight', 'getNearTop', 'getNearBottom', 'getNearDist', 'getFarDist'}) do
+      local v = try(function() return f[k](f) end)
+      if v ~= nil then parts[#parts + 1] = k:sub(4) .. '=' .. string.format('%.4f', v) end
+    end
+    if #parts == 0 then
+      local mt = getmetatable(f)
+      local keys = {}
+      if mt then for k in pairs(type(mt.__index) == 'table' and mt.__index or mt) do keys[#keys + 1] = tostring(k) end end
+      parts[1] = 'methods=' .. table.concat(keys, ',')
+    end
+    text = text .. ' frustum ' .. table.concat(parts, ' ')
+  end
+  return text
+end
+local function middleDiag(manager, dt)
+  diagTime = diagTime + (dt or 0)
+  if diagTime < diagNext then return end
+  diagNext = diagTime + (diagTime < 30 and 3 or 30)
+  middleSay(string.format('diag t=%.0f %s | %s | %s', diagTime,
+    describe('eye0', try(function() return manager:getView('oxrView0') end)),
+    describe('eye1', try(function() return manager:getView('oxrView1') end)),
+    describe('middle', middle)))
+end
 -- Follows the head: the left eye's camera moved halfway to the right eye. The OpenXR
 -- layer assumes the left eye's orientation, so only the position is changed.
 local function middleFollow(manager)
@@ -263,6 +300,16 @@ local function middleCreate(manager)
     middle.viewPort = RectI(0, 0, middleW, middleH)
     middle.namedTexTargetColor = middleName
     pcall(function() middle.renderEditorIcons = false end)
+    -- The projection comes from the frustum alone (fov is only a label, as in the game's
+    -- own render/viewDemo.lua). Its angle is horizontal; the height follows the aspect.
+    -- Near and far follow the left eye when its frustum can be read.
+    local near, far = 0.05, 4000
+    pcall(function()
+      local f = manager:getView('oxrView0').frustum
+      local n, x = f:getNearDist(), f:getFarDist()
+      if type(n) == 'number' and n > 0 and type(x) == 'number' and x > n then near, far = n, x end
+    end)
+    middle.frustum = Frustum.construct(false, math.rad(fov), middleW / middleH, near, far)
     middle.fov = fov
   end)
   if ok then middleSay('middle view ' .. middleW .. 'x' .. middleH .. ', ' .. fov .. ' deg horizontal' .. (middleFov and '' or ' (auto)') .. ', view reports ' .. tostring(middle.fov))
@@ -288,6 +335,7 @@ local function middleUpdate(dtReal)
     return
   end
   middleFollow(manager)
+  middleDiag(manager, dtReal)
 end
 local function middlePreRender()
   local manager = RenderViewManagerInstance
