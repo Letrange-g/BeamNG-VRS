@@ -138,11 +138,14 @@ the finer rate of the two eyes; the sharp region is the union of both eyes' regi
 
 **VR render scale (`M8.48`):** BeamNG 0.40 renders VR at 50% and upscales with
 FSR 3. `[Renderer] RenderScale=` (0.25-1.0) changes that: the launcher writes a
-small Lua mod to `%LOCALAPPDATA%\BeamNG\BeamNG.drive\current\mods\unpacked\beamng_vrs`
-that sets `upscaleRenderScale` on BeamNG's two VR views (`oxrView0`, `oxrView1`)
+small in-game Lua script to `%LOCALAPPDATA%\BeamNG\BeamNG.drive\current`
+(`lua\ge\extensions\beamngVrs.lua`, started by `scripts\beamng_vrs\modScript.lua`) that sets `upscaleRenderScale` on BeamNG's two VR views (`oxrView0`, `oxrView1`)
 whenever they appear, and puts it back within 2 seconds if the game lowers it. Comment the line out to restore the game's value; the
-launcher then removes that part of the mod, and deletes the mod folder (only if
-it wrote it) when `VRDrawDistance=off` too. Foveation, the FOV
+launcher then removes that part of the script, and deletes the script's files
+(only those it wrote, listed in `settings\beamng_vrs_files.txt`) when
+`VRDrawDistance=off` and `[VR] Mode=vrs` too. They are loose files, not a mod, so
+BeamMP does not turn them off on servers. Versions up to 0.4.2 wrote a mod,
+`mods\unpacked\beamng_vrs`; the launcher removes it. Foveation, the FOV
 crop and the lens mask follow the new size on their own.
 
 BeamNG's VR views use a fixed 10000 m far distance and ignore the level's
@@ -161,8 +164,8 @@ one `M8.50 site` line per place found (up to 60) and `M8.50 VR draw distance
 changed; use it if the game misbehaves (wrong distance, missing scenery, crash),
 for example after a game update.
 
-**Changing it in game (`M8.51`):** the launcher adds two controls to its mod in
-the BeamNG user folder (`mods\unpacked\beamng_vrs`); no hotkey is involved.
+**Changing it in game (`M8.51`):** the launcher adds two controls to its in-game
+script in the BeamNG user folder (an app in `ui\modules\apps\BeamngVrsDrawDistance`); no hotkey is involved.
 
 - **UI app "VR draw distance":** press Esc, open the UI apps editor, add the app
   and place it. Its slider goes from 100 to 10000 m in 100 m steps (it applies
@@ -258,9 +261,9 @@ tier and the render-target sizes the game binds per frame (`M8.41` lines).
 
 Spaces, `-` and `_` are ignored, so `Mode=quad views` also works. The earlier names `triple` and `triple-black` still work and mean `quad` and `quad-black` (triple view, one wide view shared by both eyes, was removed: its flat periphery felt jarring in motion). The `[TripleView]` section with its Sharp/Middle keys is still accepted. In the quad modes, `[Foveation]`, `[Scissor]` and `[LensMask]` are not used.
 
-The launcher creates the wide views with its small mod in `mods\unpacked\beamng_vrs`. When that mod is off, for example on a BeamMP server that turns off unlisted mods, the surround stays black, as with `quad-black`. Each extra view costs the game a mostly fixed amount of GPU time (about 2.5 ms each on an RTX 5090), so a lower `WideWidth`/`WideHeight` saves only a little.
+The launcher's in-game script creates the wide views, with the same near plane and draw distance as the eyes (a live change from the VR draw distance app or radial menu reaches them within a frame) (see the render scale section above; it also runs on BeamMP servers). Without it, for example when BeamNG is started without the launcher, the surround stays black, as with `quad-black`. Each extra view costs the game a mostly fixed amount of GPU time (about 2.5 ms each on an RTX 5090), so a lower `WideResolution` saves only a little.
 
-`[QuadViews]` keys: `FocusWidth`, `FocusHeight` (0.1-1, default 0.35), `Shape` (`circle` or `rectangle`), `Feather` (0-0.5, default 0.30), `FollowGaze` (true/false), `GazeDeadZone` (degrees, 0-10), `WideWidth`, `WideHeight` (256-4096; the right eye's view is two rows taller so the layer can tell them apart) `WideFov` (`auto`, the default, sizes it to the headset at VR start; or horizontal degrees, 30-150) and `WideDetail` (`full`, `medium` (default) or `low`: the detail drawn in the wide views only, scaled from BeamNG's own graphics settings. `medium` halves model detail, grass and shadow map resolution, doubles the smallest drawn mesh size in pixels; `low` quarters model detail and shadow resolution, drops grass and culls small meshes four times as early. Both turn off live (dynamic) reflections and mirrors in the wide views (the focus view still shows the mirrors). Each wide view repeats the game's draw calls, so lower detail mostly saves CPU time). The layer log has `M8.55` lines for the mode, the focus views, the output swapchains and the wide views' render targets; beamng.log has `BeamNG-VRS quad views` lines with camera diagnostics.
+`[QuadViews]` keys: `FocusWidth`, `FocusHeight` (0.1-1, default 0.35), `Shape` (`circle` or `rectangle`), `Feather` (0-0.5, default 0.30), `FollowGaze` (true/false), `GazeDeadZone` (degrees, 0-10), `WideResolution` (the wide views' size as a share of the headset's per-eye resolution, 0.1-1, default 0.25; the layer reads the headset resolution when VR starts and logs the result), `WideWidth`, `WideHeight` (optional fixed size in pixels, 256-4096, used only when both are set; they override `WideResolution`. The right eye's view is two rows taller so the layer can tell them apart), `WideFov` (`auto`, the default, sizes it to the headset at VR start; or horizontal degrees, 30-150) and `WideDetail` (`full`, `medium` (default) or `low`: the detail drawn in the wide views only, scaled from BeamNG's own graphics settings. `medium` halves model detail, grass and shadow map resolution, doubles the smallest drawn mesh size in pixels; `low` quarters model detail and shadow resolution, drops grass and culls small meshes four times as early. Both turn off live (dynamic) reflections and mirrors in the wide views (the focus view still shows the mirrors). Each wide view repeats the game's draw calls, so lower detail mostly saves CPU time). The layer log has `M8.55` lines for the mode, the focus views, the output swapchains and the wide views' render targets; beamng.log has `BeamNG-VRS quad views` lines with camera diagnostics.
 
 ## Ghosting fix
 
@@ -344,13 +347,10 @@ when it restarts itself after an update.
 - BeamMP starts the game from the folder in its own settings
   (`%LOCALAPPDATA%\BeamNG\BeamNG.Drive.ini` or the registry), so with two
   BeamNG installs, extract BeamNG-VRS into the one BeamMP uses.
-- On a server, BeamMP turns off every mod the server does not list, including
-  the small `beamng_vrs` mod this launcher writes for `RenderScale`, the VR draw
-  distance app and the radial menu entry, and BeamNG saves that in
-  `mods\db.json`. Everything set by the DLLs still applies: foveation, the
-  crop, the lens mask and the draw distance from the INI (or your last in-game
-  pick). Each start through either CMD sets that mod back to active in
-  `mods\db.json`; only its `active` value is changed.
+- On a server, BeamMP turns off every mod the server does not list. The
+  launcher's in-game script (`RenderScale`, the VR draw distance app and radial
+  menu entry, the quad views' wide views) is written as loose files in the user
+  folder rather than as a mod, so it keeps working there.
 - `-CheckOnly -BeamMP` also checks that BeamMP was found.
 
 ## Existing developer launch scripts

@@ -60,7 +60,7 @@ function Get-OpenXRImplicitLayers {
     }
 }
 # M8.48: BeamNG 0.40 forces FSR at 50% in VR. Each eye view ('oxrView0'/'oxrView1')
-# exposes upscaleRenderScale to Lua, so a small unpacked mod sets it whenever the
+# exposes upscaleRenderScale to Lua, so a small in-game script (loose user-folder files) sets it whenever the
 # VR views appear (entering VR recreates them) and every 2 s puts it back if the
 # game changed it. Setting it recreates FSR, so it is only set when it differs.
 # (M8.49 tried a VR far clip the same way: BeamNG ignores frusta set from Lua.)
@@ -156,25 +156,52 @@ function Get-VRDrawDistanceStart {
     }
     return [double]$IniDistance
 }
+# The in-game script is written as loose files in the BeamNG user folder, not as a mod:
+# BeamMP turns off every mod a server does not list (ours included, which left the quad
+# views' surround black), but it only manages mods. BeamNG runs every
+# scripts\*\modScript.lua it finds, loose files included, as it does for mods.
+# settings\beamng_vrs_files.txt lists the files written, so only those are removed.
+$script:VRScriptFiles = @('lua\ge\extensions\beamngVrs.lua', 'scripts\beamng_vrs\modScript.lua',
+    'ui\modules\apps\BeamngVrsDrawDistance\app.js', 'ui\modules\apps\BeamngVrsDrawDistance\app.json',
+    'ui\modules\apps\BeamngVrsDrawDistance\app.png')
+function Remove-VRScript {
+    param([string]$UserFolder)
+    # Up to 0.4.2 the script was the mod mods\unpacked\beamng_vrs; only a folder this
+    # launcher wrote (it has beamng_vrs.txt) is removed.
+    $oldMod = Join-Path $UserFolder 'mods\unpacked\beamng_vrs'
+    if (Test-Path -LiteralPath (Join-Path $oldMod 'beamng_vrs.txt') -PathType Leaf) { Remove-Item -LiteralPath $oldMod -Recurse -Force }
+    $list = Join-Path $UserFolder 'settings\beamng_vrs_files.txt'
+    if (-not (Test-Path -LiteralPath $list -PathType Leaf)) { return }
+    foreach ($relative in [IO.File]::ReadAllLines($list)) {
+        # Only names this launcher writes, so a damaged list cannot delete anything else.
+        if ($script:VRScriptFiles -notcontains $relative.Trim()) { continue }
+        $path = Join-Path $UserFolder $relative.Trim()
+        if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-Item -LiteralPath $path -Force }
+        # Remove the folders it leaves empty, up to (not including) the user folder.
+        $folder = Split-Path -Parent $path
+        while ($folder.Length -gt $UserFolder.TrimEnd('\').Length -and (Test-Path -LiteralPath $folder -PathType Container) -and
+            -not (Get-ChildItem -LiteralPath $folder -Force | Select-Object -First 1)) {
+            Remove-Item -LiteralPath $folder -Force
+            $folder = Split-Path -Parent $folder
+        }
+    }
+    Remove-Item -LiteralPath $list -Force
+}
 function Update-VRMod {
     param([string]$UserFolder, $Scale, $Distance, $IniDistance, $Middle)
-    $mod = Join-Path $UserFolder 'mods\unpacked\beamng_vrs'
-    $marker = Join-Path $mod 'beamng_vrs.txt'
-    if ($null -eq $Scale -and $null -eq $Distance -and $null -eq $Middle) {
-        # Only a folder this launcher wrote is removed.
-        if (Test-Path -LiteralPath $marker -PathType Leaf) { Remove-Item -LiteralPath $mod -Recurse -Force }
-        return
-    }
+    if (Test-Path -LiteralPath $UserFolder -PathType Container) { Remove-VRScript -UserFolder $UserFolder }
+    if ($null -eq $Scale -and $null -eq $Distance -and $null -eq $Middle) { return }
     if (-not (Test-Path -LiteralPath $UserFolder -PathType Container)) {
-        Write-Warning "BeamNG user folder not found at $UserFolder; [Renderer] RenderScale and the VR draw distance app are not applied."
+        Write-Warning "BeamNG user folder not found at $UserFolder; [Renderer] RenderScale, the VR draw distance app and the quad views' wide views are not applied."
         return
     }
-    if ((Test-Path -LiteralPath $mod) -and -not (Test-Path -LiteralPath $marker -PathType Leaf)) {
-        Write-Warning "$mod exists but was not written by BeamNG-VRS; [Renderer] RenderScale and the VR draw distance app are not applied."
-        return
+    foreach ($relative in $script:VRScriptFiles) {
+        $path = Join-Path $UserFolder $relative
+        if (Test-Path -LiteralPath $path) {
+            Write-Warning "$path exists but was not written by BeamNG-VRS; [Renderer] RenderScale, the VR draw distance app and the quad views' wide views are not applied."
+            return
+        }
     }
-    # Rewritten from scratch, so a feature turned off in the INI leaves no file behind.
-    if (Test-Path -LiteralPath $mod) { Remove-Item -LiteralPath $mod -Recurse -Force }
     $invariant = [Globalization.CultureInfo]::InvariantCulture
     $utf8 = New-Object Text.UTF8Encoding($false)
     $lua = "-- Written by Launch-BeamNG-VRS from BeamNG-VRS.ini ([Renderer] RenderScale and VRDrawDistance, [VR] Mode).`r`nlocal M = {}`r`n"
@@ -242,8 +269,12 @@ local function onClientPostStartMission() present = {} end
         # M8.55 quad views: one wide, low-resolution view per eye. The OpenXR layer finds
         # their render targets by size (the right one is two rows taller) and composes each
         # around its eye's sharp focus view; without them the surround stays black.
-        $middleW = [int]$Middle.Width; $middleH = [int]$Middle.Height
-        # nil = auto: wait for the OpenXR layer's value in the settings folder.
+        # nil = auto: wait for the OpenXR layer's values in the settings folder. The size is
+        # fixed only when WideWidth and WideHeight are both set; otherwise the layer sizes
+        # the views from WideResolution and the headset.
+        $fixedSize = $null -ne $Middle.Width -and $null -ne $Middle.Height
+        $middleW = if ($fixedSize) { [string][int]$Middle.Width } else { 'nil' }
+        $middleH = if ($fixedSize) { [string][int]$Middle.Height } else { 'nil' }
         $middleFov = if ($null -eq $Middle.Fov) { 'nil' } else { ([double]$Middle.Fov).ToString('0.##', $invariant) }
         $wideDetail = if ($Middle.Detail) { [string]$Middle.Detail } else { 'medium' }
         $lua += @"
@@ -257,18 +288,26 @@ local wideFovFile = '/settings/beamng_vrs_middle_fov.txt'
 local wide = {}       -- [1] left eye, [2] right eye
 local wideWait = 0
 local wideFollowFailed = false
+-- Projection of the wide views: horizontal FOV and near/far planes. far follows the left
+-- eye's far plane every frame, so a live VR draw distance change (the in-game app or the
+-- radial menu, which the OpenXR layer applies to the eyes) reaches the wide views too.
+local wideFovUsed, wideNear, wideFar = nil, 0.1, 4000
 -- Wide view pose prediction state (see wideFollow).
 local heads = {}        -- head poses: [1] this frame, [2] one frame ago, [3] two ago
 local lag, lagSamples, lagOffset = 1, 0, {0, 0, 0}
 local predict = core_camera ~= nil -- off if the check in wideFollow fails: plain copies then
 local predictChecked = false
--- WideFov=auto: the OpenXR layer writes "fov=N" once it knows the headset's field of view.
-local function wideAutoFov()
+-- The OpenXR layer writes "fov=N width=W height=H" once it knows the headset: the wide
+-- views' field of view (WideFov=auto) and size (WideResolution x the headset's eye size).
+local function wideAuto()
   local ok, text = pcall(readFile, wideFovFile)
-  if not ok or type(text) ~= 'string' then return nil end
-  local fov = tonumber(text:match('fov=([%d%.]+)'))
-  if fov and fov >= 30 and fov <= 150 then return fov end
-  return nil
+  if not ok or type(text) ~= 'string' then return {} end
+  local info = {fov = tonumber(text:match('fov=([%d%.]+)')), width = tonumber(text:match('width=(%d+)')),
+    height = tonumber(text:match('height=(%d+)'))}
+  if not (info.fov and info.fov >= 30 and info.fov <= 150) then info.fov = nil end
+  if not (info.width and info.width >= 256 and info.width <= 4096) then info.width = nil end
+  if not (info.height and info.height >= 256 and info.height <= 4096) then info.height = nil end
+  return info
 end
 local function wideSay(text) log('I', 'beamngVrs', 'BeamNG-VRS quad views: ' .. text) end
 local function try(fn) local ok, r = pcall(fn) if ok then return r end return nil end
@@ -454,9 +493,33 @@ local function wideQuality(view, name)
   if ok then wideSay(name .. ' detail ' .. wideDetail .. (#skipped > 0 and (' (not available: ' .. table.concat(skipped, ', ') .. ')') or ''))
   else wideSay(name .. ' detail not set: ' .. tostring(err)) end
 end
+-- The projection comes from the frustum alone (fov is only a label, as in the game's own
+-- render/viewDemo.lua). Frustum.construct takes the VERTICAL angle and widens it by the
+-- aspect (measured: near-plane extents 0.43 x 0.295 at 0.2 m), while the FOV here is
+-- horizontal, so it is converted. i: 1 left eye, 2 right eye (two rows taller).
+local function wideFrustum(view, i, near, far)
+  local h = wideH + (i - 1) * 2
+  local vertical = 2 * math.atan(math.tan(math.rad(wideFovUsed) / 2) * h / wideW)
+  view.frustum = Frustum.construct(false, vertical, wideW / h, near, far)
+end
+-- Keeps the wide views' far plane equal to the eyes' (the VR draw distance, changeable live).
+local function wideSyncFar(manager)
+  local ok, x = pcall(function() return manager:getView('oxrView0').frustum:getFarDist() end)
+  if not ok or type(x) ~= 'number' or x <= wideNear or math.abs(x - wideFar) < 0.5 then return end
+  wideFar = x
+  for i = 1, wideCount do
+    if wide[i] then
+      local set, err = pcall(wideFrustum, wide[i], i, wideNear, wideFar)
+      if not set then wideSay('far plane not updated: ' .. tostring(err)) return end
+    end
+  end
+  wideSay('far ' .. math.floor(wideFar + 0.5) .. ' m, as the eyes (VR draw distance)')
+end
 local function wideCreate(manager)
-  local fov = wideFov or wideAutoFov()
-  if not fov then return end -- auto: not written yet, retried in a second
+  local info = wideAuto()
+  local fov = wideFov or info.fov
+  wideW, wideH = wideW or info.width, wideH or info.height
+  if not (fov and wideW and wideH) then return end -- auto: not written yet, retried in a second
   -- Near and far follow the left eye when its frustum can be read (0.1 m and 4000 m in
   -- BeamNG 0.40). The driver's head is hidden by the render view mask set below, as in
   -- the eyes, so nothing needs clipping: a farther near plane cut the roof liner away.
@@ -467,6 +530,7 @@ local function wideCreate(manager)
     if type(n) == 'number' and n > 0 and n < 1 then near = n end
     if type(x) == 'number' and x > near then far = x end
   end)
+  wideFovUsed, wideNear, wideFar = fov, near, far
   for i = 1, wideCount do
     if not wide[i] then
       local name = 'beamngVrsWide' .. (i - 1)
@@ -484,12 +548,7 @@ local function wideCreate(manager)
         local masked = pcall(function() view:maskSet(0) end)
         if not masked then wideSay(name .. ': render view mask not set, the driver head may show') end
         wideQuality(view, name)
-        -- The projection comes from the frustum alone (fov is only a label, as in the
-        -- game's own render/viewDemo.lua). Frustum.construct takes the VERTICAL angle and
-        -- widens it by the aspect (measured: near-plane extents 0.43 x 0.295 at 0.2 m),
-        -- while fov here is horizontal, so it is converted.
-        local vertical = 2 * math.atan(math.tan(math.rad(fov) / 2) * h / wideW)
-        view.frustum = Frustum.construct(false, vertical, wideW / h, near, far)
+        wideFrustum(view, i, near, far)
         view.fov = fov
       end)
       if ok then
@@ -521,6 +580,7 @@ local function wideUpdate(dtReal)
     if wideWait >= 1 then wideWait = 0 wideCreate(manager) end
     return
   end
+  pcall(wideSyncFar, manager)
   wideDiag(manager, dtReal)
 end
 local function widePreRender(dtReal)
@@ -604,7 +664,6 @@ M.onExtensionLoaded = registerMenus
     }
     $lua += "return M`r`n"
     $files = @{
-        'beamng_vrs.txt' = "Written by Launch-BeamNG-VRS at every start from BeamNG-VRS.ini. Remove RenderScale, set VRDrawDistance=off and [VR] Mode=vrs there to delete it.`r`n"
         'scripts\beamng_vrs\modScript.lua' = "load('beamngVrs')`r`nsetExtensionUnloadMode('beamngVrs', 'manual')`r`n"
         'lua\ge\extensions\beamngVrs.lua' = $lua
     }
@@ -612,53 +671,27 @@ M.onExtensionLoaded = registerMenus
         $files['ui\modules\apps\BeamngVrsDrawDistance\app.js'] = $script:VRDrawDistanceApp
         $files['ui\modules\apps\BeamngVrsDrawDistance\app.json'] = $script:VRDrawDistanceAppJson
     }
+    $written = @($files.Keys)
+    if ($null -ne $Distance) { $written += 'ui\modules\apps\BeamngVrsDrawDistance\app.png' }
+    # The list first, so a launch that stops halfway still removes what it wrote.
+    $settings = Join-Path $UserFolder 'settings'
+    [void](New-Item -ItemType Directory -Path $settings -Force)
+    [IO.File]::WriteAllText((Join-Path $settings 'beamng_vrs_files.txt'), (($written -join "`r`n") + "`r`n"), $utf8)
     foreach ($relative in $files.Keys) {
-        $path = Join-Path $mod $relative
+        $path = Join-Path $UserFolder $relative
         [void](New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force)
         [IO.File]::WriteAllText($path, $files[$relative], $utf8)
     }
+    $where = "the in-game script in $UserFolder (lua\ge\extensions\beamngVrs.lua)"
     if ($null -ne $Distance) {
-        [IO.File]::WriteAllBytes((Join-Path $mod 'ui\modules\apps\BeamngVrsDrawDistance\app.png'),
+        [IO.File]::WriteAllBytes((Join-Path $UserFolder 'ui\modules\apps\BeamngVrsDrawDistance\app.png'),
             [Convert]::FromBase64String($script:VRDrawDistanceAppPng))
-        Write-Output "VR draw distance $distanceText m; its in-game app and radial menu are added through $mod"
+        Write-Output "VR draw distance $distanceText m; its in-game app and radial menu are added through $where"
     }
-    if ($null -ne $Scale) { Write-Output "VR render scale $scaleText applied through $mod" }
-    if ($null -ne $Middle) { Write-Output "Quad views: wide views ${middleW}x${middleH} (FOV $(if ($null -eq $Middle.Fov) { 'auto' } else { $middleFov + ' deg' })) added through $mod" }
-    Enable-VRModInDatabase -UserFolder $UserFolder
+    if ($null -ne $Scale) { Write-Output "VR render scale $scaleText applied through $where" }
+    if ($null -ne $Middle) { Write-Output "Quad views: wide views $(if ($fixedSize) { "${middleW}x${middleH}" } else { 'sized from the headset' }) (FOV $(if ($null -eq $Middle.Fov) { 'auto' } else { $middleFov + ' deg' })) added through $where" }
 }
 
-# BeamMP turns off every mod a server does not list, ours included, and BeamNG saves
-# that in mods\db.json. Turn the mod back on so it is not left off after a server.
-# Only the "active" value of our entry changes; the rest of the file is kept as is.
-function Enable-VRModInDatabase {
-    param([string]$UserFolder)
-    $database = Join-Path $UserFolder 'mods\db.json'
-    if (-not (Test-Path -LiteralPath $database -PathType Leaf)) { return }
-    $text = [IO.File]::ReadAllText($database)
-    $entry = [regex]::Match($text, '"beamng_vrs"\s*:\s*\{')
-    if (-not $entry.Success) { return }
-    # Find "active": false at the top level of our entry, skipping strings and nested objects.
-    $depth = 0; $inString = $false
-    for ($i = $entry.Index + $entry.Length - 1; $i -lt $text.Length; ++$i) {
-        $c = $text[$i]
-        if ($inString) {
-            if ($c -eq '\') { ++$i } elseif ($c -eq '"') { $inString = $false }
-            continue
-        }
-        if ($c -eq '{' -or $c -eq '[') { ++$depth }
-        elseif ($c -eq '}' -or $c -eq ']') { $depth -= 1; if ($depth -eq 0) { return } }
-        elseif ($c -eq '"') {
-            $active = if ($depth -eq 1) { [regex]::Match($text.Substring($i), '^"active"\s*:\s*false') } else { $null }
-            if ($active -and $active.Success) {
-                $text = $text.Substring(0, $i) + '"active":true' + $text.Substring($i + $active.Length)
-                [IO.File]::WriteAllText($database, $text, (New-Object Text.UTF8Encoding($false)))
-                Write-Output 'BeamNG-VRS in-game mod turned back on (BeamMP turns it off on servers).'
-                return
-            }
-            $inString = $true
-        }
-    }
-}
 # ---------------------------------------------------------------------------------------
 # [Renderer] GhostingFix
 #
@@ -801,6 +834,7 @@ function Test-BeamNGIni {
         'quadviews.focusheight' = @(0.1, 1, $false)
         'quadviews.feather' = @(0, 0.5, $false)
         'quadviews.gazedeadzone' = @(0, 10, $false)
+        'quadviews.wideresolution' = @(0.1, 1, $false)
         'quadviews.widewidth' = @(256, 4096, $true)
         'quadviews.wideheight' = @(256, 4096, $true)
     }
@@ -893,7 +927,7 @@ try {
     $script:VRDrawDistance = [double]4000
     $script:GhostingFix = $false
     $script:VRMode = 'vrs'
-    $script:Middle = @{ Width = 1280; Height = 880; Fov = $null; Detail = 'medium' }
+    $script:Middle = @{ Width = $null; Height = $null; Fov = $null; Detail = 'medium' }
     if (-not (Test-Path -LiteralPath $iniPath -PathType Leaf)) {
         throw 'BeamNG-VRS.ini not found beside Launch-BeamNG-VRS.cmd. Extract the entire ZIP; when upgrading, move your saved INI beside the CMD.'
     }

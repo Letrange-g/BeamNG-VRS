@@ -430,8 +430,10 @@ beamng_triple::Settings tripleConfig(){
  t.sharpHeight=tripleNumber("BEAMNG_VRS_TRIPLE_SHARP_HEIGHT",t.sharpHeight,0.1,1);
  t.feather=tripleNumber("BEAMNG_VRS_TRIPLE_FEATHER",t.feather,0,0.5);
  t.deadZone=std::tan(tripleNumber("BEAMNG_VRS_TRIPLE_DEADZONE",1.5,0,10)*3.14159265358979323846/180.0);
- t.middleWidth=uint32_t(tripleNumber("BEAMNG_VRS_TRIPLE_MIDDLE_WIDTH",t.middleWidth,256,4096));
- t.middleHeight=uint32_t(tripleNumber("BEAMNG_VRS_TRIPLE_MIDDLE_HEIGHT",t.middleHeight,256,4096));
+ // 0 (the default) = WideResolution: sized from the headset at session creation.
+ const double mw=tripleNumber("BEAMNG_VRS_TRIPLE_MIDDLE_WIDTH",0,0,4096),mh=tripleNumber("BEAMNG_VRS_TRIPLE_MIDDLE_HEIGHT",0,0,4096);
+ t.middleWidth=mw>0?uint32_t(std::max(256.0,mw)):0;t.middleHeight=mh>0?uint32_t(std::max(256.0,mh)):0;
+ t.wideScale=tripleNumber("BEAMNG_VRS_TRIPLE_WIDE_SCALE",t.wideScale,0.1,1);
  t.middleFov=tripleNumber("BEAMNG_VRS_TRIPLE_MIDDLE_FOV",t.middleFov,30,150);
  return t;
 }
@@ -879,8 +881,18 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateSession(XrInstance inst,con
      logLine(m);
     }else m844Active=false;
     // M8.55 quad views ([VR] Mode=quad or quad-black) replace VRS, the crop and the lens effects.
-    const auto t=tripleConfigured();
+    auto t=tripleConfigured();
     if(t.enabled){
+     // WideResolution: the runtime's own per-eye size (not the narrowed one this layer reports).
+     {uint32_t n=0;std::array<XrViewConfigurationView,2> rv{};for(auto& v:rv)v.type=XR_TYPE_VIEW_CONFIGURATION_VIEW;
+      uint32_t fw=0,fh=0;
+      if(d.enumerateViews&&ci&&XR_SUCCEEDED(d.enumerateViews(inst,ci->systemId,XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,2,&n,rv.data()))&&n>=1){
+       fw=rv[0].recommendedImageRectWidth;fh=rv[0].recommendedImageRectHeight;}
+      const bool fixed=t.middleWidth&&t.middleHeight;
+      beamng_triple::resolveWideSize(t,fw,fh);
+      char m[220]{};sprintf_s(m,sizeof(m),"M8.55 wide views %ux%u (%s of the headset's %ux%u per eye)",t.middleWidth,t.middleHeight,
+        fixed?"fixed WideWidth/WideHeight, instead":(std::to_string(int(std::lround(t.wideScale*100)))+"%").c_str(),fw,fh);
+      logLine(m);}
      m844Active=false;
      {std::lock_guard<std::mutex> g(stateMutex);m844Session=XR_NULL_HANDLE;}
      beamng_d3d12::Effects tfx{};
@@ -888,7 +900,7 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateSession(XrInstance inst,con
      tfx.middleWidth=t.middleWidth;tfx.middleHeight=t.middleHeight;
      beamng_d3d12::attach(b->device,b->queue,logLine,m817Verbose(),beamng_d3d12::Foveation{},tfx);
      if(beamng_triple_d3d12::init(b->device,b->queue,logLine)){
-      {std::lock_guard<std::mutex> g(stateMutex);tripleSettings=t;tripleSession=*session;tripleGaze=beamng_triple::GazeFilter{};tripleFovResolved=t.middleFov>0;
+      {std::lock_guard<std::mutex> g(stateMutex);tripleSettings=t;tripleSession=*session;tripleGaze=beamng_triple::GazeFilter{};tripleFovResolved=false;
        tripleFullValid=false;tripleOutFailed=false;}
       tripleActive=true;
       double hx=1,hy=1;beamng_triple::middleHalf(t,hx,hy);
@@ -1093,14 +1105,14 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeEnumerateViewConfigurationViews(X
  }
  return r;
 }
-// M8.54 MiddleFov=auto: the launcher names a file (BEAMNG_VRS_TRIPLE_FOV_FILE) in the
-// game's settings folder; its Lua mod waits for "fov=N" there before creating the middle view.
-void tripleWriteFov(double fov){
+// M8.55: the launcher names a file (BEAMNG_VRS_TRIPLE_FOV_FILE) in the game's settings folder;
+// its Lua mod waits for "fov=N width=W height=H" there before creating the wide views.
+void tripleWriteFov(double fov,uint32_t width,uint32_t height){
  std::wstring p(32768,L'\0');const DWORD n=GetEnvironmentVariableW(L"BEAMNG_VRS_TRIPLE_FOV_FILE",p.data(),DWORD(p.size()));
  if(!n||n>=p.size()){logLine("M8.55 quad views WARNING: no wide-view FOV file named by the launcher");return;}
  p.resize(n);
  const std::wstring temp=p+L".tmp";
- char text[64]{};const int len=sprintf_s(text,sizeof(text),"fov=%.3f\n",fov);
+ char text[128]{};const int len=sprintf_s(text,sizeof(text),"fov=%.3f\nwidth=%u\nheight=%u\n",fov,width,height);
  const HANDLE file=CreateFileW(temp.c_str(),GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
  DWORD written=0;
  const bool ok=file!=INVALID_HANDLE_VALUE && WriteFile(file,text,DWORD(len),&written,nullptr) && written==DWORD(len);
@@ -1155,8 +1167,8 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeLocateViews(XrSession session,con
    // WideFov=auto: sized once so each eye's wide view, facing that eye's way, covers its
    // full field of view; one value for both. Rounded as written for the Lua side.
    if(!tripleFovResolved && tset.middle){
-    double fov=0;
-    for(int i=0;i<2;++i){
+    double fov=tset.middleFov; // WideFov set in the INI: written as is
+    if(fov<=0)for(int i=0;i<2;++i){
      const beamng_triple::Tangents t2[2]{tangents(full[i]),tangents(full[i])};
      const auto& o=views[i].pose.orientation;const beamng_triple::Quat q[2]{{o.x,o.y,o.z,o.w},{o.x,o.y,o.z,o.w}};
      fov=std::max(fov,beamng_triple::autoMiddleFov(t2,q,q[0],tset.middleWidth,tset.middleHeight+uint32_t(i)*2));
@@ -1168,8 +1180,8 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeLocateViews(XrSession session,con
     for(int i=0;i<2;++i){cx[i]=tripleGaze.cx[i];cy[i]=tripleGaze.cy[i];}}
   }
   if(autoFov>0){
-   tripleWriteFov(autoFov);
-   char msg[200]{};sprintf_s(msg,sizeof(msg),"M8.55 wide views FOV auto: %.1f deg horizontal for %ux%u",autoFov,tset.middleWidth,tset.middleHeight);logLine(msg);
+   tripleWriteFov(autoFov,tset.middleWidth,tset.middleHeight);
+   char msg[200]{};sprintf_s(msg,sizeof(msg),"M8.55 wide views FOV %s: %.1f deg horizontal for %ux%u",tset.middleFov>0?"from the INI":"auto",autoFov,tset.middleWidth,tset.middleHeight);logLine(msg);
   }
   for(int i=0;i<2;++i)views[i].fov=angles(beamng_triple::window(tangents(full[i]),tset.sharpWidth,tset.sharpHeight,cx[i],cy[i]));
   static std::atomic<bool> logged{false};

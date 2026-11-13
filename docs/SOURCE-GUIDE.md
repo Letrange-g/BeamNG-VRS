@@ -28,7 +28,7 @@ top to bottom.
 | `src/triple_view_d3d12.cpp` | M8.55 quad views, D3D12 compositor: copies each sharp focus image at release and draws the full-field-of-view eye images from that eye's wide view and its focus view into the layer's own swapchains | `init`, `captureEye`, `compose` |
 | `packaging/GhostingFix.hlsl` | Ghosting fix inserted into the game's `combinePass.cs.hlsl`: each 8x8 group measures the sideways shift between this eye and the shared local exposure texture, then reads local exposure and bloom at that shift | `vrsEstimateEyeShift` |
 | `packaging/Launch-BeamNG-VRS.ps1` (ghosting fix) | Patches the game's own `combinePass.cs.hlsl` with `GhostingFix.hlsl` (anchored, whitespace-tolerant edits that stand down if the game shader changed), writes it to the user folder, clears `temp\shaders` on change | `Update-GhostingFix` |
-| `packaging/Launch-BeamNG-VRS.ps1` (Lua mod) | Writes the `beamng_vrs` mod: render scale, and the VR draw distance radial menu entry and UI app, which save the pick to a file the OpenXR layer polls | `Update-VRMod`, `Get-VRDrawDistanceStart` |
+| `packaging/Launch-BeamNG-VRS.ps1` (Lua mod) | Writes the in-game script as loose user-folder files (not a mod, so BeamMP keeps it on): render scale, quad views' wide views, and the VR draw distance radial menu entry and UI app, which save the pick to a file the OpenXR layer polls | `Update-VRMod`, `Remove-VRScript`, `Get-VRDrawDistanceStart` |
 | `src/ffr_upload_commands.hpp` | Reuse completed upload recordings/resources | Cache and ownership helpers |
 | `src/beamng_gaze_shared.hpp` | Shared-memory structures used between the DLLs | Mapping names and data structures |
 | `tests/` | Executable examples of configuration and lifetime rules | Parser, crop, hook and turbo tests |

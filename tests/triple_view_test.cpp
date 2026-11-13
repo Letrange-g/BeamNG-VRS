@@ -68,5 +68,10 @@ int main() {
  double m[3]{};
  for(int r = 0; r < 3; ++r) m[r] = rows[r][0] * f[0] + rows[r][1] * f[1] + rows[r][2] * f[2];
  assert(near(m[0], -1, 1e-6) && near(m[1], 0, 1e-6) && near(m[2], 0, 1e-6));
+ {Settings w; resolveWideSize(w, 5190, 4168); assert(w.middleWidth == 1298 && w.middleHeight == 1042);}
+ {Settings w; w.wideScale = 0.5; resolveWideSize(w, 5190, 4168); assert(w.middleWidth == 2596 && w.middleHeight == 2084);}
+ {Settings w; w.wideScale = 0.1; resolveWideSize(w, 1000, 900); assert(w.middleWidth == 256 && w.middleHeight == 256);}
+ {Settings w; w.middleWidth = 1280; w.middleHeight = 880; resolveWideSize(w, 5190, 4168); assert(w.middleWidth == 1280 && w.middleHeight == 880);}
+ {Settings w; resolveWideSize(w, 0, 0); assert(w.middleWidth == 1280 && w.middleHeight == 880);}
  return 0;
 }

@@ -19,7 +19,8 @@ everything around it cheaply:
   stays in the centre. Because it covers only part of the field of view, it gets the
   game's full pixel density at a fraction of the pixel count.
 - **Wide view (cheap):** each eye also gets one wide view that covers its whole field of
-  view at low resolution (1280 x 880 by default) and lower detail. Live reflections,
+  view at low resolution (a quarter of your headset's per-eye width and height by
+  default, `WideResolution=0.25`) and lower detail. Live reflections,
   mirrors, half the shadow resolution, model detail and grass, and small meshes are
   cut there, because you can't see them in the corner of your eye.
 - **The blend:** BeamNG-VRS's OpenXR layer places each eye's focus view over its wide
@@ -46,8 +47,8 @@ and map.
 - Any OpenXR headset should work, with or without eye tracking; only the Pimax Dream
   Air has been tested. No depth is sent to the runtime, which affects depth-based
   reprojection.
-- The wide views come from BeamNG-VRS's small in-game mod. When a BeamMP server turns
-  that mod off, the surround stays black.
+- The wide views come from BeamNG-VRS's small in-game script, which the launcher
+  writes at each start; it also works on BeamMP servers.
 
 ### Also new
 
@@ -60,9 +61,8 @@ and map.
 ## In 0.4.2
 
 - **Multiplayer (BeamMP).** Double-click `Launch-BeamMP-VRS.cmd` instead of
-  `BeamMP-Launcher.exe`: BeamMP then starts BeamNG with BeamNG-VRS. On a server,
-  BeamMP turns off the in-game draw distance app and radial menu entry; the INI
-  settings still apply.
+  `BeamMP-Launcher.exe`: BeamMP then starts BeamNG with BeamNG-VRS. Everything,
+  including the in-game draw distance app and quad views, also works on servers.
 
 ## In 0.4.1
 
@@ -170,8 +170,11 @@ the launch CMD, so you get the new `[OpenXR]` and `[Renderer]` sections. Update 
 settings still work; the four new controls let you adjust each eye separately.
 
 Launch BeamNG normally to stop using VRS. To uninstall, remove the `BeamNG-VRS`
-folder, `BeamNG-VRS.ini`, both CMD files and `READ-ME-FIRST.txt`. Also delete
-`mods\unpacked\beamng_vrs` and `settings\beamng_vrs_vr_draw_distance.txt` in your BeamNG user folder.
+folder, `BeamNG-VRS.ini`, both CMD files and `READ-ME-FIRST.txt`. Also delete, in
+your BeamNG user folder, `lua\ge\extensions\beamngVrs.lua`, `scripts\beamng_vrs`,
+`ui\modules\apps\BeamngVrsDrawDistance` and the `settings\beamng_vrs_*` files (or,
+before uninstalling, set `[VR] Mode=vrs`, comment out `RenderScale` and set
+`VRDrawDistance=off`, then start once through the CMD: it removes them).
 
 [Help and requirements](docs/TECHNICAL.md) · [Performance notes](docs/PERFORMANCE.md) ·
 [Source guide](docs/SOURCE-GUIDE.md) · [Build from source](docs/BUILDING.md) · [Report an issue safely](docs/SECURITY.md)

@@ -17,15 +17,21 @@ BeamNG-VRS 0.4.3 — portable Windows x64, for BeamNG.drive 0.40.
   Utah (8.5-9 ms in the default `vrs` mode) and 7.5-9.5 ms on Jungle Rock Island
   (about 10-11 ms in earlier `vrs` runs), at a similar CPU time.
   `[QuadViews]` sets the focus size and edge, gaze following, the wide views'
-  resolution, field of view (`WideFov=auto` fits your headset) and detail
+  resolution (`WideResolution`, a share of your headset's per-eye resolution,
+  default 0.25), field of view (`WideFov=auto` fits your headset) and detail
   (`WideDetail=full`, `medium` (default) or `low`; medium turns off live
   reflections and mirrors there and halves shadows, model detail and grass).
   `Mode=quad-black` shows the focus views alone for comparison. Only tested on
-  a Pimax Dream Air; no depth is sent to the runtime. On a BeamMP server that
-  turns off BeamNG-VRS's in-game mod, the surround stays black.
+  a Pimax Dream Air; no depth is sent to the runtime. Works on BeamMP
+  servers too.
 - **Your own head no longer shows in VR.** BeamNG's VR eye views missed the
   first-person flag that hides the driver's head, so the dummy's head and helmet
   showed when you leaned. BeamNG-VRS now sets it in every mode.
+- **The in-game script now works on BeamMP servers.** BeamMP turns off every
+  mod a server does not list, which turned off BeamNG-VRS's render scale, VR
+  draw distance app and radial menu there. The launcher now writes that script
+  as loose files in your BeamNG user folder (`lua\ge\extensions\beamngVrs.lua`
+  and friends) instead of the `mods\unpacked\beamng_vrs` mod, which it removes.
 - **FPS-cap verdict.** The `M8.47` log line says `FPS-capped at N fps` when a
   steady in-game frame limit holds you below the headset's refresh rate.
 

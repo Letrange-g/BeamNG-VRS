@@ -146,12 +146,12 @@ try {
     } finally { Remove-Item -LiteralPath (Split-Path -Parent $registry) -Recurse -Force -ErrorAction SilentlyContinue }
     # M8.48: RenderScale writes the Lua mod into the user folder; omitting it (and
     # VRDrawDistance=off) removes the mod.
-    $modLua = Join-Path $userFolder 'mods\unpacked\beamng_vrs\lua\ge\extensions\beamngVrs.lua'
+    $modLua = Join-Path $userFolder 'lua\ge\extensions\beamngVrs.lua'
     Set-Content -LiteralPath $ini -Value "[Renderer]`nRenderScale=0.8" -Encoding UTF8
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder
     if ($LASTEXITCODE -ne 0) { throw 'Launcher failed with RenderScale.' }
     if (-not (Test-Path -LiteralPath $modLua) -or (Get-Content -LiteralPath $modLua -Raw) -notmatch 'local scale = 0\.8\r?\n' -or
-        -not (Test-Path -LiteralPath (Join-Path $userFolder 'mods\unpacked\beamng_vrs\scripts\beamng_vrs\modScript.lua'))) { throw 'RenderScale mod was not written.' }
+        -not (Test-Path -LiteralPath (Join-Path $userFolder 'scripts\beamng_vrs\modScript.lua'))) { throw 'RenderScale mod was not written.' }
     $deadline = [DateTime]::UtcNow.AddSeconds(10); $content = ''
     while ([DateTime]::UtcNow -lt $deadline) {
         try { $content = Get-Content -LiteralPath $result -Raw; if ($content -match 'XR_ENABLE_API_LAYERS=.*probe') { break } } catch {}
@@ -159,7 +159,7 @@ try {
     }
     Remove-Item -LiteralPath $result
     # M8.51: the default VRDrawDistance=4000 adds the live UI app and radial menu.
-    $app = Join-Path $userFolder 'mods\unpacked\beamng_vrs\ui\modules\apps\BeamngVrsDrawDistance'
+    $app = Join-Path $userFolder 'ui\modules\apps\BeamngVrsDrawDistance'
     $distanceFile = Join-Path $userFolder 'settings\beamng_vrs_vr_draw_distance.txt'
     $modText = Get-Content -LiteralPath $modLua -Raw
     if ($modText -notmatch 'local distance = 4000\r?\n' -or $modText -notmatch 'local iniDistance = 4000\r?\n' -or
@@ -195,7 +195,9 @@ try {
     Set-Content -LiteralPath $ini -Value "[Logging]`nLevel=info`n[Renderer]`nVRDrawDistance=OFF" -Encoding UTF8
     [IO.File]::WriteAllText($distanceFile, "distance=1500`nini=3000`n")
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder
-    if ($LASTEXITCODE -ne 0 -or (Test-Path -LiteralPath (Join-Path $userFolder 'mods\unpacked\beamng_vrs'))) { throw 'RenderScale mod was not removed.' }
+    if ($LASTEXITCODE -ne 0 -or (Test-Path -LiteralPath $modLua) -or (Test-Path -LiteralPath (Join-Path $userFolder 'scripts\beamng_vrs')) -or
+        (Test-Path -LiteralPath (Join-Path $userFolder 'ui')) -or (Test-Path -LiteralPath (Join-Path $userFolder 'lua')) -or
+        (Test-Path -LiteralPath (Join-Path $userFolder 'settings\beamng_vrs_files.txt'))) { throw 'In-game script was not removed.' }
     $deadline = [DateTime]::UtcNow.AddSeconds(10); $content = ''
     while ([DateTime]::UtcNow -lt $deadline) {
         try { $content = Get-Content -LiteralPath $result -Raw; if ($content -match 'XR_ENABLE_API_LAYERS=.*probe') { break } } catch {}
@@ -269,8 +271,12 @@ try {
     Copy-Item -LiteralPath $GameFixture -Destination $beamMP
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder -CheckOnly -BeamMP -BeamMPLauncher (Join-Path $temp 'missing.exe')
     if ($LASTEXITCODE -eq 0) { throw 'A missing BeamMP launcher was not rejected.' }
-    # BeamMP turned our mod off on a server; only that entry's top-level active value changes.
+    # BeamMP turns off unlisted mods on servers, so the in-game script is loose files, not
+    # a mod: the launcher leaves mods\db.json alone and removes the old 0.4.2 mod folder.
     $database = Join-Path $userFolder 'mods\db.json'
+    $oldMod = Join-Path $userFolder 'mods\unpacked\beamng_vrs'
+    [void](New-Item -ItemType Directory -Path $oldMod -Force)
+    [IO.File]::WriteAllText((Join-Path $oldMod 'beamng_vrs.txt'), 'old')
     $databaseText = '{"header":{"version":1.1},"mods":{"other":{"active":false,"modname":"other"},' +
         '"beamng_vrs":{"modData":{"active":false,"name":"x \"active\":false"},"active" : false,"modname":"beamng_vrs"}}}'
     [IO.File]::WriteAllText($database, $databaseText)
@@ -288,8 +294,10 @@ try {
         $content -notmatch 'XR_ENABLE_API_LAYERS=XR_APILAYER_test_existing;XR_APILAYER_BEAMNG_eye_probe') {
         throw 'BeamMP did not receive the game arguments and child settings.'
     }
-    if ([IO.File]::ReadAllText($database) -ne $databaseText.Replace('"active" : false,"modname":"beamng_vrs"', '"active":true,"modname":"beamng_vrs"')) {
-        throw 'The BeamNG-VRS mod was not turned back on in mods\db.json, or other values changed.'
+    if ([IO.File]::ReadAllText($database) -ne $databaseText -or (Test-Path -LiteralPath $oldMod) -or
+        -not (Test-Path -LiteralPath (Join-Path $userFolder 'scripts\beamng_vrs\modScript.lua')) -or
+        -not (Test-Path -LiteralPath (Join-Path $userFolder 'settings\beamng_vrs_files.txt'))) {
+        throw 'The in-game script was not written as loose files, the old mod was kept, or mods\db.json changed.'
     }
     Remove-Item -LiteralPath $result, $database
     # The public launcher must not silently edit/use an obsolete nested INI.

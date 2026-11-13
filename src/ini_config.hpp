@@ -110,8 +110,9 @@ inline Values defaults() {
  out["BEAMNG_VRS_TRIPLE_SHARP_HEIGHT"] = "0.35";
  out["BEAMNG_VRS_TRIPLE_FEATHER"] = "0.30";
  out["BEAMNG_VRS_TRIPLE_DEADZONE"] = "1.5";
- out["BEAMNG_VRS_TRIPLE_MIDDLE_WIDTH"] = "1280";
- out["BEAMNG_VRS_TRIPLE_MIDDLE_HEIGHT"] = "880";
+ out["BEAMNG_VRS_TRIPLE_MIDDLE_WIDTH"] = "0"; // 0 = WideResolution share of the headset
+ out["BEAMNG_VRS_TRIPLE_WIDE_SCALE"] = "0.25";
+ out["BEAMNG_VRS_TRIPLE_MIDDLE_HEIGHT"] = "0";
  out["BEAMNG_VRS_TRIPLE_MIDDLE_FOV"] = "auto";
  return out;
 }
@@ -185,6 +186,9 @@ inline void setting(Values& out, const std::string& section, const std::string& 
  }
  else if(id == "quadviews.followgaze") out["BEAMNG_VRS_TRIPLE_GAZE"] = boolean(value);
  else if(id == "quadviews.shape") out["BEAMNG_VRS_TRIPLE_SHAPE"] = choice(value, {"circle", "rectangle"});
+ // Wide view size as a share of the headset's per-eye resolution (WideWidth and
+ // WideHeight, both set, give a fixed size instead).
+ else if(id == "quadviews.wideresolution") { number(value, 0.1, 1); out["BEAMNG_VRS_TRIPLE_WIDE_SCALE"] = value; }
  // Detail of the wide views only, relative to the game's own graphics settings.
  else if(id == "quadviews.widedetail") out["BEAMNG_VRS_TRIPLE_WIDE_DETAIL"] = choice(value, {"full", "medium", "low"});
  else if(id == "quadviews.focuswidth" || id == "quadviews.focusheight") {
