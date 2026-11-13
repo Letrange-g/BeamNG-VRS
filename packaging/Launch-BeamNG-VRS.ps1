@@ -284,18 +284,18 @@ end
 local function wideCreate(manager)
   local fov = wideFov or wideAutoFov()
   if not fov then return end -- auto: not written yet, retried in a second
-  -- Near and far follow the left eye when its frustum can be read.
-  local near, far = 0.05, 4000
+  -- Far follows the left eye when its frustum can be read. The near plane sits 0.2 m out:
+  -- the eyes hide the driver's own head from the inside, the wide views cannot (they
+  -- have no camera object), so it is clipped away instead. Nothing else is that close.
+  local near, far = 0.2, 4000
   pcall(function()
-    local f = manager:getView('oxrView0').frustum
-    local n, x = f:getNearDist(), f:getFarDist()
-    if type(n) == 'number' and n > 0 and type(x) == 'number' and x > n then near, far = n, x end
+    local x = manager:getView('oxrView0').frustum:getFarDist()
+    if type(x) == 'number' and x > near then far = x end
   end)
   for i = 1, 2 do
     if not wide[i] then
       local name = 'beamngVrsWide' .. (i - 1)
       local h = wideH + (i - 1) * 2
-      local eye = try(function() return manager:getView('oxrView' .. (i - 1)) end)
       local view
       local ok, err = pcall(function()
         view = manager:getOrCreateView(name)
@@ -311,12 +311,8 @@ local function wideCreate(manager)
       end)
       if ok then
         wide[i] = view
-        -- The eyes hide the driver's own body from the inside; the wide views do the same
-        -- when they share the eye's camera object.
-        local object = eye and try(function() return eye:getCameraObject() end)
-        local shared = object and pcall(function() view:setCameraObject(object) end)
         wideSay(name .. ' ' .. wideW .. 'x' .. h .. ', ' .. fov .. ' deg horizontal' .. (wideFov and '' or ' (auto)') ..
-          ', camera object ' .. (shared and tostring(object) or 'not shared (' .. tostring(object) .. ')'))
+          ', near ' .. near .. ' m, far ' .. far .. ' m')
       else wideSay(name .. ' not created: ' .. tostring(err)) end
     end
   end
