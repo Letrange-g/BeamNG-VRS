@@ -258,9 +258,9 @@ tier and the render-target sizes the game binds per frame (`M8.41` lines).
 
 Spaces, `-` and `_` are ignored, so `Mode=triple view` also works. In the triple modes, `[Foveation]`, `[Scissor]` and `[LensMask]` are not used.
 
-The launcher creates the middle view with its small mod in `mods\unpacked\beamng_vrs`. When that mod is off, for example on a BeamMP server that turns off unlisted mods, the surround stays black, as with `triple-black`. The middle view has no depth correction: it is one flat, low-resolution picture for the periphery. Black edges mean it does not cover the eyes' field of view, so raise `MiddleFov` or `MiddleWidth`.
+The launcher creates the middle view with its small mod in `mods\unpacked\beamng_vrs`. When that mod is off, for example on a BeamMP server that turns off unlisted mods, the surround stays black, as with `triple-black`. The middle view has no depth correction: it is one flat, low-resolution picture for the periphery. Black edges mean it does not cover the eyes' field of view, so raise `MiddleFov` (sides) or `MiddleHeight` (top and bottom).
 
-`[TripleView]` keys: `SharpWidth`, `SharpHeight` (0.1-1), `Shape` (`circle` or `rectangle`), `Feather` (0-0.5), `FollowGaze` (true/false), `GazeDeadZone` (degrees, 0-10), `MiddleWidth`, `MiddleHeight` (256-4096) and `MiddleFov` (vertical degrees, 30-150). The layer log has `M8.54` lines for the mode, the window, the output swapchains and the middle view's render target.
+`[TripleView]` keys: `SharpWidth`, `SharpHeight` (0.1-1), `Shape` (`circle` or `rectangle`), `Feather` (0-0.5), `FollowGaze` (true/false), `GazeDeadZone` (degrees, 0-10), `MiddleWidth`, `MiddleHeight` (256-4096) and `MiddleFov` (horizontal degrees, 30-150; the vertical angle follows from the resolution). The layer log has `M8.54` lines for the mode, the window, the output swapchains and the middle view's render target.
 
 ## Ghosting fix
 

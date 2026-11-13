@@ -111,7 +111,7 @@ inline Values defaults() {
  out["BEAMNG_VRS_TRIPLE_DEADZONE"] = "1.5";
  out["BEAMNG_VRS_TRIPLE_MIDDLE_WIDTH"] = "1600";
  out["BEAMNG_VRS_TRIPLE_MIDDLE_HEIGHT"] = "1152";
- out["BEAMNG_VRS_TRIPLE_MIDDLE_FOV"] = "95";
+ out["BEAMNG_VRS_TRIPLE_MIDDLE_FOV"] = "115";
  return out;
 }
 inline void setting(Values& out, const std::string& section, const std::string& key, std::string value) {

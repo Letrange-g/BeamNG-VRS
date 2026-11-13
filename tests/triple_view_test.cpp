@@ -41,6 +41,9 @@ int main() {
  Settings s; s.middleFov = 90; s.middleWidth = 1000; s.middleHeight = 1000;
  double hx = 0, hy = 0; middleHalf(s, hx, hy);
  assert(near(hx, 1, 1e-9) && near(hy, 1, 1e-9));
+ s.middleWidth = 2000; middleHalf(s, hx, hy); // fov is horizontal: the height follows the aspect
+ assert(near(hx, 1, 1e-9) && near(hy, 0.5, 1e-9));
+ s.middleWidth = 1000; middleHalf(s, hx, hy);
  assert(near(coverage({-1, 1, 1, -1}, hx, hy), 1));
  assert(near(coverage({-2, 2, 1, -1}, hx, hy), 0.5));
 

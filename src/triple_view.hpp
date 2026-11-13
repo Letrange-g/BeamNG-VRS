@@ -33,7 +33,7 @@ struct Settings {
  double feather = 0.15;     // edge blend, share of the window radius
  double deadZone = 0.03;    // tangent units (~1.7 deg) the gaze moves before the window follows
  uint32_t middleWidth = 1600, middleHeight = 1152;
- double middleFov = 95;     // vertical field of view of the middle view, degrees
+ double middleFov = 115;    // horizontal field of view of the middle view, degrees (BeamNG's fov is horizontal)
 };
 
 // A window of the given share of `full`, centred on (cx, cy) and slid back
@@ -78,11 +78,13 @@ struct GazeFilter {
  }
 };
 
-// Tangent half-extents of the middle view (symmetric frustum).
+// Tangent half-extents of the middle view (symmetric frustum). Like Torque3D, BeamNG
+// takes a render view's fov as the horizontal angle and derives the vertical one from
+// the resolution (M8.54 first test: read as vertical, the periphery looked magnified).
 inline void middleHalf(const Settings& s, double& halfX, double& halfY) {
  const double fov = std::clamp(s.middleFov, 30.0, 160.0) * 3.14159265358979323846 / 180.0;
- halfY = std::tan(fov / 2);
- halfX = halfY * double(std::max<uint32_t>(1, s.middleWidth)) / double(std::max<uint32_t>(1, s.middleHeight));
+ halfX = std::tan(fov / 2);
+ halfY = halfX * double(std::max<uint32_t>(1, s.middleHeight)) / double(std::max<uint32_t>(1, s.middleWidth));
 }
 
 // Share of the eye's full field of view (by tangent area) that the middle view

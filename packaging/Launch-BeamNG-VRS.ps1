@@ -253,7 +253,7 @@ local function middleCreate(manager)
     pcall(function() middle.renderEditorIcons = false end)
     middle.fov = middleFov
   end)
-  if ok then middleSay('middle view ' .. middleW .. 'x' .. middleH .. ', ' .. middleFov .. ' deg')
+  if ok then middleSay('middle view ' .. middleW .. 'x' .. middleH .. ', ' .. middleFov .. ' deg horizontal (view reports ' .. tostring(middle.fov) .. ')')
   else middleSay('middle view not created: ' .. tostring(err)) middle = nil end
   middleFollow(manager)
 end
@@ -633,7 +633,7 @@ try {
     $script:VRDrawDistance = [double]4000
     $script:GhostingFix = $false
     $script:VRMode = 'vrs'
-    $script:Middle = @{ Width = 1600; Height = 1152; Fov = 95 }
+    $script:Middle = @{ Width = 1600; Height = 1152; Fov = 115 }
     if (-not (Test-Path -LiteralPath $iniPath -PathType Leaf)) {
         throw 'BeamNG-VRS.ini not found beside Launch-BeamNG-VRS.cmd. Extract the entire ZIP; when upgrading, move your saved INI beside the CMD.'
     }
