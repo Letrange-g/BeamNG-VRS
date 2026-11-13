@@ -230,10 +230,18 @@ local function onClientPostStartMission() present = {} end
 -- M8.55 quad views: wide views.
 local wideW, wideH, wideFov = $middleW, $middleH, $middleFov
 local wideShared = $wideShared -- triple view: one view (index 1) between the eyes
+-- core_camera first: its onPreRender sets this frame's head pose that the wide views use.
+M.dependencies = {'core_camera'}
 local wideCount = wideShared and 1 or 2
 local wideFovFile = '/settings/beamng_vrs_middle_fov.txt'
 local wide = {}       -- [1] left eye, [2] right eye
 local wideWait = 0
+local wideFollowFailed = false
+-- Wide view pose prediction state (see wideFollow).
+local heads = {}        -- head poses: [1] this frame, [2] one frame ago, [3] two ago
+local lag, lagSamples, lagOffset = 1, 0, {0, 0, 0}
+local predict = core_camera ~= nil -- off if the check in wideFollow fails: plain copies then
+local predictChecked = false
 -- WideFov=auto: the OpenXR layer writes "fov=N" once it knows the headset's field of view.
 local function wideAutoFov()
   local ok, text = pcall(readFile, wideFovFile)
@@ -270,27 +278,112 @@ local function wideDiag(manager, dt)
   diagTime = diagTime + (dt or 0)
   if diagTime < diagNext then return end
   diagNext = diagTime + (diagTime < 30 and 3 or 30)
-  wideSay(string.format('diag t=%.0f %s | %s | %s | %s', diagTime,
+  wideSay(string.format('diag t=%.0f pose lag=%d predict=%s eye offset mm at lag 0/1/2=%.1f/%.1f/%.1f samples above 8 m/s=%d | %s | %s | %s | %s',
+    diagTime, lag, tostring(predict), lagOffset[1] * 1000, lagOffset[2] * 1000, lagOffset[3] * 1000, lagSamples,
     describe('eye0', try(function() return manager:getView('oxrView0') end)),
     describe('eye1', try(function() return manager:getView('oxrView1') end)),
     describe('wide0', wide[1]), describe('wide1', wide[2])))
 end
--- Each wide view takes its eye's camera as it is: same position, same orientation.
--- Triple view: the left eye's camera moved halfway to the right eye.
-local function wideFollow(manager)
+-- Wide view poses. The engine writes the eyes' matrices (oxrView0/1) while it renders,
+-- after Lua's onPreRender, so here they still hold the previous frame: copied as they
+-- are, the wide views trailed the eyes by a frame (about 30 cm at 100 km/h). This
+-- frame's head pose is known though: core_camera's final pose already holds the
+-- headset's predicted pose (core/cameraModes/gameengine.lua), and core_camera runs its
+-- onPreRender before ours (it is a dependency). Each wide view takes that pose plus its
+-- eye's offset from the head, measured against the head pose the eye was built from.
+-- How many frames separate the two is measured while moving (the offset stays still
+-- for the right count), 1 until then.
+local function v3(v) return {v.x, v.y, v.z} end
+local function dot(a, b) return a[1] * b[1] + a[2] * b[2] + a[3] * b[3] end
+local function toLocal(h, v) return {dot(v, h.r), dot(v, h.f), dot(v, h.u)} end
+local function toWorld(h, l)
+  return {h.r[1] * l[1] + h.f[1] * l[2] + h.u[1] * l[3],
+          h.r[2] * l[1] + h.f[2] * l[2] + h.u[2] * l[3],
+          h.r[3] * l[1] + h.f[3] * l[2] + h.u[3] * l[3]}
+end
+local function headNow()
+  local ok, h = pcall(function()
+    return {p = v3(core_camera.getPosition()), r = v3(core_camera.getRight()),
+            f = v3(core_camera.getForward()), u = v3(core_camera.getUp())}
+  end)
+  if ok then return h end
+end
+-- An eye matrix in head coordinates: position and the three axes.
+local function eyeLocal(h, m)
+  local p = m:getPosition()
+  local e = {pos = toLocal(h, {p.x - h.p[1], p.y - h.p[2], p.z - h.p[3]})}
+  for i = 0, 2 do e[i] = toLocal(h, v3(m:getColumn(i))) end
+  return e
+end
+local function poseMatrix(h, e)
+  local m = MatrixF(true)
+  for i = 0, 2 do local w = toWorld(h, e[i]) m:setColumn(i, vec3(w[1], w[2], w[3])) end
+  local p = toWorld(h, e.pos)
+  m:setColumn(3, vec3(h.p[1] + p[1], h.p[2] + p[2], h.p[3] + p[3]))
+  return m
+end
+local function matrixGap(a, b)
+  local gap = 0
+  for i = 0, 3 do
+    local x, y = a:getColumn(i), b:getColumn(i)
+    gap = math.max(gap, math.abs(x.x - y.x), math.abs(x.y - y.y), math.abs(x.z - y.z))
+  end
+  return gap
+end
+-- Lag: for 0, 1 and 2 frames, how far the left eye sits from the head. With the right
+-- count it is the eye's own offset (a few cm); with a wrong one the distance the car
+-- travelled in a frame adds to it, so this is measured above 8 m/s (9 cm a frame).
+local function measureLag(m, dt)
+  if not heads[3] or not dt or dt <= 0 then return end
+  local a, b = heads[1].p, heads[2].p
+  local speed = math.sqrt((a[1] - b[1]) ^ 2 + (a[2] - b[2]) ^ 2 + (a[3] - b[3]) ^ 2) / dt
+  if speed < 8 then return end
+  for k = 1, 3 do
+    local pos = eyeLocal(heads[k], m).pos
+    local d = math.sqrt(pos[1] ^ 2 + pos[2] ^ 2 + pos[3] ^ 2)
+    lagOffset[k] = lagSamples == 0 and d or lagOffset[k] * 0.95 + d * 0.05
+  end
+  lagSamples = lagSamples + 1
+  if lagSamples >= 30 then
+    local best = 1
+    for k = 1, 3 do if lagOffset[k] < lagOffset[best + 1] then best = k - 1 end end
+    if best ~= lag then wideSay('pose lag now ' .. best .. ' frame(s)') end
+    lag = best
+  end
+end
+local function wideFollow(manager, dt)
+  local m0 = manager:getView('oxrView0').cameraMatrix
+  local m1 = manager:getView('oxrView1').cameraMatrix
+  local source = {m0, m1}
+  if wideShared then
+    -- Triple view: the left eye's camera moved halfway to the right eye.
+    local a, b = m0:getPosition(), m1:getPosition()
+    m0:setPosition(Point3F((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2))
+    source = {m0}
+  end
+  local h = predict and headNow()
+  if h then
+    table.insert(heads, 1, h)
+    heads[4] = nil
+    measureLag(manager:getView('oxrView0').cameraMatrix, dt)
+    local then_ = heads[lag + 1] or h
+    if not predictChecked then
+      -- The round trip through head coordinates must give the eye matrix back.
+      predictChecked = true
+      local ok, gap = pcall(function() return matrixGap(poseMatrix(h, eyeLocal(h, m0)), m0) end)
+      if not ok or gap > 0.001 then
+        predict = false
+        wideSay('pose prediction off (check failed: ' .. tostring(gap) .. '), wide views copy the eyes')
+      else wideSay('pose prediction on') end
+    end
+    if predict then
+      for i = 1, #source do source[i] = poseMatrix(h, eyeLocal(then_, source[i])) end
+    end
+  end
   for i = 1, wideCount do
     local view = wide[i]
     if view then
-      local ok = pcall(function()
-        if wideShared then
-          local m = manager:getView('oxrView0').cameraMatrix
-          local a, b = m:getPosition(), manager:getView('oxrView1').cameraMatrix:getPosition()
-          m:setPosition(Point3F((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2))
-          view.cameraMatrix = m
-        else
-          view.cameraMatrix = manager:getView('oxrView' .. (i - 1)).cameraMatrix
-        end
-      end)
+      local ok = pcall(function() view.cameraMatrix = source[i] end)
       if not ok then wide[i] = nil end
     end
   end
@@ -318,6 +411,10 @@ local function wideCreate(manager)
         view.viewPort = RectI(0, 0, wideW, h)
         view.namedTexTargetColor = name
         pcall(function() view.renderEditorIcons = false end)
+        -- The driver's head is hidden per render view bit (gameplay/seatOccupants.lua:
+        -- setMeshHiddenInRenderView(mesh, player, true)); the eyes carry player 0's bit.
+        local masked = pcall(function() view:maskSet(0) end)
+        if not masked then wideSay(name .. ': render view mask not set, the driver head may show') end
         -- The projection comes from the frustum alone (fov is only a label, as in the
         -- game's own render/viewDemo.lua). Frustum.construct takes the VERTICAL angle and
         -- widens it by the aspect (measured: near-plane extents 0.43 x 0.295 at 0.2 m),
@@ -333,7 +430,7 @@ local function wideCreate(manager)
       else wideSay(name .. ' not created: ' .. tostring(err)) end
     end
   end
-  wideFollow(manager)
+  pcall(wideFollow, manager, nil)
 end
 local function wideDestroy(manager)
   for i = 1, 2 do
@@ -355,14 +452,16 @@ local function wideUpdate(dtReal)
     if wideWait >= 1 then wideWait = 0 wideCreate(manager) end
     return
   end
-  wideFollow(manager)
   wideDiag(manager, dtReal)
 end
-local function widePreRender()
+local function widePreRender(dtReal)
   local manager = RenderViewManagerInstance
-  if manager then wideFollow(manager) end
+  if manager and wide[1] then
+    local ok, err = pcall(wideFollow, manager, dtReal)
+    if not ok and not wideFollowFailed then wideFollowFailed = true wideSay('pose update failed: ' .. tostring(err)) end
+  end
 end
-local function wideMission() wide = {} wideWait = 0 end
+local function wideMission() wide = {} wideWait = 0 heads = {} end
 local function wideUnload() wideDestroy(RenderViewManagerInstance) end
 
 "@
