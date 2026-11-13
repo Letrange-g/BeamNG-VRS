@@ -41,14 +41,46 @@ struct Settings {
 // WideResolution: unless both sizes are set, the wide views take wideScale of the
 // headset's recommended per-eye size (same aspect as the eye), kept within 256-4096
 // pixels and even. Without a headset size yet, 1280 x 880 as before.
-inline void resolveWideSize(Settings& s, uint32_t fullWidth, uint32_t fullHeight) {
- if(s.middleWidth && s.middleHeight) return;
- if(!fullWidth || !fullHeight) { s.middleWidth = 1280; s.middleHeight = 880; return; }
- const auto size = [&](uint32_t full) {
-  const double v = std::min(4096.0, std::max(256.0, double(full) * s.wideScale));
-  return uint32_t(std::lround(v / 2.0) * 2);
- };
- s.middleWidth = size(fullWidth); s.middleHeight = size(fullHeight);
+// The layer finds each wide view's render target by its size alone, so that size must not
+// match a target the game makes for the focus views: their own size, the internal size
+// before FSR upscaling (renderScale) and the half/quarter/eighth chains built from both.
+// Matt's log (FocusWidth=FocusHeight=WideResolution=0.25): the focus views were 1298x1042
+// like the left wide view, so the layer took a focus target and the left eye looked zoomed.
+inline bool wideSizeClashes(uint32_t w, uint32_t h, uint32_t focusW, uint32_t focusH, double renderScale) {
+ for(const double scale : {1.0, renderScale})
+  for(const double k : {1.0, 0.5, 0.25, 0.125}) {
+   const double cw = focusW * scale * k, ch = focusH * scale * k;
+   const auto within = [](double a, double b) { return std::abs(a - b) <= 4.0; };
+   // The right wide view is two rows taller than the left.
+   if(within(w, cw) && (within(h, ch) || within(h + 2.0, ch))) return true;
+  }
+ return false;
+}
+
+inline uint32_t scaledSize(uint32_t size, double share);
+
+// Sizes the wide views from WideResolution unless WideWidth/WideHeight fixed them, then
+// widens them in 8-pixel steps until no focus-view target can share their size.
+// Returns true when the size had to be changed for that.
+inline bool resolveWideSize(Settings& s, uint32_t fullWidth, uint32_t fullHeight, double renderScale = 0.5) {
+ if(!(s.middleWidth && s.middleHeight)) {
+  if(!fullWidth || !fullHeight) { s.middleWidth = 1280; s.middleHeight = 880; }
+  else {
+   const auto size = [&](uint32_t full) {
+    const double v = std::min(4096.0, std::max(256.0, double(full) * s.wideScale));
+    return uint32_t(std::lround(v / 2.0) * 2);
+   };
+   s.middleWidth = size(fullWidth); s.middleHeight = size(fullHeight);
+  }
+ }
+ if(!fullWidth || !fullHeight) return false;
+ const uint32_t focusW = scaledSize(fullWidth, s.sharpWidth), focusH = scaledSize(fullHeight, s.sharpHeight);
+ bool moved = false;
+ for(int i = 0; i < 64 && wideSizeClashes(s.middleWidth, s.middleHeight, focusW, focusH, renderScale); ++i) {
+  s.middleWidth = s.middleWidth + 8 <= 4096 ? s.middleWidth + 8 : s.middleWidth - 8;
+  moved = true;
+ }
+ return moved;
 }
 
 // A window of the given share of `full`, centred on (cx, cy) and slid back

@@ -889,9 +889,12 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateSession(XrInstance inst,con
       if(d.enumerateViews&&ci&&XR_SUCCEEDED(d.enumerateViews(inst,ci->systemId,XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,2,&n,rv.data()))&&n>=1){
        fw=rv[0].recommendedImageRectWidth;fh=rv[0].recommendedImageRectHeight;}
       const bool fixed=t.middleWidth&&t.middleHeight;
-      beamng_triple::resolveWideSize(t,fw,fh);
-      char m[220]{};sprintf_s(m,sizeof(m),"M8.55 wide views %ux%u (%s of the headset's %ux%u per eye)",t.middleWidth,t.middleHeight,
-        fixed?"fixed WideWidth/WideHeight, instead":(std::to_string(int(std::lround(t.wideScale*100)))+"%").c_str(),fw,fh);
+      // BeamNG renders VR at 50% and upscales with FSR unless RenderScale changes it.
+      const double renderScale=tripleNumber("BEAMNG_VRS_RENDER_SCALE",0.5,0.25,1);
+      const bool moved=beamng_triple::resolveWideSize(t,fw,fh,renderScale);
+      char m[260]{};sprintf_s(m,sizeof(m),"M8.55 wide views %ux%u (%s of the headset's %ux%u per eye)%s",t.middleWidth,t.middleHeight,
+        fixed?"fixed WideWidth/WideHeight, instead":(std::to_string(int(std::lround(t.wideScale*100)))+"%").c_str(),fw,fh,
+        moved?", widened so no focus-view target has the same size":"");
       logLine(m);}
      m844Active=false;
      {std::lock_guard<std::mutex> g(stateMutex);m844Session=XR_NULL_HANDLE;}

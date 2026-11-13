@@ -1,6 +1,15 @@
-BeamNG-VRS 0.4.3 — portable Windows x64, for BeamNG.drive 0.40.
+BeamNG-VRS 0.4.4 — portable Windows x64, for BeamNG.drive 0.40.
 
-## What's new in 0.4.3
+## What's new in 0.4.4
+
+- **Fix: quad views with a focus size equal to `WideResolution`.** With
+  `FocusWidth=0.25`, `FocusHeight=0.25` and the default `WideResolution=0.25`,
+  the focus and wide views had the same size, so the layer could take a focus
+  view's image for the left wide view and the left eye looked zoomed in. The
+  wide views are now widened slightly whenever their size would match a focus
+  view's (the layer log then says so). The defaults were not affected.
+
+## In 0.4.3
 
 - **Quad views (experimental, Direct3D 12).** Set `[VR] Mode=quad` in the INI.
   Each eye renders only a small sharp **focus view** (35% x 35% of its field of

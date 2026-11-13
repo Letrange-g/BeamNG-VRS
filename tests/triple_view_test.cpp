@@ -72,6 +72,11 @@ int main() {
  {Settings w; w.wideScale = 0.5; resolveWideSize(w, 5190, 4168); assert(w.middleWidth == 2596 && w.middleHeight == 2084);}
  {Settings w; w.wideScale = 0.1; resolveWideSize(w, 1000, 900); assert(w.middleWidth == 256 && w.middleHeight == 256);}
  {Settings w; w.middleWidth = 1280; w.middleHeight = 880; resolveWideSize(w, 5190, 4168); assert(w.middleWidth == 1280 && w.middleHeight == 880);}
+ {Settings w; w.sharpWidth = 0.25; w.sharpHeight = 0.25; assert(resolveWideSize(w, 5190, 4168));
+  assert(w.middleWidth != 1298 && !wideSizeClashes(w.middleWidth, w.middleHeight, 1298, 1042, 0.5));}
+ {Settings w; assert(!resolveWideSize(w, 5190, 4168)); assert(w.middleWidth == 1298);}
+ {Settings w; w.sharpWidth = 0.5; w.sharpHeight = 0.5; resolveWideSize(w, 5190, 4168, 1.0); // 2595x2084 at half: 1297.5x1042
+  assert(!wideSizeClashes(w.middleWidth, w.middleHeight, 2595, 2084, 1.0));}
  {Settings w; resolveWideSize(w, 0, 0); assert(w.middleWidth == 1280 && w.middleHeight == 880);}
  return 0;
 }
