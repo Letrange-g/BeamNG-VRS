@@ -60,7 +60,7 @@ function Get-OpenXRImplicitLayers {
     }
 }
 # M8.48: BeamNG 0.40 forces FSR at 50% in VR. Each eye view ('oxrView0'/'oxrView1')
-# exposes upscaleRenderScale to Lua, so a small unpacked mod sets it whenever the
+# exposes upscaleRenderScale to Lua, so a small in-game script (loose user-folder files) sets it whenever the
 # VR views appear (entering VR recreates them) and every 2 s puts it back if the
 # game changed it. Setting it recreates FSR, so it is only set when it differs.
 # (M8.49 tried a VR far clip the same way: BeamNG ignores frusta set from Lua.)
@@ -156,25 +156,52 @@ function Get-VRDrawDistanceStart {
     }
     return [double]$IniDistance
 }
+# The in-game script is written as loose files in the BeamNG user folder, not as a mod:
+# BeamMP turns off every mod a server does not list (ours included, which left the quad
+# views' surround black), but it only manages mods. BeamNG runs every
+# scripts\*\modScript.lua it finds, loose files included, as it does for mods.
+# settings\beamng_vrs_files.txt lists the files written, so only those are removed.
+$script:VRScriptFiles = @('lua\ge\extensions\beamngVrs.lua', 'scripts\beamng_vrs\modScript.lua',
+    'ui\modules\apps\BeamngVrsDrawDistance\app.js', 'ui\modules\apps\BeamngVrsDrawDistance\app.json',
+    'ui\modules\apps\BeamngVrsDrawDistance\app.png')
+function Remove-VRScript {
+    param([string]$UserFolder)
+    # Up to 0.4.2 the script was the mod mods\unpacked\beamng_vrs; only a folder this
+    # launcher wrote (it has beamng_vrs.txt) is removed.
+    $oldMod = Join-Path $UserFolder 'mods\unpacked\beamng_vrs'
+    if (Test-Path -LiteralPath (Join-Path $oldMod 'beamng_vrs.txt') -PathType Leaf) { Remove-Item -LiteralPath $oldMod -Recurse -Force }
+    $list = Join-Path $UserFolder 'settings\beamng_vrs_files.txt'
+    if (-not (Test-Path -LiteralPath $list -PathType Leaf)) { return }
+    foreach ($relative in [IO.File]::ReadAllLines($list)) {
+        # Only names this launcher writes, so a damaged list cannot delete anything else.
+        if ($script:VRScriptFiles -notcontains $relative.Trim()) { continue }
+        $path = Join-Path $UserFolder $relative.Trim()
+        if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-Item -LiteralPath $path -Force }
+        # Remove the folders it leaves empty, up to (not including) the user folder.
+        $folder = Split-Path -Parent $path
+        while ($folder.Length -gt $UserFolder.TrimEnd('\').Length -and (Test-Path -LiteralPath $folder -PathType Container) -and
+            -not (Get-ChildItem -LiteralPath $folder -Force | Select-Object -First 1)) {
+            Remove-Item -LiteralPath $folder -Force
+            $folder = Split-Path -Parent $folder
+        }
+    }
+    Remove-Item -LiteralPath $list -Force
+}
 function Update-VRMod {
     param([string]$UserFolder, $Scale, $Distance, $IniDistance, $Middle)
-    $mod = Join-Path $UserFolder 'mods\unpacked\beamng_vrs'
-    $marker = Join-Path $mod 'beamng_vrs.txt'
-    if ($null -eq $Scale -and $null -eq $Distance -and $null -eq $Middle) {
-        # Only a folder this launcher wrote is removed.
-        if (Test-Path -LiteralPath $marker -PathType Leaf) { Remove-Item -LiteralPath $mod -Recurse -Force }
-        return
-    }
+    if (Test-Path -LiteralPath $UserFolder -PathType Container) { Remove-VRScript -UserFolder $UserFolder }
+    if ($null -eq $Scale -and $null -eq $Distance -and $null -eq $Middle) { return }
     if (-not (Test-Path -LiteralPath $UserFolder -PathType Container)) {
-        Write-Warning "BeamNG user folder not found at $UserFolder; [Renderer] RenderScale and the VR draw distance app are not applied."
+        Write-Warning "BeamNG user folder not found at $UserFolder; [Renderer] RenderScale, the VR draw distance app and the quad views' wide views are not applied."
         return
     }
-    if ((Test-Path -LiteralPath $mod) -and -not (Test-Path -LiteralPath $marker -PathType Leaf)) {
-        Write-Warning "$mod exists but was not written by BeamNG-VRS; [Renderer] RenderScale and the VR draw distance app are not applied."
-        return
+    foreach ($relative in $script:VRScriptFiles) {
+        $path = Join-Path $UserFolder $relative
+        if (Test-Path -LiteralPath $path) {
+            Write-Warning "$path exists but was not written by BeamNG-VRS; [Renderer] RenderScale, the VR draw distance app and the quad views' wide views are not applied."
+            return
+        }
     }
-    # Rewritten from scratch, so a feature turned off in the INI leaves no file behind.
-    if (Test-Path -LiteralPath $mod) { Remove-Item -LiteralPath $mod -Recurse -Force }
     $invariant = [Globalization.CultureInfo]::InvariantCulture
     $utf8 = New-Object Text.UTF8Encoding($false)
     $lua = "-- Written by Launch-BeamNG-VRS from BeamNG-VRS.ini ([Renderer] RenderScale and VRDrawDistance, [VR] Mode).`r`nlocal M = {}`r`n"
@@ -614,7 +641,6 @@ M.onExtensionLoaded = registerMenus
     }
     $lua += "return M`r`n"
     $files = @{
-        'beamng_vrs.txt' = "Written by Launch-BeamNG-VRS at every start from BeamNG-VRS.ini. Remove RenderScale, set VRDrawDistance=off and [VR] Mode=vrs there to delete it.`r`n"
         'scripts\beamng_vrs\modScript.lua' = "load('beamngVrs')`r`nsetExtensionUnloadMode('beamngVrs', 'manual')`r`n"
         'lua\ge\extensions\beamngVrs.lua' = $lua
     }
@@ -622,53 +648,27 @@ M.onExtensionLoaded = registerMenus
         $files['ui\modules\apps\BeamngVrsDrawDistance\app.js'] = $script:VRDrawDistanceApp
         $files['ui\modules\apps\BeamngVrsDrawDistance\app.json'] = $script:VRDrawDistanceAppJson
     }
+    $written = @($files.Keys)
+    if ($null -ne $Distance) { $written += 'ui\modules\apps\BeamngVrsDrawDistance\app.png' }
+    # The list first, so a launch that stops halfway still removes what it wrote.
+    $settings = Join-Path $UserFolder 'settings'
+    [void](New-Item -ItemType Directory -Path $settings -Force)
+    [IO.File]::WriteAllText((Join-Path $settings 'beamng_vrs_files.txt'), (($written -join "`r`n") + "`r`n"), $utf8)
     foreach ($relative in $files.Keys) {
-        $path = Join-Path $mod $relative
+        $path = Join-Path $UserFolder $relative
         [void](New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force)
         [IO.File]::WriteAllText($path, $files[$relative], $utf8)
     }
+    $where = "the in-game script in $UserFolder (lua\ge\extensions\beamngVrs.lua)"
     if ($null -ne $Distance) {
-        [IO.File]::WriteAllBytes((Join-Path $mod 'ui\modules\apps\BeamngVrsDrawDistance\app.png'),
+        [IO.File]::WriteAllBytes((Join-Path $UserFolder 'ui\modules\apps\BeamngVrsDrawDistance\app.png'),
             [Convert]::FromBase64String($script:VRDrawDistanceAppPng))
-        Write-Output "VR draw distance $distanceText m; its in-game app and radial menu are added through $mod"
+        Write-Output "VR draw distance $distanceText m; its in-game app and radial menu are added through $where"
     }
-    if ($null -ne $Scale) { Write-Output "VR render scale $scaleText applied through $mod" }
-    if ($null -ne $Middle) { Write-Output "Quad views: wide views $(if ($fixedSize) { "${middleW}x${middleH}" } else { 'sized from the headset' }) (FOV $(if ($null -eq $Middle.Fov) { 'auto' } else { $middleFov + ' deg' })) added through $mod" }
-    Enable-VRModInDatabase -UserFolder $UserFolder
+    if ($null -ne $Scale) { Write-Output "VR render scale $scaleText applied through $where" }
+    if ($null -ne $Middle) { Write-Output "Quad views: wide views $(if ($fixedSize) { "${middleW}x${middleH}" } else { 'sized from the headset' }) (FOV $(if ($null -eq $Middle.Fov) { 'auto' } else { $middleFov + ' deg' })) added through $where" }
 }
 
-# BeamMP turns off every mod a server does not list, ours included, and BeamNG saves
-# that in mods\db.json. Turn the mod back on so it is not left off after a server.
-# Only the "active" value of our entry changes; the rest of the file is kept as is.
-function Enable-VRModInDatabase {
-    param([string]$UserFolder)
-    $database = Join-Path $UserFolder 'mods\db.json'
-    if (-not (Test-Path -LiteralPath $database -PathType Leaf)) { return }
-    $text = [IO.File]::ReadAllText($database)
-    $entry = [regex]::Match($text, '"beamng_vrs"\s*:\s*\{')
-    if (-not $entry.Success) { return }
-    # Find "active": false at the top level of our entry, skipping strings and nested objects.
-    $depth = 0; $inString = $false
-    for ($i = $entry.Index + $entry.Length - 1; $i -lt $text.Length; ++$i) {
-        $c = $text[$i]
-        if ($inString) {
-            if ($c -eq '\') { ++$i } elseif ($c -eq '"') { $inString = $false }
-            continue
-        }
-        if ($c -eq '{' -or $c -eq '[') { ++$depth }
-        elseif ($c -eq '}' -or $c -eq ']') { $depth -= 1; if ($depth -eq 0) { return } }
-        elseif ($c -eq '"') {
-            $active = if ($depth -eq 1) { [regex]::Match($text.Substring($i), '^"active"\s*:\s*false') } else { $null }
-            if ($active -and $active.Success) {
-                $text = $text.Substring(0, $i) + '"active":true' + $text.Substring($i + $active.Length)
-                [IO.File]::WriteAllText($database, $text, (New-Object Text.UTF8Encoding($false)))
-                Write-Output 'BeamNG-VRS in-game mod turned back on (BeamMP turns it off on servers).'
-                return
-            }
-            $inString = $true
-        }
-    }
-}
 # ---------------------------------------------------------------------------------------
 # [Renderer] GhostingFix
 #
