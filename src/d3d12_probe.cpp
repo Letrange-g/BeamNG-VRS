@@ -111,10 +111,34 @@ std::mutex stampMutex;
 uint64_t busyTicks=0,ourTicks=0,submissions=0,stampSkipped=0;
 unsigned gpuFrames=0,gpuReports=0;
 // M8.52: frame pacing over the same window as the GPU report (see frame_pacing.hpp).
-double pacingIntervalMs=0,pacingWaitMs=0,pacingPeriodMs=0;
+double pacingIntervalMs=0,pacingIntervalSqMs=0,pacingWaitMs=0,pacingPeriodMs=0;
 unsigned pacingFrames=0,pacingWaits=0;
 LARGE_INTEGER lastFrameEnd{};
 thread_local bool ownSubmit=false; // Our uploads and eye-image effects, reported separately.
+// M8.54 triple view: the middle view's render targets, found by size. The color
+// target is the 8-bit one (the views' final images are 8-bit; HDR passes are 16-bit
+// float) last bound in the frame. Its state is the last transition recorded for it.
+std::atomic<uint32_t> middleWidth{0},middleHeight{0};
+std::atomic<uint64_t> frameCounter{0};
+std::mutex middleMutex;
+std::unordered_set<uint64_t> middleResources;
+std::unordered_map<uint64_t,uint32_t> middleStates;
+struct MiddleSeen { uint32_t format=0; uint64_t binds=0; };
+std::map<uint64_t,MiddleSeen> middleSeen;  // For the one-time log of what was found.
+MiddleTarget middleLast[2]{};
+// M8.55 quad views: two wide views, one per eye, told apart by height: the right
+// eye's is two rows taller (see the launcher's Lua mod). -1: not a wide view.
+int wideIndex(uint32_t width,uint32_t height){
+ const uint32_t w=middleWidth.load(std::memory_order_relaxed),h=middleHeight.load(std::memory_order_relaxed);
+ if(!w || width!=w)return -1;
+ return height==h?0:height==h+2?1:-1;
+}
+decltype(ID3D12GraphicsCommandListVtbl::ResourceBarrier) nextResourceBarrier=nullptr;
+bool eightBit(uint32_t f){
+ return f==DXGI_FORMAT_R8G8B8A8_UNORM||f==DXGI_FORMAT_R8G8B8A8_UNORM_SRGB||f==DXGI_FORMAT_R8G8B8A8_TYPELESS||
+   f==DXGI_FORMAT_B8G8R8A8_UNORM||f==DXGI_FORMAT_B8G8R8A8_UNORM_SRGB||f==DXGI_FORMAT_B8G8R8A8_TYPELESS||
+   f==DXGI_FORMAT_R10G10B10A2_UNORM||f==DXGI_FORMAT_R10G10B10A2_TYPELESS;
+}
 // Ctrl+Shift+V pauses VRS for an A/B in the same scene; the GPU report says which.
 std::atomic<bool> vrsPaused{false};
 
@@ -214,6 +238,11 @@ void bind(ID3D12GraphicsCommandList* list,SIZE_T first,UINT count,bool renderPas
   else if(target){nextRSSetScissorRects(list,1,&c.keep);c.assumed=true;assumedScissors.fetch_add(1,std::memory_order_relaxed);}
   else if(c.assumed){const D3D12_RECT all{0,0,D3D12_VIEWPORT_BOUNDS_MAX,D3D12_VIEWPORT_BOUNDS_MAX};nextRSSetScissorRects(list,1,&all);c.assumed=false;}
  }
+ if(const int wide=known && count && t.samples==1 ? wideIndex(t.width,t.height) : -1; wide>=0){
+  std::lock_guard<std::mutex> g(middleMutex);
+  auto& seen=middleSeen[t.resource];seen.format=t.format;++seen.binds;
+  if(eightBit(t.format)){auto& l=middleLast[wide];l.resource=t.resource;l.format=t.format;l.bindFrame=frameCounter.load(std::memory_order_relaxed);}
+ }
  if(!diagnostics && !foveating)return;
  std::lock_guard<std::mutex> g(statsMutex);
  if(image){++vrsBinds;if(source==1)++vrsLaterTarget;else if(source==2)++vrsDepthOnly;}
@@ -244,8 +273,26 @@ void STDMETHODCALLTYPE hookCreateRtv(ID3D12Device* device,ID3D12Resource* resour
  t.width=std::max<uint32_t>(1,uint32_t(rd.Width>>mip));t.height=std::max<uint32_t>(1,rd.Height>>mip);
  t.format=uint32_t(desc && desc->Format!=DXGI_FORMAT_UNKNOWN?desc->Format:rd.Format);t.samples=rd.SampleDesc.Count;
  t.resource=uint64_t(reinterpret_cast<uintptr_t>(resource));t.device=device;
+ if(wideIndex(t.width,t.height)>=0){
+  std::lock_guard<std::mutex> g(middleMutex);middleResources.insert(t.resource);
+ }
  std::unique_lock<std::shared_mutex> g(targetsMutex);
  targets[destination.ptr]=t;
+}
+
+// M8.54: the last transition recorded for each middle-view target. Recording order
+// stands in for execution order: the game records and submits one frame at a time.
+void STDMETHODCALLTYPE hookResourceBarrier(ID3D12GraphicsCommandList* list,UINT count,const D3D12_RESOURCE_BARRIER* barriers){
+ nextResourceBarrier(list,count,barriers);
+ if(!barriers || !middleWidth.load(std::memory_order_relaxed))return;
+ std::lock_guard<std::mutex> g(middleMutex);
+ if(middleResources.empty())return;
+ for(UINT i=0;i<count;++i){
+  const auto& b=barriers[i];
+  if(b.Type!=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION || (b.Flags&D3D12_RESOURCE_BARRIER_FLAG_BEGIN_ONLY))continue;
+  const uint64_t r=uint64_t(reinterpret_cast<uintptr_t>(b.Transition.pResource));
+  if(middleResources.count(r))middleStates[r]=uint32_t(b.Transition.StateAfter);
+ }
 }
 
 void STDMETHODCALLTYPE hookOMSetRenderTargets(ID3D12GraphicsCommandList* list,UINT count,
@@ -416,6 +463,8 @@ bool install(ID3D12Device* device){
    decltype(ID3D12GraphicsCommandListVtbl::RSSetScissorRects)(&hookRSSetScissorRects),nextRSSetScissorRects);
  ok=ok&&patch(&list->lpVtbl->Reset,
    decltype(ID3D12GraphicsCommandListVtbl::Reset)(&hookReset),nextReset);
+ ok=ok&&patch(&list->lpVtbl->ResourceBarrier,
+   decltype(ID3D12GraphicsCommandListVtbl::ResourceBarrier)(&hookResourceBarrier),nextResourceBarrier);
  bool renderPasses=false;
  ID3D12GraphicsCommandList4* list4=nullptr;
  if(ok && SUCCEEDED(ID3D12GraphicsCommandList_QueryInterface(list,IID_ID3D12GraphicsCommandList4,reinterpret_cast<void**>(&list4)))){
@@ -685,7 +734,8 @@ void outlineRects(uint32_t w,uint32_t h,int eye,float cu,float cv,float size,Rec
 }
 
 bool attach(void* device,void* queue,LogFn fn,bool diag,const Foveation& f,const Effects& e){
- if(!device || (!diag && !f.enabled && !e.any()))return false;
+ if(!device || (!diag && !f.enabled && !e.any() && !e.middleWidth))return false;
+ if(e.middleWidth && e.middleHeight){middleHeight=e.middleHeight;middleWidth=e.middleWidth;}
  auto* d=static_cast<ID3D12Device*>(device);
  std::call_once(hookOnce,[&]{logFn=fn;hooked=install(d);});
  if(!hooked)return false;
@@ -809,8 +859,44 @@ void frameWaited(double waitMs,double periodMs){
  pacingWaitMs+=waitMs;pacingPeriodMs+=periodMs;++pacingWaits;
 }
 
+bool middleTarget(int view,MiddleTarget& out){
+ if(view<0||view>1)return false;
+ std::lock_guard<std::mutex> g(middleMutex);
+ const auto& last=middleLast[view];
+ if(!last.resource)return false;
+ out=last;
+ const auto it=middleStates.find(last.resource);
+ // Never transitioned: a render target is created and drawn in RENDER_TARGET state.
+ out.state=it!=middleStates.end()?it->second:uint32_t(D3D12_RESOURCE_STATE_RENDER_TARGET);
+ return true;
+}
+uint64_t frameCount(){return frameCounter.load(std::memory_order_relaxed);}
+void executeOwn(void* queue,void* list){
+ auto* q=static_cast<ID3D12CommandQueue*>(queue);
+ ID3D12CommandList* lists[]{static_cast<ID3D12CommandList*>(list)};
+ ownSubmit=true;ID3D12CommandQueue_ExecuteCommandLists(q,1,lists);ownSubmit=false;
+}
+
 void frame(){
  if(!hooked)return;
+ const uint64_t frameNumber=frameCounter.fetch_add(1,std::memory_order_relaxed)+1;
+ // M8.54: once, what the middle view's targets look like, so a wrong pick can be spotted.
+ if(frameNumber==600 && middleWidth.load(std::memory_order_relaxed)){
+  std::lock_guard<std::mutex> g(middleMutex);
+  char msg[256]{};
+  sprintf_s(msg,"M8.55 wide views %ux%u/%u: %zu targets seen, color targets %p (format %u) and %p (format %u)",
+    middleWidth.load(),middleHeight.load(),middleHeight.load()+2,middleSeen.size(),(void*)uintptr_t(middleLast[0].resource),middleLast[0].format,
+    (void*)uintptr_t(middleLast[1].resource),middleLast[1].format);
+  log(msg);
+  int listed=0;
+  for(const auto& [resource,seen]:middleSeen){
+   if(++listed>8)break;
+   const auto st=middleStates.find(resource);
+   sprintf_s(msg,"M8.55 wide target %p format %u binds %llu state 0x%X",(void*)uintptr_t(resource),seen.format,
+     (unsigned long long)seen.binds,st!=middleStates.end()?st->second:0u);
+   log(msg);
+  }
+ }
  // M8.43: report a lost device once, with its reason, before the game shuts down.
  static unsigned checks=0;static bool removedLogged=false;
  if(ID3D12Device* d=fxDevice?fxDevice:vrsDevice; d && !removedLogged && (++checks%8)==1){
@@ -834,7 +920,8 @@ void frame(){
   {std::lock_guard<std::mutex> g(stampMutex);
    // M8.52: time since the previous xrEndFrame on the game's render thread.
    LARGE_INTEGER now{},freq{};QueryPerformanceCounter(&now);QueryPerformanceFrequency(&freq);
-   if(lastFrameEnd.QuadPart){pacingIntervalMs+=double(now.QuadPart-lastFrameEnd.QuadPart)*1000.0/double(freq.QuadPart);++pacingFrames;}
+   if(lastFrameEnd.QuadPart){const double ms=double(now.QuadPart-lastFrameEnd.QuadPart)*1000.0/double(freq.QuadPart);
+    pacingIntervalMs+=ms;pacingIntervalSqMs+=ms*ms;++pacingFrames;}
    lastFrameEnd=now;
    if(stampFence)collectStamps();
    if(stampFence && ++gpuFrames>=(gpuReports?900u:300u)){
@@ -843,20 +930,28 @@ void frame(){
     if(pacingFrames && pacingWaits){
      paced=pacingFrames;
      pacing.intervalMs=pacingIntervalMs/pacingFrames;
+     // M8.53: spread of the interval; a frame limiter holds it flat.
+     const double variance=pacingIntervalSqMs/pacingFrames-pacing.intervalMs*pacing.intervalMs;
+     pacing.intervalSdMs=variance>0?std::sqrt(variance):0.0;
      pacing.waitMs=pacingWaitMs/pacingWaits;
      pacing.periodMs=pacingPeriodMs/pacingWaits;
     }
-    pacingIntervalMs=pacingWaitMs=pacingPeriodMs=0;pacingFrames=pacingWaits=0;
+    pacingIntervalMs=pacingIntervalSqMs=pacingWaitMs=pacingPeriodMs=0;pacingFrames=pacingWaits=0;
    }}
-  if(gn){char msg[400]{};
+  if(gn){char msg[512]{};
    const double gpuMs=double(busy)/ticksPerMs/gn;
    int used=sprintf_s(msg,"M8.47 D3D12 GPU frames=%u busy=%.2f ms/frame (mod=%.2f) submissions=%.1f/frame vrs=%s skipped=%llu",
      gn,gpuMs,double(ours)/ticksPerMs/gn,double(subs)/gn,!foveating?"off":vrsPaused.load()?"paused":"on",(unsigned long long)skipped);
    // M8.52: frame interval, game work (interval minus xrWaitFrame) and the verdict.
    if(paced && used>0){
     pacing.gpuMs=gpuMs;
-    sprintf_s(msg+used,sizeof(msg)-used," | frame=%.2f ms (budget %.2f) cpu=%.2f wait=%.2f -> %s",
-      pacing.intervalMs,pacing.periodMs,pacing.intervalMs>pacing.waitMs?pacing.intervalMs-pacing.waitMs:0.0,pacing.waitMs,frame_pacing::verdict(pacing));
+    const char* verdict=frame_pacing::verdict(pacing);
+    const int more=sprintf_s(msg+used,sizeof(msg)-used," | frame=%.2f ms (sd %.2f, budget %.2f) cpu=%.2f wait=%.2f -> %s",
+      pacing.intervalMs,pacing.intervalSdMs,pacing.periodMs,pacing.intervalMs>pacing.waitMs?pacing.intervalMs-pacing.waitMs:0.0,pacing.waitMs,verdict);
+    // M8.53: a steady rate below the headset's is a frame limiter; say where to look.
+    if(more>0 && !strcmp(verdict,"FPS-capped"))
+     sprintf_s(msg+used+more,sizeof(msg)-used-more," at %.0f fps, headset %.0f Hz: check BeamNG's FPS limiter"
+       " in the graphics options; if it is already above, set it to 120 and back",1000.0/pacing.intervalMs,1000.0/pacing.periodMs);
    }
    log(msg);}
  }

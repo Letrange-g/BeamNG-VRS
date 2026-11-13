@@ -194,15 +194,22 @@ two `busy` values in the same scene. Work on other queues (async compute) is not
 counted.
 
 **What limits the frame rate (`M8.52`):** the same line ends with the frame pacing,
-for example `| frame=13.90 ms (budget 11.11) cpu=13.40 wait=0.50 -> CPU-bound`.
-`frame` is the time between two submitted frames and `budget` is the headset's
-display period (11.11 ms at 90 Hz). `wait` is the time the game was held in
+for example `| frame=13.90 ms (sd 2.40, budget 11.11) cpu=13.40 wait=0.50 -> CPU-bound`.
+`frame` is the time between two submitted frames, `sd` how much it varies from
+frame to frame, and `budget` is the headset's display period (11.11 ms at 90 Hz). `wait` is the time the game was held in
 `xrWaitFrame` by the runtime, and `cpu` is the rest of the frame (the game's own
 work, including waits on its GPU work). The verdict:
 
 - `on target`: the headset's rate is reached; anything below the budget is headroom.
 - `GPU-bound`: GPU `busy` uses 85% or more of the budget. Crop, foveation, a lower
   draw distance or render scale raise the frame rate.
+- `FPS-capped`: the frame rate is flat (`sd` under 5% of `frame`) below the
+  headset's rate while the GPU has room, so a frame limiter holds it there,
+  usually BeamNG's own FPS limiter. The line adds the rate and what to check, for
+  example `-> FPS-capped at 75 fps, headset 90 Hz`. Raise the limit to the
+  headset's rate or above. If it already is, set it to another value (120) and
+  back: one user's limit of 90 stuck at 75 until they did. A steady half or third
+  of the headset's rate is reported as `runtime-bound` instead (reprojection).
 - `CPU-bound`: the game's own work uses 85% or more of the budget while the GPU has
   room. GPU savings don't raise the frame rate; lower CPU-heavy game settings
   (traffic, dynamic reflections, mirrors) instead, or spend the spare GPU time on
@@ -238,6 +245,22 @@ work, including waits on its GPU work). The verdict:
 A GPU without VRS Tier 2 keeps normal rendering and logs
 `M8.42 D3D12 foveation unavailable`; the FOV crop and the black lens corners still work. `Diagnose-BeamNG-VRS.cmd` also logs the VRS
 tier and the render-target sizes the game binds per frame (`M8.41` lines).
+
+## Quad views (experimental)
+
+`[VR] Mode` picks how BeamNG-VRS speeds up VR (Direct3D 12 only for the quad modes):
+
+| Mode | What renders |
+| --- | --- |
+| `vrs` (default) | The normal eyes with variable-rate shading, scissor crop and lens mask. |
+| `quad` | Each eye renders only a small sharp focus view (`[QuadViews] FocusWidth`/`FocusHeight` of its field of view) that follows the gaze, or stays centred without eye tracking. One wide, low-resolution view per eye, at that eye's position, fills the rest. The OpenXR layer blends them into full-field-of-view eye images. |
+| `quad-black` | The same focus views with black around them and no wide views, so there is no wide-view cost. |
+
+Spaces, `-` and `_` are ignored, so `Mode=quad views` also works. The earlier names `triple` and `triple-black` still work and mean `quad` and `quad-black` (triple view, one wide view shared by both eyes, was removed: its flat periphery felt jarring in motion). The `[TripleView]` section with its Sharp/Middle keys is still accepted. In the quad modes, `[Foveation]`, `[Scissor]` and `[LensMask]` are not used.
+
+The launcher creates the wide views with its small mod in `mods\unpacked\beamng_vrs`. When that mod is off, for example on a BeamMP server that turns off unlisted mods, the surround stays black, as with `quad-black`. Each extra view costs the game a mostly fixed amount of GPU time (about 2.5 ms each on an RTX 5090), so a lower `WideWidth`/`WideHeight` saves only a little.
+
+`[QuadViews]` keys: `FocusWidth`, `FocusHeight` (0.1-1, default 0.35), `Shape` (`circle` or `rectangle`), `Feather` (0-0.5, default 0.30), `FollowGaze` (true/false), `GazeDeadZone` (degrees, 0-10), `WideWidth`, `WideHeight` (256-4096; the right eye's view is two rows taller so the layer can tell them apart) `WideFov` (`auto`, the default, sizes it to the headset at VR start; or horizontal degrees, 30-150) and `WideDetail` (`full`, `medium` (default) or `low`: the detail drawn in the wide views only, scaled from BeamNG's own graphics settings. `medium` halves model detail, grass and shadow map resolution, doubles the smallest drawn mesh size in pixels; `low` quarters model detail and shadow resolution, drops grass and culls small meshes four times as early. Both turn off live (dynamic) reflections and mirrors in the wide views (the focus view still shows the mirrors). Each wide view repeats the game's draw calls, so lower detail mostly saves CPU time). The layer log has `M8.55` lines for the mode, the focus views, the output swapchains and the wide views' render targets; beamng.log has `BeamNG-VRS quad views` lines with camera diagnostics.
 
 ## Ghosting fix
 

@@ -157,10 +157,10 @@ function Get-VRDrawDistanceStart {
     return [double]$IniDistance
 }
 function Update-VRMod {
-    param([string]$UserFolder, $Scale, $Distance, $IniDistance)
+    param([string]$UserFolder, $Scale, $Distance, $IniDistance, $Middle)
     $mod = Join-Path $UserFolder 'mods\unpacked\beamng_vrs'
     $marker = Join-Path $mod 'beamng_vrs.txt'
-    if ($null -eq $Scale -and $null -eq $Distance) {
+    if ($null -eq $Scale -and $null -eq $Distance -and $null -eq $Middle) {
         # Only a folder this launcher wrote is removed.
         if (Test-Path -LiteralPath $marker -PathType Leaf) { Remove-Item -LiteralPath $mod -Recurse -Force }
         return
@@ -177,7 +177,30 @@ function Update-VRMod {
     if (Test-Path -LiteralPath $mod) { Remove-Item -LiteralPath $mod -Recurse -Force }
     $invariant = [Globalization.CultureInfo]::InvariantCulture
     $utf8 = New-Object Text.UTF8Encoding($false)
-    $lua = "-- Written by Launch-BeamNG-VRS from BeamNG-VRS.ini ([Renderer] RenderScale and VRDrawDistance).`r`nlocal M = {}`r`n"
+    $lua = "-- Written by Launch-BeamNG-VRS from BeamNG-VRS.ini ([Renderer] RenderScale and VRDrawDistance, [VR] Mode).`r`nlocal M = {}`r`n"
+    # Extension hooks are collected per name, since several features may use the same one.
+    $hooks = @{}
+    # The driver's head: BeamNG hides it in player 0's first-person render views by a
+    # per-view bit (gameplay/seatOccupants.lua, setMeshHiddenInRenderView), but the VR
+    # eye views do not carry that bit, so the head and helmet showed from the inside.
+    $lua += @"
+local headSince = 2
+local function headUpdate(dtReal)
+  headSince = headSince + (dtReal or 0)
+  if headSince < 2 then return end
+  headSince = 0
+  local manager = RenderViewManagerInstance
+  if not manager then return end
+  for _, name in ipairs({'oxrView0', 'oxrView1'}) do
+    pcall(function()
+      local view = manager:getView(name)
+      if view then view:maskSet(0) end
+    end)
+  end
+end
+
+"@
+    $hooks['onUpdate'] = @('headUpdate')
     if ($null -ne $Scale) {
         $scaleText = ([double]$Scale).ToString('0.###', $invariant)
         $lua += @"
@@ -210,10 +233,311 @@ local function onUpdate(dtReal)
   end
 end
 local function onClientPostStartMission() present = {} end
-M.onUpdate = onUpdate
-M.onClientPostStartMission = onClientPostStartMission
 
 "@
+        $hooks['onUpdate'] = @($hooks['onUpdate']) + 'onUpdate'
+        $hooks['onClientPostStartMission'] = @('onClientPostStartMission')
+    }
+    if ($null -ne $Middle) {
+        # M8.55 quad views: one wide, low-resolution view per eye. The OpenXR layer finds
+        # their render targets by size (the right one is two rows taller) and composes each
+        # around its eye's sharp focus view; without them the surround stays black.
+        $middleW = [int]$Middle.Width; $middleH = [int]$Middle.Height
+        # nil = auto: wait for the OpenXR layer's value in the settings folder.
+        $middleFov = if ($null -eq $Middle.Fov) { 'nil' } else { ([double]$Middle.Fov).ToString('0.##', $invariant) }
+        $wideDetail = if ($Middle.Detail) { [string]$Middle.Detail } else { 'medium' }
+        $lua += @"
+-- M8.55 quad views: wide views.
+local wideW, wideH, wideFov = $middleW, $middleH, $middleFov
+local wideDetail = '$wideDetail'
+-- core_camera first: its onPreRender sets this frame's head pose that the wide views use.
+M.dependencies = {'core_camera'}
+local wideCount = 2
+local wideFovFile = '/settings/beamng_vrs_middle_fov.txt'
+local wide = {}       -- [1] left eye, [2] right eye
+local wideWait = 0
+local wideFollowFailed = false
+-- Wide view pose prediction state (see wideFollow).
+local heads = {}        -- head poses: [1] this frame, [2] one frame ago, [3] two ago
+local lag, lagSamples, lagOffset = 1, 0, {0, 0, 0}
+local predict = core_camera ~= nil -- off if the check in wideFollow fails: plain copies then
+local predictChecked = false
+-- WideFov=auto: the OpenXR layer writes "fov=N" once it knows the headset's field of view.
+local function wideAutoFov()
+  local ok, text = pcall(readFile, wideFovFile)
+  if not ok or type(text) ~= 'string' then return nil end
+  local fov = tonumber(text:match('fov=([%d%.]+)'))
+  if fov and fov >= 30 and fov <= 150 then return fov end
+  return nil
+end
+local function wideSay(text) log('I', 'beamngVrs', 'BeamNG-VRS quad views: ' .. text) end
+local function try(fn) local ok, r = pcall(fn) if ok then return r end return nil end
+-- Diagnostics (beamng.log): camera position, axes and frustum of each eye and wide view,
+-- every 3 s for the first 30 s and every 30 s after.
+local diagTime, diagNext = 0, 0
+local function fmt3(v) if not v then return '?' end return string.format('(%.3f,%.3f,%.3f)', v.x or 0, v.y or 0, v.z or 0) end
+local function describe(name, view)
+  if not view then return name .. '=nil' end
+  local m = try(function() return view.cameraMatrix end)
+  local text = name .. ' pos=' .. fmt3(m and try(function() return m:getPosition() end))
+  for i = 0, 2 do text = text .. ' c' .. i .. '=' .. fmt3(m and try(function() return m:getColumn(i) end)) end
+  text = text .. ' fov=' .. tostring(try(function() return view.fov end))
+  local f = try(function() return view.frustum end)
+  if f then
+    local parts = {}
+    for _, k in ipairs({'getNearLeft', 'getNearRight', 'getNearTop', 'getNearBottom', 'getNearDist', 'getFarDist'}) do
+      local v = try(function() return f[k](f) end)
+      if v ~= nil then parts[#parts + 1] = k:sub(4) .. '=' .. string.format('%.4f', v) end
+    end
+    text = text .. ' frustum ' .. table.concat(parts, ' ')
+  end
+  text = text .. ' cameraObject=' .. tostring(try(function() return view:getCameraObject() end))
+  return text
+end
+local function wideDiag(manager, dt)
+  diagTime = diagTime + (dt or 0)
+  if diagTime < diagNext then return end
+  diagNext = diagTime + (diagTime < 30 and 3 or 30)
+  wideSay(string.format('diag t=%.0f pose lag=%d predict=%s eye offset mm at lag 0/1/2=%.1f/%.1f/%.1f samples above 8 m/s=%d | %s | %s | %s | %s',
+    diagTime, lag, tostring(predict), lagOffset[1] * 1000, lagOffset[2] * 1000, lagOffset[3] * 1000, lagSamples,
+    describe('eye0', try(function() return manager:getView('oxrView0') end)),
+    describe('eye1', try(function() return manager:getView('oxrView1') end)),
+    describe('wide0', wide[1]), describe('wide1', wide[2])))
+end
+-- Wide view poses. The engine writes the eyes' matrices (oxrView0/1) while it renders,
+-- after Lua's onPreRender, so here they still hold the previous frame: copied as they
+-- are, the wide views trailed the eyes by a frame (about 30 cm at 100 km/h). This
+-- frame's head pose is known though: core_camera's final pose already holds the
+-- headset's predicted pose (core/cameraModes/gameengine.lua), and core_camera runs its
+-- onPreRender before ours (it is a dependency). Each wide view takes that pose plus its
+-- eye's offset from the head, measured against the head pose the eye was built from.
+-- How many frames separate the two is measured while moving (the offset stays still
+-- for the right count), 1 until then.
+local function v3(v) return {v.x, v.y, v.z} end
+local function dot(a, b) return a[1] * b[1] + a[2] * b[2] + a[3] * b[3] end
+local function toLocal(h, v) return {dot(v, h.r), dot(v, h.f), dot(v, h.u)} end
+local function toWorld(h, l)
+  return {h.r[1] * l[1] + h.f[1] * l[2] + h.u[1] * l[3],
+          h.r[2] * l[1] + h.f[2] * l[2] + h.u[2] * l[3],
+          h.r[3] * l[1] + h.f[3] * l[2] + h.u[3] * l[3]}
+end
+local function headNow()
+  local ok, h = pcall(function()
+    return {p = v3(core_camera.getPosition()), r = v3(core_camera.getRight()),
+            f = v3(core_camera.getForward()), u = v3(core_camera.getUp())}
+  end)
+  if ok then return h end
+end
+-- An eye matrix in head coordinates: position and the three axes.
+local function eyeLocal(h, m)
+  local p = m:getPosition()
+  local e = {pos = toLocal(h, {p.x - h.p[1], p.y - h.p[2], p.z - h.p[3]})}
+  for i = 0, 2 do e[i] = toLocal(h, v3(m:getColumn(i))) end
+  return e
+end
+local function poseMatrix(h, e)
+  local m = MatrixF(true)
+  for i = 0, 2 do local w = toWorld(h, e[i]) m:setColumn(i, vec3(w[1], w[2], w[3])) end
+  local p = toWorld(h, e.pos)
+  m:setColumn(3, vec3(h.p[1] + p[1], h.p[2] + p[2], h.p[3] + p[3]))
+  return m
+end
+local function matrixGap(a, b)
+  local gap = 0
+  for i = 0, 3 do
+    local x, y = a:getColumn(i), b:getColumn(i)
+    gap = math.max(gap, math.abs(x.x - y.x), math.abs(x.y - y.y), math.abs(x.z - y.z))
+  end
+  return gap
+end
+-- Lag: for 0, 1 and 2 frames, how far the left eye sits from the head. With the right
+-- count it is the eye's own offset (a few cm); with a wrong one the distance the car
+-- travelled in a frame adds to it, so this is measured above 8 m/s (9 cm a frame).
+local function measureLag(m, dt)
+  if not heads[3] or not dt or dt <= 0 then return end
+  local a, b = heads[1].p, heads[2].p
+  local speed = math.sqrt((a[1] - b[1]) ^ 2 + (a[2] - b[2]) ^ 2 + (a[3] - b[3]) ^ 2) / dt
+  if speed < 8 then return end
+  for k = 1, 3 do
+    local pos = eyeLocal(heads[k], m).pos
+    local d = math.sqrt(pos[1] ^ 2 + pos[2] ^ 2 + pos[3] ^ 2)
+    lagOffset[k] = lagSamples == 0 and d or lagOffset[k] * 0.95 + d * 0.05
+  end
+  lagSamples = lagSamples + 1
+  if lagSamples >= 30 then
+    local best = 1
+    for k = 1, 3 do if lagOffset[k] < lagOffset[best + 1] then best = k - 1 end end
+    if best ~= lag then wideSay('pose lag now ' .. best .. ' frame(s)') end
+    lag = best
+  end
+end
+-- Exposure: each render view adapts its own auto exposure, and a wide view sees more sky
+-- and interior than its eye's focus window, so it settled brighter or darker than the
+-- eye and the focus window stood out. Each frame the wide view takes its eye's exposure
+-- (manual EV or the current auto value), as render/renderViews.lua does for captures.
+local exposureFailed = false
+local function wideExposure(view, eye)
+  if exposureFailed or not eye then return end
+  local ok, err = pcall(function()
+    view.useManualEV = eye.useManualEV
+    view.manualEV = eye.manualEV
+    local current = eye.currentExposure
+    if type(current) == 'number' and current > 0 then view.currentExposure = current end
+  end)
+  if not ok then exposureFailed = true wideSay('exposure not copied: ' .. tostring(err)) end
+end
+local function wideFollow(manager, dt)
+  local m0 = manager:getView('oxrView0').cameraMatrix
+  local m1 = manager:getView('oxrView1').cameraMatrix
+  local source = {m0, m1}
+  local h = predict and headNow()
+  if h then
+    table.insert(heads, 1, h)
+    heads[4] = nil
+    measureLag(manager:getView('oxrView0').cameraMatrix, dt)
+    local then_ = heads[lag + 1] or h
+    if not predictChecked then
+      -- The round trip through head coordinates must give the eye matrix back.
+      predictChecked = true
+      local ok, gap = pcall(function() return matrixGap(poseMatrix(h, eyeLocal(h, m0)), m0) end)
+      if not ok or gap > 0.001 then
+        predict = false
+        wideSay('pose prediction off (check failed: ' .. tostring(gap) .. '), wide views copy the eyes')
+      else wideSay('pose prediction on') end
+    end
+    if predict then
+      for i = 1, #source do source[i] = poseMatrix(h, eyeLocal(then_, source[i])) end
+    end
+  end
+  for i = 1, wideCount do
+    local view = wide[i]
+    if view then
+      local ok = pcall(function() view.cameraMatrix = source[i] end)
+      if not ok then wide[i] = nil else wideExposure(view, manager:getView('oxrView' .. (i - 1))) end
+    end
+  end
+end
+-- WideDetail: the wide views draw the game's own settings scaled down (medium, low) or as
+-- they are (full), the way the game's split screen does it (render/splitScreen.lua). Each
+-- view repeats the game's work, so less model detail, grass, small meshes, shadow map
+-- resolution and no live reflections save time; the blurry periphery hides the difference.
+-- Mirrors are off there too (the focus view still shows them when you look).
+local wideDetailScale = {
+  full = nil,
+  medium = {mesh = 0.5, grass = 0.5, cull = 2, shadow = 0.5, mirrors = false},
+  low = {mesh = 0.25, grass = 0, cull = 4, shadow = 0.25, mirrors = false},
+}
+local function wideQuality(view, name)
+  local scale = wideDetailScale[wideDetail]
+  if not scale then return end
+  local skipped = {}
+  local ok, err = pcall(function()
+    local s = RenderSettings.getGlobals()
+    -- Each field on its own, so one a game version lacks does not stop the others.
+    local function set(field, fn)
+      if not pcall(function() local v = s[field] if v == nil then error('missing') end s[field] = fn(v) end) then
+        skipped[#skipped + 1] = field
+      end
+    end
+    set('meshDetailAdjust', function(v) return v * scale.mesh end)
+    set('groundCoverScale', function(v) return v * scale.grass end)
+    -- Meshes smaller than this many pixels are skipped. The wide views have about a
+    -- quarter of the eyes' pixels per degree, so the game's value already culls more
+    -- there; this culls more again.
+    set('meshSmallestPixelSize', function(v) if v > 0 then return v * scale.cull end return v end)
+    set('shadowTexScalar', function(v) return v * scale.shadow end)
+    set('vehicleDynamicReflectionsEnabled', function() return false end)
+    if not scale.mirrors then set('vehicleMirrorsEnabled', function() return false end) end
+    view.settingsOverride = s -- returned by value: the whole struct is written back
+    view.settingsOverrideEnabled = true
+  end)
+  if ok then wideSay(name .. ' detail ' .. wideDetail .. (#skipped > 0 and (' (not available: ' .. table.concat(skipped, ', ') .. ')') or ''))
+  else wideSay(name .. ' detail not set: ' .. tostring(err)) end
+end
+local function wideCreate(manager)
+  local fov = wideFov or wideAutoFov()
+  if not fov then return end -- auto: not written yet, retried in a second
+  -- Near and far follow the left eye when its frustum can be read (0.1 m and 4000 m in
+  -- BeamNG 0.40). The driver's head is hidden by the render view mask set below, as in
+  -- the eyes, so nothing needs clipping: a farther near plane cut the roof liner away.
+  local near, far = 0.1, 4000
+  pcall(function()
+    local f = manager:getView('oxrView0').frustum
+    local n, x = f:getNearDist(), f:getFarDist()
+    if type(n) == 'number' and n > 0 and n < 1 then near = n end
+    if type(x) == 'number' and x > near then far = x end
+  end)
+  for i = 1, wideCount do
+    if not wide[i] then
+      local name = 'beamngVrsWide' .. (i - 1)
+      local h = wideH + (i - 1) * 2
+      local view
+      local ok, err = pcall(function()
+        view = manager:getOrCreateView(name)
+        view.luaOwned = true
+        view.resolution = Point2I(wideW, h)
+        view.viewPort = RectI(0, 0, wideW, h)
+        view.namedTexTargetColor = name
+        pcall(function() view.renderEditorIcons = false end)
+        -- The driver's head is hidden per render view bit (gameplay/seatOccupants.lua:
+        -- setMeshHiddenInRenderView(mesh, player, true)); the eyes carry player 0's bit.
+        local masked = pcall(function() view:maskSet(0) end)
+        if not masked then wideSay(name .. ': render view mask not set, the driver head may show') end
+        wideQuality(view, name)
+        -- The projection comes from the frustum alone (fov is only a label, as in the
+        -- game's own render/viewDemo.lua). Frustum.construct takes the VERTICAL angle and
+        -- widens it by the aspect (measured: near-plane extents 0.43 x 0.295 at 0.2 m),
+        -- while fov here is horizontal, so it is converted.
+        local vertical = 2 * math.atan(math.tan(math.rad(fov) / 2) * h / wideW)
+        view.frustum = Frustum.construct(false, vertical, wideW / h, near, far)
+        view.fov = fov
+      end)
+      if ok then
+        wide[i] = view
+        wideSay(name .. ' ' .. wideW .. 'x' .. h .. ', ' .. fov .. ' deg horizontal' .. (wideFov and '' or ' (auto)') ..
+          ', near ' .. near .. ' m, far ' .. far .. ' m')
+      else wideSay(name .. ' not created: ' .. tostring(err)) end
+    end
+  end
+  pcall(wideFollow, manager, nil)
+end
+local function wideDestroy(manager)
+  for i = 1, 2 do
+    if wide[i] and manager then local view = wide[i] pcall(function() manager:destroyView(view) end) end
+    wide[i] = nil
+  end
+end
+local function wideUpdate(dtReal)
+  local manager = RenderViewManagerInstance
+  if not manager then return end
+  local ok, eye = pcall(function() return manager:getView('oxrView0') end)
+  if not ok or not eye then
+    if wide[1] or wide[2] then wideDestroy(manager) wideSay('VR stopped, wide views removed') end
+    wideWait = 0
+    return
+  end
+  if not wide[1] or (wideCount == 2 and not wide[2]) then
+    wideWait = wideWait + (dtReal or 0)
+    if wideWait >= 1 then wideWait = 0 wideCreate(manager) end
+    return
+  end
+  wideDiag(manager, dtReal)
+end
+local function widePreRender(dtReal)
+  local manager = RenderViewManagerInstance
+  if manager and wide[1] then
+    local ok, err = pcall(wideFollow, manager, dtReal)
+    if not ok and not wideFollowFailed then wideFollowFailed = true wideSay('pose update failed: ' .. tostring(err)) end
+  end
+end
+local function wideMission() wide = {} wideWait = 0 heads = {} end
+local function wideUnload() wideDestroy(RenderViewManagerInstance) end
+
+"@
+        foreach ($pair in @(@('onUpdate', 'wideUpdate'), @('onPreRender', 'widePreRender'),
+                            @('onClientPostStartMission', 'wideMission'), @('onExtensionUnloaded', 'wideUnload'))) {
+            $hooks[$pair[0]] = @($hooks[$pair[0]]) + $pair[1] | Where-Object { $_ }
+        }
     }
     if ($null -ne $Distance) {
         $iniText = ([double]$IniDistance).ToString('0', $invariant)
@@ -274,9 +598,13 @@ M.onExtensionLoaded = registerMenus
 
 "@
     }
+    foreach ($hook in $hooks.Keys) {
+        $calls = ($hooks[$hook] | ForEach-Object { "$_(...)" }) -join ' '
+        $lua += "M.$hook = function(...) $calls end`r`n"
+    }
     $lua += "return M`r`n"
     $files = @{
-        'beamng_vrs.txt' = "Written by Launch-BeamNG-VRS at every start from BeamNG-VRS.ini. Remove RenderScale and set VRDrawDistance=off there to delete it.`r`n"
+        'beamng_vrs.txt' = "Written by Launch-BeamNG-VRS at every start from BeamNG-VRS.ini. Remove RenderScale, set VRDrawDistance=off and [VR] Mode=vrs there to delete it.`r`n"
         'scripts\beamng_vrs\modScript.lua' = "load('beamngVrs')`r`nsetExtensionUnloadMode('beamngVrs', 'manual')`r`n"
         'lua\ge\extensions\beamngVrs.lua' = $lua
     }
@@ -295,6 +623,7 @@ M.onExtensionLoaded = registerMenus
         Write-Output "VR draw distance $distanceText m; its in-game app and radial menu are added through $mod"
     }
     if ($null -ne $Scale) { Write-Output "VR render scale $scaleText applied through $mod" }
+    if ($null -ne $Middle) { Write-Output "Quad views: wide views ${middleW}x${middleH} (FOV $(if ($null -eq $Middle.Fov) { 'auto' } else { $middleFov + ' deg' })) added through $mod" }
     Enable-VRModInDatabase -UserFolder $UserFolder
 }
 
@@ -468,6 +797,12 @@ function Test-BeamNGIni {
         'tracking.gazerefreshms' = @(2, 50, $true)
         'lensmask.size' = @(0.5, 1.5, $false)
         'renderer.renderscale' = @(0.25, 1.0, $false)
+        'quadviews.focuswidth' = @(0.1, 1, $false)
+        'quadviews.focusheight' = @(0.1, 1, $false)
+        'quadviews.feather' = @(0, 0.5, $false)
+        'quadviews.gazedeadzone' = @(0, 10, $false)
+        'quadviews.widewidth' = @(256, 4096, $true)
+        'quadviews.wideheight' = @(256, 4096, $true)
     }
     foreach ($line in ($text -split "`n")) {
         ++$lineNumber
@@ -477,7 +812,7 @@ function Test-BeamNGIni {
             if ($line.StartsWith('[')) {
                 if (-not $line.EndsWith(']')) { throw 'invalid section header' }
                 $section = $line.Substring(1, $line.Length - 2).Trim($whitespace).ToLowerInvariant()
-                if (@('foveation', 'debug', 'scissor', 'lensmask', 'tracking', 'performance', 'logging', 'openxr', 'renderer') -cnotcontains $section) { throw 'unknown section' }
+                if (@('foveation', 'debug', 'scissor', 'lensmask', 'tracking', 'performance', 'logging', 'openxr', 'renderer', 'vr', 'quadviews', 'tripleview') -cnotcontains $section) { throw 'unknown section' }
                 continue
             }
             $equals = $line.IndexOf('=')
@@ -487,11 +822,18 @@ function Test-BeamNGIni {
             $id = $section + '.' + $key
             if ($seen.ContainsKey($id)) { throw 'duplicate setting' }
             $seen[$id] = $true
+            # M8.55: the unreleased M8.54 [TripleView] names still work (same rule as the DLL).
+            if ($section -eq 'tripleview') {
+                $renamed = @{ sharpwidth = 'focuswidth'; sharpheight = 'focusheight'; middlewidth = 'widewidth'; middleheight = 'wideheight'; middlefov = 'widefov' }
+                $id = 'quadviews.' + $(if ($renamed.ContainsKey($key)) { $renamed[$key] } else { $key })
+            }
             if ($ranges.ContainsKey($id)) {
                 $range = $ranges[$id]
                 $number = Assert-IniNumber -Value $value -Low $range[0] -High $range[1] -Integer $range[2]
                 if ($sizes.ContainsKey($id)) { $sizes[$id] = $number }
                 if ($id -eq 'renderer.renderscale') { $script:RenderScale = $number }
+                if ($id -eq 'quadviews.widewidth') { $script:Middle.Width = $number }
+                if ($id -eq 'quadviews.wideheight') { $script:Middle.Height = $number }
             } elseif ($id -eq 'foveation.shape') {
                 if (@('circle', 'square', 'ellipse') -cnotcontains $value.ToLowerInvariant()) { throw 'unsupported setting value' }
             } elseif ($id -eq 'logging.level') {
@@ -509,6 +851,25 @@ function Test-BeamNGIni {
             } elseif ($id -eq 'renderer.ghostingfix') {
                 if (@('0', '1', 'false', 'true') -cnotcontains $value.ToLowerInvariant()) { throw 'expected 0, 1, false or true' }
                 $script:GhostingFix = @('1', 'true') -ccontains $value.ToLowerInvariant()
+            } elseif ($id -eq 'vr.mode') {
+                # Same rule as the DLL: spaces, '-' and '_' are ignored ("quad views" works);
+                # the M8.54 names triple and triple-black still work and mean quad and quad-black
+                # (triple view, one wide view shared by both eyes, was removed).
+                $mode = ($value.ToLowerInvariant() -replace '[\s_-]', '')
+                if (@('vrs') -ccontains $mode) { $script:VRMode = 'vrs' }
+                elseif (@('quad', 'quadview', 'quadviews', 'triple', 'tripleview') -ccontains $mode) { $script:VRMode = 'quad' }
+                elseif (@('quadblack', 'quadviewblack', 'quadviewsblack', 'tripleblack', 'tripleviewblack') -ccontains $mode) { $script:VRMode = 'quad-black' }
+                else { throw 'invalid VR mode (use vrs, quad or quad-black)' }
+            } elseif ($id -eq 'quadviews.widefov') {
+                # auto (default): the OpenXR layer sizes it from the headset at VR start.
+                $script:Middle.Fov = if ($value -ieq 'auto') { $null } else { Assert-IniNumber -Value $value -Low 30 -High 150 -Integer $false }
+            } elseif ($id -eq 'quadviews.followgaze') {
+                if (@('0', '1', 'false', 'true') -cnotcontains $value.ToLowerInvariant()) { throw 'expected 0, 1, false or true' }
+            } elseif ($id -eq 'quadviews.shape') {
+                if (@('circle', 'rectangle') -cnotcontains $value.ToLowerInvariant()) { throw 'unsupported setting value' }
+            } elseif ($id -eq 'quadviews.widedetail') {
+                if (@('full', 'medium', 'low') -cnotcontains $value.ToLowerInvariant()) { throw 'unsupported setting value' }
+                $script:Middle.Detail = $value.ToLowerInvariant()
             } elseif ($id -eq 'renderer.farclip') {
                 Write-Warning "INI line ${lineNumber} [Renderer]: FarClip was removed (BeamNG ignores it in VR); this line is ignored and can be deleted."
             } else { throw 'unknown section or setting' }
@@ -531,6 +892,8 @@ try {
     $script:RenderScale = $null
     $script:VRDrawDistance = [double]4000
     $script:GhostingFix = $false
+    $script:VRMode = 'vrs'
+    $script:Middle = @{ Width = 1280; Height = 880; Fov = $null; Detail = 'medium' }
     if (-not (Test-Path -LiteralPath $iniPath -PathType Leaf)) {
         throw 'BeamNG-VRS.ini not found beside Launch-BeamNG-VRS.cmd. Extract the entire ZIP; when upgrading, move your saved INI beside the CMD.'
     }
@@ -636,8 +999,19 @@ try {
         }
         $start.EnvironmentVariables['BEAMNG_VRS_VR_DRAW_DISTANCE_FILE'] = $distanceFile
     }
+    # M8.54 MiddleFov=auto: the OpenXR layer writes the headset-sized FOV here at VR start;
+    # an old value (another headset) is removed first so the mod waits for the new one.
+    $middleFovFile = Join-Path $UserFolder 'settings\beamng_vrs_middle_fov.txt'
+    if (Test-Path -LiteralPath $middleFovFile -PathType Leaf) { Remove-Item -LiteralPath $middleFovFile -Force }
+    $start.EnvironmentVariables['BEAMNG_VRS_TRIPLE_FOV_FILE'] = $middleFovFile
     Update-VRMod -UserFolder $UserFolder -Scale $(if ($script:Renderer -eq 'd3d12') { $script:RenderScale } else { $null }) `
-        -Distance $startDistance -IniDistance $script:VRDrawDistance
+        -Distance $startDistance -IniDistance $script:VRDrawDistance `
+        -Middle $(if ($script:Renderer -eq 'd3d12' -and $script:VRMode -eq 'quad') { $script:Middle } else { $null })
+    if ($script:VRMode -ne 'vrs' -and $script:Renderer -ne 'd3d12') {
+        Write-Warning "[VR] Mode=$($script:VRMode) needs [Renderer] API=d3d12; VRS is used instead."
+    } elseif ($script:VRMode -ne 'vrs') {
+        Write-Output "VR mode: $($script:VRMode) (experimental). [Foveation], [Scissor] and [LensMask] are not used in this mode."
+    }
     Update-GhostingFix -UserFolder $UserFolder -GameRoot $gameRoot `
         -FixFile (Join-Path $layerDirectory 'GhostingFix.hlsl') -Enabled $script:GhostingFix
     if ($Diagnostics) {

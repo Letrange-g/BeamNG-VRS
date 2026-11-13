@@ -1,6 +1,35 @@
-BeamNG-VRS 0.4.2 — portable Windows x64, for BeamNG.drive 0.40.
+BeamNG-VRS 0.4.3 — portable Windows x64, for BeamNG.drive 0.40.
 
-## What's new in 0.4.2
+## What's new in 0.4.3
+
+- **Quad views (experimental, Direct3D 12).** Set `[VR] Mode=quad` in the INI.
+  Each eye renders only a small sharp **focus view** (35% x 35% of its field of
+  view by default) that follows your gaze with eye tracking, or stays centred
+  without it. One cheap **wide view** per eye covers the rest at low resolution
+  and lower detail. BeamNG-VRS's OpenXR layer blends the two into one full image
+  per eye:
+
+      focus view (sharp, follows gaze) ---.
+                                           +--> OpenXR layer: focus over wide,
+      wide view (low res, low detail) ----'     soft edge --> headset
+
+  On an RTX 5090 with a Pimax Dream Air: about 6 ms of GPU time per frame in
+  Utah (8.5-9 ms in the default `vrs` mode) and 7.5-9.5 ms on Jungle Rock Island
+  (about 10-11 ms in earlier `vrs` runs), at a similar CPU time.
+  `[QuadViews]` sets the focus size and edge, gaze following, the wide views'
+  resolution, field of view (`WideFov=auto` fits your headset) and detail
+  (`WideDetail=full`, `medium` (default) or `low`; medium turns off live
+  reflections and mirrors there and halves shadows, model detail and grass).
+  `Mode=quad-black` shows the focus views alone for comparison. Only tested on
+  a Pimax Dream Air; no depth is sent to the runtime. On a BeamMP server that
+  turns off BeamNG-VRS's in-game mod, the surround stays black.
+- **Your own head no longer shows in VR.** BeamNG's VR eye views missed the
+  first-person flag that hides the driver's head, so the dummy's head and helmet
+  showed when you leaned. BeamNG-VRS now sets it in every mode.
+- **FPS-cap verdict.** The `M8.47` log line says `FPS-capped at N fps` when a
+  steady in-game frame limit holds you below the headset's refresh rate.
+
+## In 0.4.2
 
 - **Multiplayer (BeamMP) support.** Double-click the new
   **Launch-BeamMP-VRS.cmd** instead of `BeamMP-Launcher.exe`. It sets up
@@ -63,7 +92,7 @@ BeamNG-VRS 0.4.2 — portable Windows x64, for BeamNG.drive 0.40.
 
 ## Install
 
-1. Download **BeamNG-VRS-0.4.2-windows-x64.zip** below.
+1. Download **BeamNG-VRS-0.4.3-windows-x64.zip** below.
 2. Close BeamNG and extract the whole ZIP into the game folder, beside `Bin64`.
    Extraction directly inside `Bin64` also works.
 3. Edit **BeamNG-VRS.ini** beside the CMD, then run **Launch-BeamNG-VRS.cmd**

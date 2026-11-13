@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1000" height="470" viewBox="0 0 1000 470" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5b8fd6"/><stop offset="1" stop-color="#bcd6f2"/>
+    </linearGradient>
+    <symbol id="scene" viewBox="0 0 600 260" preserveAspectRatio="none">
+      <rect width="600" height="260" fill="url(#sky)"/>
+      <circle cx="500" cy="45" r="20" fill="#fff6c8"/>
+      <polygon points="0,150 50,95 95,125 150,70 205,128 255,80 300,118 350,75 400,120 455,82 510,115 560,88 600,110 600,165 0,165" fill="#c56a45"/>
+      <rect y="162" width="600" height="98" fill="#d9a46b"/>
+      <polygon points="282,162 318,162 440,260 160,260" fill="#59595f"/>
+      <polygon points="298,168 302,168 304,182 296,182" fill="#f3f3f3"/>
+      <polygon points="295,196 305,196 307,216 293,216" fill="#f3f3f3"/>
+      <polygon points="291,232 309,232 311,256 289,256" fill="#f3f3f3"/>
+      <rect x="363" y="140" width="4" height="26" fill="#555"/>
+      <rect x="350" y="124" width="30" height="18" rx="2" fill="#2f8f4e"/>
+      <circle cx="90" cy="178" r="18" fill="#4f7a3a"/><rect x="87" y="190" width="6" height="16" fill="#6b4a2b"/>
+      <circle cx="520" cy="190" r="15" fill="#4f7a3a"/><rect x="517" y="200" width="6" height="14" fill="#6b4a2b"/>
+      <circle cx="200" cy="186" r="10" fill="#4f7a3a"/>
+    </symbol>
+    <filter id="soft" x="0" y="0" width="1" height="1"><feGaussianBlur stdDeviation="3"/></filter>
+  </defs>
+
+  <rect width="1000" height="470" rx="16" fill="#ffffff"/>
+  <text x="500" y="40" text-anchor="middle" font-size="24" font-weight="700" fill="#1d2330">Quad views: 4 views per frame</text>
+  <text x="500" y="66" text-anchor="middle" font-size="15" fill="#5a6273">2 wide low-resolution views (one per eye) + 2 small full-resolution focus views (one per eye)</text>
+
+  <!-- the world, seen soft (wide views) -->
+  <g transform="translate(100,95)">
+    <g filter="url(#soft)"><use href="#scene" xlink:href="#scene" width="800" height="260"/></g>
+    <!-- sharp where both focus views look -->
+    <svg x="300" y="75" width="200" height="115" viewBox="225 75 150 115" preserveAspectRatio="none">
+      <use href="#scene" xlink:href="#scene" width="600" height="260"/>
+    </svg>
+  </g>
+
+  <!-- wide left / wide right, overlapping in the middle (stereo) -->
+  <rect x="100" y="95" width="560" height="260" rx="6" fill="#2fbf4a" fill-opacity="0.10" stroke="#1f9e38" stroke-width="5"/>
+  <rect x="340" y="95" width="560" height="260" rx="6" fill="#2f7fd6" fill-opacity="0.10" stroke="#2468b8" stroke-width="5" stroke-dasharray="14 8"/>
+  <rect x="122" y="108" width="122" height="28" rx="6" fill="#1f9e38"/>
+  <text x="183" y="128" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">wide left</text>
+  <rect x="756" y="108" width="130" height="28" rx="6" fill="#2468b8"/>
+  <text x="821" y="128" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">wide right</text>
+  <text x="500" y="128" text-anchor="middle" font-size="14" font-weight="600" fill="#33405a">both eyes see this (stereo overlap)</text>
+
+  <!-- focus left / focus right, around the same gaze point -->
+  <rect x="400" y="170" width="200" height="115" fill="none" stroke="#e03a2f" stroke-width="5"/>
+  <rect x="412" y="176" width="200" height="115" fill="none" stroke="#e8792b" stroke-width="5" stroke-dasharray="12 7"/>
+  <circle cx="500" cy="228" r="7" fill="#fff" stroke="#1d2330" stroke-width="3"/>
+
+  <!-- legend -->
+  <g font-size="15" fill="#1d2330">
+    <rect x="100" y="388" width="30" height="16" fill="none" stroke="#1f9e38" stroke-width="4"/>
+    <text x="140" y="402">wide left: left eye's whole view, low res</text>
+    <rect x="100" y="418" width="30" height="16" fill="none" stroke="#2468b8" stroke-width="4" stroke-dasharray="8 4"/>
+    <text x="140" y="432">wide right: right eye's whole view, low res</text>
+    <rect x="530" y="388" width="30" height="16" fill="none" stroke="#e03a2f" stroke-width="4"/>
+    <text x="570" y="402">high-res left / </text>
+    <rect x="680" y="388" width="30" height="16" fill="none" stroke="#e8792b" stroke-width="4" stroke-dasharray="8 4"/>
+    <text x="720" y="402">high-res right</text>
+    <circle cx="545" cy="426" r="6" fill="#fff" stroke="#1d2330" stroke-width="3"/>
+    <text x="570" y="432">where you look: the high-res views follow it</text>
+  </g>
+</svg>

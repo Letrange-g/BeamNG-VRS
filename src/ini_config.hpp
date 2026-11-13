@@ -100,10 +100,33 @@ inline Values defaults() {
  out["BEAMNG_VRS_RENDERER"] = "d3d12";
  out["BEAMNG_VRS_VR_DRAW_DISTANCE"] = "4000";
  out["BEAMNG_VRS_GHOSTING_FIX"] = "0";
+ // M8.55 quad views (off by default; see triple_view.hpp). The names keep M8.54's "triple".
+ out["BEAMNG_VRS_TRIPLE_VIEW"] = "0";
+ out["BEAMNG_VRS_TRIPLE_MIDDLE"] = "1";
+ out["BEAMNG_VRS_TRIPLE_GAZE"] = "1";
+ out["BEAMNG_VRS_TRIPLE_SHAPE"] = "circle";
+ out["BEAMNG_VRS_TRIPLE_WIDE_DETAIL"] = "medium"; // launcher-only (Lua mod)
+ out["BEAMNG_VRS_TRIPLE_SHARP_WIDTH"] = "0.35";
+ out["BEAMNG_VRS_TRIPLE_SHARP_HEIGHT"] = "0.35";
+ out["BEAMNG_VRS_TRIPLE_FEATHER"] = "0.30";
+ out["BEAMNG_VRS_TRIPLE_DEADZONE"] = "1.5";
+ out["BEAMNG_VRS_TRIPLE_MIDDLE_WIDTH"] = "1280";
+ out["BEAMNG_VRS_TRIPLE_MIDDLE_HEIGHT"] = "880";
+ out["BEAMNG_VRS_TRIPLE_MIDDLE_FOV"] = "auto";
  return out;
 }
+// M8.55: the unreleased M8.54 [TripleView] section and key names still work.
+inline std::string quadAlias(const std::string& section, const std::string& key) {
+ if(section != "tripleview") return section + "." + key;
+ if(key == "sharpwidth") return "quadviews.focuswidth";
+ if(key == "sharpheight") return "quadviews.focusheight";
+ if(key == "middlewidth") return "quadviews.widewidth";
+ if(key == "middleheight") return "quadviews.wideheight";
+ if(key == "middlefov") return "quadviews.widefov";
+ return "quadviews." + key;
+}
 inline void setting(Values& out, const std::string& section, const std::string& key, std::string value) {
- const std::string id = section + "." + key;
+ const std::string id = quadAlias(section, key);
  if(id == "foveation.enabled") activation(out,boolean(value)=="1");
  else if(id == "logging.level") {
   const auto level=choice(value,{"off","errors","info","debug"});
@@ -145,6 +168,39 @@ inline void setting(Values& out, const std::string& section, const std::string& 
  // Launcher-only: patches the game's combinePass shader so each VR eye reads the shared
  // local exposure and bloom textures at its own position (BeamNG 0.40 right-eye ghosting).
  else if(id == "renderer.ghostingfix") out["BEAMNG_VRS_GHOSTING_FIX"] = boolean(value);
+ // M8.55 quad views: a gaze-following sharp focus view per eye plus one wide, low-resolution
+ // view per eye (created by the launcher's Lua mod), composed by the OpenXR layer.
+ // [VR] Mode picks the rendering mode: vrs (foveated shading, the default), quad (focus +
+ // one wide view per eye) or quad-black (focus views in a black void, no wide views). Spaces, '-'
+ // and '_' are ignored ("quad views" works). The M8.54 names triple/triple-black still work and
+ // now mean quad/quad-black: triple view (one wide view between the eyes) was removed, as its
+ // flat periphery felt jarring in motion.
+ else if(id == "vr.mode") {
+  std::string m;
+  for(char c : lower(value)) if(c != ' ' && c != '-' && c != '_' && c != '\t') m += c;
+  if(m == "vrs") out["BEAMNG_VRS_TRIPLE_VIEW"] = "0";
+  else if(m == "quad" || m == "quadview" || m == "quadviews" || m == "triple" || m == "tripleview") { out["BEAMNG_VRS_TRIPLE_VIEW"] = "1"; out["BEAMNG_VRS_TRIPLE_MIDDLE"] = "1"; }
+  else if(m == "quadblack" || m == "quadviewblack" || m == "quadviewsblack" || m == "tripleblack" || m == "tripleviewblack") { out["BEAMNG_VRS_TRIPLE_VIEW"] = "1"; out["BEAMNG_VRS_TRIPLE_MIDDLE"] = "0"; }
+  else throw std::runtime_error("invalid VR mode (use vrs, quad or quad-black)");
+ }
+ else if(id == "quadviews.followgaze") out["BEAMNG_VRS_TRIPLE_GAZE"] = boolean(value);
+ else if(id == "quadviews.shape") out["BEAMNG_VRS_TRIPLE_SHAPE"] = choice(value, {"circle", "rectangle"});
+ // Detail of the wide views only, relative to the game's own graphics settings.
+ else if(id == "quadviews.widedetail") out["BEAMNG_VRS_TRIPLE_WIDE_DETAIL"] = choice(value, {"full", "medium", "low"});
+ else if(id == "quadviews.focuswidth" || id == "quadviews.focusheight") {
+  number(value, 0.1, 1);
+  out[id == "quadviews.focuswidth" ? "BEAMNG_VRS_TRIPLE_SHARP_WIDTH" : "BEAMNG_VRS_TRIPLE_SHARP_HEIGHT"] = value;
+ }
+ else if(id == "quadviews.feather") { number(value, 0, 0.5); out["BEAMNG_VRS_TRIPLE_FEATHER"] = value; }
+ else if(id == "quadviews.gazedeadzone") { number(value, 0, 10); out["BEAMNG_VRS_TRIPLE_DEADZONE"] = value; }
+ else if(id == "quadviews.widewidth" || id == "quadviews.wideheight") {
+  number(value, 256, 4096, true);
+  out[id == "quadviews.widewidth" ? "BEAMNG_VRS_TRIPLE_MIDDLE_WIDTH" : "BEAMNG_VRS_TRIPLE_MIDDLE_HEIGHT"] = value;
+ }
+ else if(id == "quadviews.widefov") {
+  if(lower(value) == "auto") value = "auto"; else number(value, 30, 150);
+  out["BEAMNG_VRS_TRIPLE_MIDDLE_FOV"] = value;
+ }
  // Removed (M8.49 had no effect in VR): accepted and ignored so older INIs still launch.
  else if(id == "renderer.farclip") {}
  else throw std::runtime_error("unknown section or setting");
@@ -163,7 +219,7 @@ inline Values parse(std::istream& input) {
    if(line[0] == '[') {
     if(line.back() != ']') throw std::runtime_error("invalid section header");
     section = lower(trim(line.substr(1, line.size() - 2)));
-    if(section != "foveation" && section != "debug" && section != "scissor" && section != "tracking" && section != "performance" && section != "logging" && section != "lensmask" && section != "openxr" && section != "renderer")
+    if(section != "foveation" && section != "debug" && section != "scissor" && section != "tracking" && section != "performance" && section != "logging" && section != "lensmask" && section != "openxr" && section != "renderer" && section != "tripleview" && section != "quadviews" && section != "vr")
      throw std::runtime_error("unknown section");
     continue;
    }
