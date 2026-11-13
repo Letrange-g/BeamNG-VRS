@@ -25,6 +25,7 @@
 #include <atomic>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <array>
 #include <utility>
@@ -348,7 +349,7 @@ int m817MessageLevel(const char* msg){
     strstr(msg,"M8.31 TURBO") || strstr(msg,"Next xrCreateApiLayerInstance") || strstr(msg,"Opt-in:") ||
     // D3D12 setup and first-use lines are flushed at once, so a crash right after still leaves them.
     strstr(msg,"M8.40 graphics") || strstr(msg,"hooks=") || strstr(msg,"foveation active") ||
-    strstr(msg,"M8.42 shading-rate image") || strstr(msg,"foveation frames") || strstr(msg,"M8.43") || strstr(msg,"M8.44") || strstr(msg,"M8.47") || strstr(msg,"M8.50") || strstr(msg,"M8.51") || strstr(msg,"M8.54") || strstr(msg,"M8.55"))return 1;
+    strstr(msg,"M8.42 shading-rate image") || strstr(msg,"foveation frames") || strstr(msg,"M8.43") || strstr(msg,"M8.44") || strstr(msg,"M8.47") || strstr(msg,"M8.50") || strstr(msg,"M8.51") || strstr(msg,"M8.54") || strstr(msg,"M8.55") || strstr(msg,"M8.56") || strstr(msg,"M8.57") || strstr(msg,"M8.58"))return 1;
  return 2;
 }
 void logLine(const char* msg) {
@@ -527,6 +528,77 @@ bool tripleCompose(const Dispatch& d,XrSession session,const XrCompositionLayerP
  return true;
 }
 }
+// M8.57 quad views: one head pose for the focus and wide views. BeamNG's Lua camera (and
+// so the wide views) takes the head pose the game locates early in the frame (the first
+// xrLocateSpace of a VIEW space for that display time); the engine then calls
+// xrLocateViews about 5 ms later and the runtime's newer prediction moves the eyes. While
+// the head turns the two differ (M8.56 timeline: about 0.4 deg at 100 deg/s, more when
+// frames run late), so the wide views swam around the world while the focus views held
+// still. The eyes are now built from that first head pose too: each eye keeps its offset
+// from the runtime's head but follows the camera's head pose, and the game submits what
+// it rendered, so the runtime still reprojects correctly.
+std::mutex headMutex;
+std::unordered_set<uint64_t> viewSpaces;
+struct HeadSample { XrSpace space=XR_NULL_HANDLE,base=XR_NULL_HANDLE; XrTime time=0; XrPosef pose{}; bool valid=false; };
+HeadSample firstHead;
+// The newest located head pose for the newest display time, and the last one for the
+// display time before it: BeamNG's Lua update runs while the previous frame is still
+// being rendered, so its camera takes the last pose located for that previous frame.
+HeadSample lastHead,prevHead;
+std::atomic<uint64_t> headAligned{0};
+XrQuaternionf qMul(const XrQuaternionf& a,const XrQuaternionf& b){
+ return {a.w*b.x+a.x*b.w+a.y*b.z-a.z*b.y,a.w*b.y-a.x*b.z+a.y*b.w+a.z*b.x,a.w*b.z+a.x*b.y-a.y*b.x+a.z*b.w,a.w*b.w-a.x*b.x-a.y*b.y-a.z*b.z};
+}
+XrQuaternionf qConj(const XrQuaternionf& q){return {-q.x,-q.y,-q.z,q.w};}
+XrVector3f qRotate(const XrQuaternionf& q,const XrVector3f& v){
+ const XrQuaternionf p{v.x,v.y,v.z,0};const XrQuaternionf r=qMul(qMul(q,p),qConj(q));return {r.x,r.y,r.z};
+}
+// The eye pose `eye` moved from head `from` to head `to`, keeping its offset from the head.
+XrPosef moveWithHead(const XrPosef& eye,const XrPosef& from,const XrPosef& to){
+ const XrQuaternionf inv=qConj(from.orientation);
+ const XrQuaternionf relQ=qMul(inv,eye.orientation);
+ const XrVector3f relP=qRotate(inv,{eye.position.x-from.position.x,eye.position.y-from.position.y,eye.position.z-from.position.z});
+ XrPosef out{};out.orientation=qMul(to.orientation,relQ);
+ const XrVector3f w=qRotate(to.orientation,relP);
+ out.position={to.position.x+w.x,to.position.y+w.y,to.position.z+w.z};
+ return out;
+}
+
+// M8.56 pose timeline (quad views): which head poses the game asks for and when, over
+// 90 frames from the 1800th xrWaitFrame. The wide views take the head pose BeamNG's Lua
+// gets while it updates the camera; if the engine asks the runtime again just before it
+// renders the eyes, the two differ while the head turns and the views slip apart.
+std::atomic<uint64_t> poseTraceWaits{0};
+bool poseTraceOn(){const uint64_t n=poseTraceWaits.load(std::memory_order_relaxed);return tripleActive&&n>=1800&&n<1890;}
+void poseTrace(const char* what,XrTime time,const XrPosef* pose,const void* a=nullptr,const void* b=nullptr){
+ if(!poseTraceOn())return;
+ LARGE_INTEGER now{},freq{};QueryPerformanceCounter(&now);QueryPerformanceFrequency(&freq);
+ char msg[300]{};
+ if(pose)sprintf_s(msg,sizeof(msg),"M8.56 f=%llu t=%.3f ms %s display=%lld q=(%.4f,%.4f,%.4f,%.4f) p=(%.4f,%.4f,%.4f) %p %p",
+   (unsigned long long)poseTraceWaits.load(),double(now.QuadPart)*1000.0/double(freq.QuadPart),what,(long long)time,
+   pose->orientation.x,pose->orientation.y,pose->orientation.z,pose->orientation.w,pose->position.x,pose->position.y,pose->position.z,a,b);
+ else sprintf_s(msg,sizeof(msg),"M8.56 f=%llu t=%.3f ms %s display=%lld",(unsigned long long)poseTraceWaits.load(),
+   double(now.QuadPart)*1000.0/double(freq.QuadPart),what,(long long)time);
+ logLine(msg);
+}
+extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeLocateSpace(XrSpace space,XrSpace baseSpace,XrTime time,XrSpaceLocation* location){
+ Dispatch d{};
+ {std::lock_guard<std::mutex> g(stateMutex);if(!instances.empty())d=instances.begin()->second;}
+ if(!d.locateSpace)return XR_ERROR_FUNCTION_UNSUPPORTED;
+ const XrResult r=d.locateSpace(space,baseSpace,time,location);
+ if(XR_SUCCEEDED(r)&&location&&tripleActive&&(location->locationFlags&XR_SPACE_LOCATION_ORIENTATION_VALID_BIT)&&
+    (location->locationFlags&XR_SPACE_LOCATION_POSITION_VALID_BIT)){
+  std::lock_guard<std::mutex> g(headMutex);
+  // The first located head pose for a display time is the one the Lua camera takes.
+  if(viewSpaces.count(uint64_t(space))){
+   if(time!=firstHead.time||baseSpace!=firstHead.base)firstHead={space,baseSpace,time,location->pose,true};
+   if(lastHead.valid&&time>lastHead.time)prevHead=lastHead;
+   if(!lastHead.valid||time>=lastHead.time)lastHead={space,baseSpace,time,location->pose,true};
+  }
+ }
+ if(XR_SUCCEEDED(r)&&location&&poseTraceOn())poseTrace("locateSpace",time,&location->pose,(void*)space,(void*)baseSpace);
+ return r;
+}
 extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeBeginSession(XrSession session,const XrSessionBeginInfo* info){
  auto c=frameContext(session);if(!c.dispatch.beginSession)return XR_ERROR_FUNCTION_UNSUPPORTED;
  const auto result=c.dispatch.beginSession(session,info);
@@ -553,6 +625,7 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeDestroySession(XrSession session)
 }
 extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeBeginFrame(XrSession session,const XrFrameBeginInfo* info){
  auto c=frameContext(session);if(!c.dispatch.beginFrame)return XR_ERROR_FUNCTION_UNSUPPORTED;
+ poseTrace("beginFrame",0,nullptr);
  return c.turbo?c.turbo->begin(info):c.dispatch.beginFrame(session,info);
 }
 extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeDestroySwapchain(XrSwapchain swapchain){
@@ -679,6 +752,11 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeEndFrame(XrSession session,const 
  Dispatch d{};
  {std::lock_guard<std::mutex> g(stateMutex);auto s=sessions.find(session);if(s!=sessions.end()){auto i=instances.find(s->second.instance);if(i!=instances.end())d=i->second;}}
  if(!d.endFrame)return XR_ERROR_FUNCTION_UNSUPPORTED;
+ if(info&&poseTraceOn())for(uint32_t li=0;li<info->layerCount;++li){
+  const auto* l=reinterpret_cast<const XrCompositionLayerProjection*>(info->layers[li]);
+  if(l&&l->type==XR_TYPE_COMPOSITION_LAYER_PROJECTION&&l->viewCount>=1&&l->views)
+   poseTrace("endFrame L",info->displayTime,&l->views[0].pose,(void*)l->space);
+ }
  static unsigned reported=0;
  if(info && reported<64){
   for(uint32_t li=0;li<info->layerCount && reported<64;++li){
@@ -829,6 +907,17 @@ beamng_d3d12::Effects m843Effects(){
  e.outline=enabled("BEAMNG_VRS_DEBUG_OUTLINE");
  return e;
 }
+// M8.58 quad views: [Scissor] Enabled=true cuts the same edges from the composed eyes
+// (see beamng_triple::Cut); all zero when Scissor is off.
+const std::array<beamng_triple::Cut,2>& tripleCut(){
+ static const auto cut=[]{
+  std::array<beamng_triple::Cut,2> c{};
+  const auto e=m843Effects();
+  if(e.crop)for(int i=0;i<2;++i)c[i]={e.margins[i].top,e.margins[i].bottom,e.margins[i].left,e.margins[i].right};
+  return c;
+ }();
+ return cut;
+}
 beamng_d3d12::Foveation m842Foveation(bool gazeAvailable){
  beamng_d3d12::Foveation f{};
  f.enabled=enabled("BEAMNG_VRS_ENABLE_FEATURES");
@@ -889,9 +978,17 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateSession(XrInstance inst,con
       if(d.enumerateViews&&ci&&XR_SUCCEEDED(d.enumerateViews(inst,ci->systemId,XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,2,&n,rv.data()))&&n>=1){
        fw=rv[0].recommendedImageRectWidth;fh=rv[0].recommendedImageRectHeight;}
       const bool fixed=t.middleWidth&&t.middleHeight;
-      beamng_triple::resolveWideSize(t,fw,fh);
-      char m[220]{};sprintf_s(m,sizeof(m),"M8.55 wide views %ux%u (%s of the headset's %ux%u per eye)",t.middleWidth,t.middleHeight,
-        fixed?"fixed WideWidth/WideHeight, instead":(std::to_string(int(std::lround(t.wideScale*100)))+"%").c_str(),fw,fh);
+      // BeamNG renders VR at 50% and upscales with FSR unless RenderScale changes it.
+      const double renderScale=tripleNumber("BEAMNG_VRS_RENDER_SCALE",0.5,0.25,1);
+      // M8.58: with [Scissor] the wide views only cover the kept part, at the same detail.
+      double keepW=1,keepH=1;beamng_triple::wideKeep(tripleCut().data(),keepW,keepH);
+      const bool moved=beamng_triple::resolveWideSize(t,fw,fh,renderScale,keepW,keepH);
+      if(keepW<1||keepH<1){const auto& c=tripleCut();char k[300]{};sprintf_s(k,sizeof(k),
+        "M8.58 quad views scissor: eyes keep %.0f%%/%.0f%% x %.0f%%/%.0f%%, wide views %.0f%% x %.0f%% of their uncut size",
+        100*(1-c[0].left-c[0].right),100*(1-c[1].left-c[1].right),100*(1-c[0].top-c[0].bottom),100*(1-c[1].top-c[1].bottom),100*keepW,100*keepH);logLine(k);}
+      char m[260]{};sprintf_s(m,sizeof(m),"M8.55 wide views %ux%u (%s of the headset's %ux%u per eye)%s",t.middleWidth,t.middleHeight,
+        fixed?"fixed WideWidth/WideHeight, instead":(std::to_string(int(std::lround(t.wideScale*100)))+"%").c_str(),fw,fh,
+        moved?", widened so no focus-view target has the same size":"");
       logLine(m);}
      m844Active=false;
      {std::lock_guard<std::mutex> g(stateMutex);m844Session=XR_NULL_HANDLE;}
@@ -1042,6 +1139,7 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeWaitFrame(XrSession session,const
  LARGE_INTEGER waitStart{},waitEnd{},freq{};QueryPerformanceCounter(&waitStart);
  XrResult r=c.turbo?c.turbo->wait(info,state):d.waitFrame(session,info,state);
  QueryPerformanceCounter(&waitEnd);QueryPerformanceFrequency(&freq);
+ if(XR_SUCCEEDED(r)&&tripleActive){poseTraceWaits.fetch_add(1,std::memory_order_relaxed);if(state)poseTrace("waitFrame",state->predictedDisplayTime,nullptr);}
  // M8.52: how long the runtime held the game here, for the M8.47 frame-pacing verdict.
  if(XR_SUCCEEDED(r))beamng_d3d12::frameWaited(double(waitEnd.QuadPart-waitStart.QuadPart)*1000.0/double(freq.QuadPart),
    state&&state->predictedDisplayPeriod>0?double(state->predictedDisplayPeriod)/1e6:0.0);
@@ -1060,6 +1158,7 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateReferenceSpace(XrSession se
  else if(!instances.empty())fn=instances.begin()->second.createReferenceSpace;}
  if(!fn)return XR_ERROR_FUNCTION_UNSUPPORTED;
  XrResult r=fn(session,info,space);
+ if(XR_SUCCEEDED(r)&&info&&space&&info->referenceSpaceType==XR_REFERENCE_SPACE_TYPE_VIEW){std::lock_guard<std::mutex> g(headMutex);viewSpaces.insert(uint64_t(*space));}
  char msg[128]{};sprintf_s(msg,sizeof(msg),"M7.2b xrCreateReferenceSpace type=%d result=%d",info?(int)info->referenceSpaceType:-1,(int)r);logLine(msg);
  return r;
 }
@@ -1083,7 +1182,10 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeEnumerateViewConfigurationViews(X
  if(XR_SUCCEEDED(r)&&views&&count&&*count>=2&&capacity>=2&&type==XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO&&tripleConfigured().enabled){
   const auto& t=tripleConfigured();
   {std::lock_guard<std::mutex> g(stateMutex);
-   for(int i=0;i<2;++i){tripleFullWidth[i]=views[i].recommendedImageRectWidth;tripleFullHeight[i]=views[i].recommendedImageRectHeight;}}
+   // M8.58: the composed eye covers only what [Scissor] keeps.
+   const auto& cut=tripleCut();
+   for(int i=0;i<2;++i){tripleFullWidth[i]=beamng_triple::scaledSize(views[i].recommendedImageRectWidth,1.0-cut[i].left-cut[i].right);
+    tripleFullHeight[i]=beamng_triple::scaledSize(views[i].recommendedImageRectHeight,1.0-cut[i].top-cut[i].bottom);}}
   for(int i=0;i<2;++i){
    views[i].recommendedImageRectWidth=beamng_triple::scaledSize(views[i].recommendedImageRectWidth,t.sharpWidth);
    views[i].recommendedImageRectHeight=beamng_triple::scaledSize(views[i].recommendedImageRectHeight,t.sharpHeight);
@@ -1132,6 +1234,7 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeLocateViews(XrSession session,con
   crop=m844Active&&session==m844Session;margins=m844Margins;}
  if(!d.locateViews)return XR_ERROR_FUNCTION_UNSUPPORTED;
  XrResult r=d.locateViews(session,info,state,capacity,count,views);
+ if(XR_SUCCEEDED(r)&&info&&views&&count&&*count>=1&&capacity>=1&&poseTraceOn())poseTrace("locateViews L",info->displayTime,&views[0].pose,(void*)info->space);
  // Everything below, the gaze projection included, then sees the kept views.
  if(crop&&XR_SUCCEEDED(r)&&info&&info->viewConfigurationType==XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO&&views&&count&&*count>=2&&capacity>=2){
   for(int i=0;i<2;++i)m844CropFov(views[i].fov,margins[i]);
@@ -1145,7 +1248,31 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeLocateViews(XrSession session,con
  bool triple=false;beamng_triple::Settings tset{};
  if(tripleActive){std::lock_guard<std::mutex> g(stateMutex);triple=session==tripleSession;tset=tripleSettings;}
  if(triple&&XR_SUCCEEDED(r)&&info&&info->viewConfigurationType==XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO&&views&&count&&*count>=2&&capacity>=2){
-  std::array<XrFovf,2> full{views[0].fov,views[1].fov};
+  // M8.57: the eyes follow the head pose the Lua camera (and so the wide views) used:
+  // the last one located for the previous display time (the camera runs during the
+  // previous frame), or failing that the first one for this display time.
+  if(tset.middle&&d.locateSpace){
+   HeadSample first{},prev{},last{};{std::lock_guard<std::mutex> g(headMutex);first=firstHead;prev=prevHead;last=lastHead;}
+   // prev is for the frame before only when this display time is the newest one seen.
+   const HeadSample& h=(last.valid&&last.time==info->displayTime&&prev.valid&&prev.time<info->displayTime&&prev.base==info->space)?prev:first;
+   XrSpaceLocation now{XR_TYPE_SPACE_LOCATION};
+   if(h.valid&&h.base==info->space&&(h.time==info->displayTime||&h==&prev)&&
+      XR_SUCCEEDED(d.locateSpace(h.space,info->space,info->displayTime,&now))&&
+      (now.locationFlags&XR_SPACE_LOCATION_ORIENTATION_VALID_BIT)&&(now.locationFlags&XR_SPACE_LOCATION_POSITION_VALID_BIT)){
+    const auto q=qMul(h.pose.orientation,qConj(now.pose.orientation));
+    const double angle=2.0*std::acos(std::min(1.0,std::fabs(double(q.w))))*180.0/3.14159265358979;
+    for(int i=0;i<2;++i)views[i].pose=moveWithHead(views[i].pose,now.pose,h.pose);
+    static double maxAngle=0;static double sumAngle=0;static uint64_t fromPrev=0;
+    maxAngle=std::max(maxAngle,angle);sumAngle+=angle;if(&h==&prev)++fromPrev;
+    const uint64_t n=headAligned.fetch_add(1)+1;
+    if(n==1||n%5400==0){char msg[220]{};sprintf_s(msg,sizeof(msg),"M8.57 eyes follow the camera's head pose: %llu frames (%llu from the previous frame's pose), mean %.2f deg, max %.2f deg moved back",
+      (unsigned long long)n,(unsigned long long)fromPrev,sumAngle/double(n%5400==0?5400:1),maxAngle);logLine(msg);if(n%5400==0){maxAngle=0;sumAngle=0;fromPrev=0;}}
+   }
+  }
+  // M8.58: [Scissor] cuts the composed eye's edges; the focus window stays inside the rest.
+  const auto& cut=tripleCut();
+  std::array<XrFovf,2> full{angles(beamng_triple::cutTangents(tangents(views[0].fov),cut[0])),
+                            angles(beamng_triple::cutTangents(tangents(views[1].fov),cut[1]))};
   double gx[2]{},gy[2]{};uint32_t valid=0;
   if(tset.gaze&&gs.ready&&gs.gazeSpace&&d.locateSpace&&state&&(state->viewStateFlags&XR_VIEW_STATE_ORIENTATION_VALID_BIT)){
    XrSpaceLocation gaze{XR_TYPE_SPACE_LOCATION};
@@ -1183,7 +1310,9 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeLocateViews(XrSession session,con
    tripleWriteFov(autoFov,tset.middleWidth,tset.middleHeight);
    char msg[200]{};sprintf_s(msg,sizeof(msg),"M8.55 wide views FOV %s: %.1f deg horizontal for %ux%u",tset.middleFov>0?"from the INI":"auto",autoFov,tset.middleWidth,tset.middleHeight);logLine(msg);
   }
-  for(int i=0;i<2;++i)views[i].fov=angles(beamng_triple::window(tangents(full[i]),tset.sharpWidth,tset.sharpHeight,cx[i],cy[i]));
+  for(int i=0;i<2;++i)views[i].fov=angles(beamng_triple::window(tangents(full[i]),
+    beamng_triple::keptShare(tset.sharpWidth,1.0-cut[i].left-cut[i].right),
+    beamng_triple::keptShare(tset.sharpHeight,1.0-cut[i].top-cut[i].bottom),cx[i],cy[i]));
   static std::atomic<bool> logged{false};
   if(!logged.exchange(true)){char msg[240]{};sprintf_s(msg,sizeof(msg),"M8.55 quad views focus L=(%.3f,%.3f,%.3f,%.3f) rad gaze=%d",
     views[0].fov.angleLeft,views[0].fov.angleRight,views[0].fov.angleUp,views[0].fov.angleDown,int(tset.gaze));logLine(msg);}
@@ -1271,6 +1400,7 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeGetInstanceProcAddr(XrInstance in
  if(!strcmp(name,"xrAttachSessionActionSets")){*function=reinterpret_cast<PFN_xrVoidFunction>(probeAttachSessionActionSets);return XR_SUCCESS;}
  if(!strcmp(name,"xrSyncActions")){*function=reinterpret_cast<PFN_xrVoidFunction>(probeSyncActions);return XR_SUCCESS;}
  if(!strcmp(name,"xrLocateViews")){*function=reinterpret_cast<PFN_xrVoidFunction>(probeLocateViews);return XR_SUCCESS;}
+ if(!strcmp(name,"xrLocateSpace")){if(!d.locateSpace)return d.next(instance,name,function);*function=reinterpret_cast<PFN_xrVoidFunction>(probeLocateSpace);return XR_SUCCESS;}
  if(!strcmp(name,"xrEnumerateViewConfigurationViews")){if(!d.enumerateViews)return d.next(instance,name,function);*function=reinterpret_cast<PFN_xrVoidFunction>(probeEnumerateViewConfigurationViews);return XR_SUCCESS;}
  if(!strcmp(name,"xrBeginFrame")){if(!d.beginFrame)return d.next(instance,name,function);*function=reinterpret_cast<PFN_xrVoidFunction>(probeBeginFrame);return XR_SUCCESS;}
  if(!strcmp(name,"xrBeginSession")){if(!d.beginSession)return d.next(instance,name,function);*function=reinterpret_cast<PFN_xrVoidFunction>(probeBeginSession);return XR_SUCCESS;}

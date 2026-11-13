@@ -1,6 +1,39 @@
-BeamNG-VRS 0.4.3 — portable Windows x64, for BeamNG.drive 0.40.
+BeamNG-VRS 0.4.4 — portable Windows x64, for BeamNG.drive 0.40.
 
-## What's new in 0.4.3
+## What's new in 0.4.4
+
+- **Fix: quad views with a focus size equal to `WideResolution`.** With
+  `FocusWidth=0.25`, `FocusHeight=0.25` and the default `WideResolution=0.25`,
+  the focus and wide views had the same size, so the layer could take a focus
+  view's image for the left wide view and the left eye looked zoomed in. The
+  wide views are now widened slightly whenever their size would match a focus
+  view's (the layer log then says so). The defaults were not affected.
+- **Fix: a wide view could turn black for a moment.** Each wide view has
+  several targets of its size, and which one the game draws last could change
+  for a frame or two. The layer now keeps the target it found and moves to
+  another only when the old one is no longer drawn or the new one has been last
+  for 30 frames. The layer log notes each move and any black stretch.
+- **Fix: the wide views swam when you turned your head.** BeamNG's camera
+  (which the wide views follow) reads the head pose early in each frame, and the
+  engine asks the headset again about 5 ms later for the eyes, so while your
+  head turned the two disagreed and the wide views moved around the world. The
+  eyes now use the same head pose as the camera, so focus and wide views move
+  together. The layer log reports how much was corrected (`M8.57`).
+- **Fix: a wide view could slip against the focus view for a moment.** The
+  wide views now find, every frame, which head pose the eyes were drawn from, so
+  uneven frame timing no longer shifts them by a frame.
+
+- **New: `[Scissor]` works in quad views.** The same edges `[Scissor]` cuts in
+  vrs mode (by default 30% top and bottom, 10% on the outer sides) are now cut
+  from the quad-view eyes too: the headset shows black there, as in vrs mode.
+  The wide views then cover only the kept part, with a narrower field of view
+  and fewer pixels (60% fewer rows by default) at the same sharpness, and the
+  focus view stays inside the kept part. A well-configured quad view already
+  renders the edges cheaply, so scissor is mostly redundant there: it stays
+  for maximum gain. Set `[Scissor] Enabled=false` to see the full field of
+  view again. The layer log reports it (`M8.58`).
+
+## In 0.4.3
 
 - **Quad views (experimental, Direct3D 12).** Set `[VR] Mode=quad` in the INI.
   Each eye renders only a small sharp **focus view** (35% x 35% of its field of

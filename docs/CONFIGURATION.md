@@ -37,8 +37,15 @@ With the default `Shape=circle`, `Size1x1=0.25` makes the sharp circle's diamete
 
 ## Scissor crop
 
-Since beta.11, the two outer edges default to `0.10` (10%) and the two nose-side
-edges default to `0`. Scissor remains disabled by default. Left/right refer to
+Scissor works in both VR modes: `vrs` (the default) and, since 0.4.4, quad views
+(`quad`, see [Quad views](#quad-views-experimental)), where the cut edges are removed from the composed
+eyes and the wide views render only the kept part. Scissor is enabled by default.
+The two outer edges default to `0.10` (10%) and the two nose-side edges to `0`.
+
+**In quad views, scissor is optional.** A well-configured quad view already renders
+the edges cheaply (low-resolution, low-detail wide views), so cropping them saves
+much less than in `vrs` mode and can be made redundant. It stays available for
+maximum gain; set `[Scissor] Enabled=false` to keep the full field of view. Left/right refer to
 the image as seen by that eye; they are not mirrored. Top/bottom remain shared.
 
 For **outside-only** cropping, start with:
@@ -259,7 +266,7 @@ tier and the render-target sizes the game binds per frame (`M8.41` lines).
 | `quad` | Each eye renders only a small sharp focus view (`[QuadViews] FocusWidth`/`FocusHeight` of its field of view) that follows the gaze, or stays centred without eye tracking. One wide, low-resolution view per eye, at that eye's position, fills the rest. The OpenXR layer blends them into full-field-of-view eye images. |
 | `quad-black` | The same focus views with black around them and no wide views, so there is no wide-view cost. |
 
-Spaces, `-` and `_` are ignored, so `Mode=quad views` also works. The earlier names `triple` and `triple-black` still work and mean `quad` and `quad-black` (triple view, one wide view shared by both eyes, was removed: its flat periphery felt jarring in motion). The `[TripleView]` section with its Sharp/Middle keys is still accepted. In the quad modes, `[Foveation]`, `[Scissor]` and `[LensMask]` are not used.
+Spaces, `-` and `_` are ignored, so `Mode=quad views` also works. The earlier names `triple` and `triple-black` still work and mean `quad` and `quad-black` (triple view, one wide view shared by both eyes, was removed: its flat periphery felt jarring in motion). The `[TripleView]` section with its Sharp/Middle keys is still accepted. In the quad modes, `[Foveation]` and `[LensMask]` are not used. `[Scissor]` (0.4.4+) cuts the same edges from the composed eyes: the headset shows black there as in vrs mode, the wide views cover only the kept part (smaller field of view and fewer pixels, same sharpness) and the focus view stays inside it. A wide view's frustum is symmetric, so only edges cut on both opposite sides shrink it (by default top and bottom; the 10% outer-side cuts are just not shown).
 
 The launcher's in-game script creates the wide views, with the same near plane and draw distance as the eyes (a live change from the VR draw distance app or radial menu reaches them within a frame) (see the render scale section above; it also runs on BeamMP servers). Without it, for example when BeamNG is started without the launcher, the surround stays black, as with `quad-black`. Each extra view costs the game a mostly fixed amount of GPU time (about 2.5 ms each on an RTX 5090), so a lower `WideResolution` saves only a little.
 
