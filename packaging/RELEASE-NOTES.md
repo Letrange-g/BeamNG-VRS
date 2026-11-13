@@ -8,6 +8,14 @@ BeamNG-VRS 0.4.4 — portable Windows x64, for BeamNG.drive 0.40.
   view's image for the left wide view and the left eye looked zoomed in. The
   wide views are now widened slightly whenever their size would match a focus
   view's (the layer log then says so). The defaults were not affected.
+- **Fix: a wide view could turn black for a moment.** Each wide view has
+  several targets of its size, and which one the game draws last could change
+  for a frame or two. The layer now keeps the target it found and moves to
+  another only when the old one is no longer drawn or the new one has been last
+  for 30 frames. The layer log notes each move and any black stretch.
+- **Fix: a wide view could slip against the focus view for a moment.** The
+  wide views' eye offset is now learned while your head is still and then kept,
+  so uneven frame timing no longer shifts it.
 
 ## In 0.4.3
 

@@ -425,6 +425,41 @@ local function wideExposure(view, eye)
   end)
   if not ok then exposureFailed = true wideSay('exposure not copied: ' .. tostring(err)) end
 end
+-- Each eye's pose in head coordinates hardly ever changes (it is the headset's eye
+-- offset), but measuring it needs the head pose the eye was built from, and that lag
+-- jumps between 1 and 2 frames when frames come unevenly: Matt saw the wide view slip
+-- against the focus view for a moment. So the offset is learned and the wide views use
+-- the learned one: from frames where the head is still (any lag gives the same answer),
+-- and from moving frames only when they agree with it within 5 mm.
+local eyeFixed = {}
+local function normalize(v)
+  local n = math.sqrt(dot(v, v))
+  if n < 1e-9 then return v end
+  return {v[1] / n, v[2] / n, v[3] / n}
+end
+local function headStill(a, b)
+  if not (a and b) then return false end
+  local d = {a.p[1] - b.p[1], a.p[2] - b.p[2], a.p[3] - b.p[3]}
+  return dot(d, d) < 0.005 ^ 2 and dot(a.f, b.f) > 0.999994 and dot(a.r, b.r) > 0.999994
+end
+local function learnEye(i, e, still)
+  local f = eyeFixed[i]
+  if not f then
+    if still then eyeFixed[i] = {pos = e.pos, [0] = e[0], e[1], e[2]} end
+    return
+  end
+  local d = {e.pos[1] - f.pos[1], e.pos[2] - f.pos[2], e.pos[3] - f.pos[3]}
+  if not still and dot(d, d) > 0.005 ^ 2 then return end
+  local a = 0.05
+  local function mix(x, y) return {x[1] + (y[1] - x[1]) * a, x[2] + (y[2] - x[2]) * a, x[3] + (y[3] - x[3]) * a} end
+  local pos, r, fw = mix(f.pos, e.pos), normalize(mix(f[0], e[0])), mix(f[1], e[1])
+  -- Keep the axes square: forward made perpendicular to right, up from the two.
+  local k = dot(fw, r)
+  fw = normalize({fw[1] - k * r[1], fw[2] - k * r[2], fw[3] - k * r[3]})
+  local up = {r[2] * fw[3] - r[3] * fw[2], r[3] * fw[1] - r[1] * fw[3], r[1] * fw[2] - r[2] * fw[1]}
+  if dot(up, f[2]) < 0 then up = {-up[1], -up[2], -up[3]} end
+  eyeFixed[i] = {pos = pos, [0] = r, fw, up}
+end
 local function wideFollow(manager, dt)
   local m0 = manager:getView('oxrView0').cameraMatrix
   local m1 = manager:getView('oxrView1').cameraMatrix
@@ -445,7 +480,12 @@ local function wideFollow(manager, dt)
       else wideSay('pose prediction on') end
     end
     if predict then
-      for i = 1, #source do source[i] = poseMatrix(h, eyeLocal(then_, source[i])) end
+      local still = headStill(heads[1], heads[2]) and headStill(heads[2], heads[3])
+      for i = 1, #source do
+        local e = eyeLocal(then_, source[i])
+        learnEye(i, e, still)
+        source[i] = poseMatrix(h, eyeFixed[i] or e)
+      end
     end
   end
   for i = 1, wideCount do
@@ -590,7 +630,7 @@ local function widePreRender(dtReal)
     if not ok and not wideFollowFailed then wideFollowFailed = true wideSay('pose update failed: ' .. tostring(err)) end
   end
 end
-local function wideMission() wide = {} wideWait = 0 heads = {} end
+local function wideMission() wide = {} wideWait = 0 heads = {} eyeFixed = {} end
 local function wideUnload() wideDestroy(RenderViewManagerInstance) end
 
 "@

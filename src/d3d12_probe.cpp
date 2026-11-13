@@ -125,7 +125,15 @@ std::unordered_set<uint64_t> middleResources;
 std::unordered_map<uint64_t,uint32_t> middleStates;
 struct MiddleSeen { uint32_t format=0; uint64_t binds=0; };
 std::map<uint64_t,MiddleSeen> middleSeen;  // For the one-time log of what was found.
-MiddleTarget middleLast[2]{};
+MiddleTarget middleLast[2]{};    // The 8-bit target last bound in a frame (the candidate).
+// The target composed for each wide view. A view has several 8-bit targets of its size,
+// and which one is bound last can change for a frame or two (Matt saw the right wide
+// view turn black now and then), so the pick moves to a new candidate only when the
+// old one stopped being drawn or the new one was last for 30 frames in a row.
+MiddleTarget middleChosen[2]{};
+uint32_t middleStreak[2]{};
+uint32_t middleSwitchLogs=0,middleStaleLogs=0;
+bool middleStale[2]{};
 // M8.55 quad views: two wide views, one per eye, told apart by height: the right
 // eye's is two rows taller (see the launcher's Lua mod). -1: not a wide view.
 int wideIndex(uint32_t width,uint32_t height){
@@ -241,7 +249,9 @@ void bind(ID3D12GraphicsCommandList* list,SIZE_T first,UINT count,bool renderPas
  if(const int wide=known && count && t.samples==1 ? wideIndex(t.width,t.height) : -1; wide>=0){
   std::lock_guard<std::mutex> g(middleMutex);
   auto& seen=middleSeen[t.resource];seen.format=t.format;++seen.binds;
-  if(eightBit(t.format)){auto& l=middleLast[wide];l.resource=t.resource;l.format=t.format;l.bindFrame=frameCounter.load(std::memory_order_relaxed);}
+  const uint64_t now=frameCounter.load(std::memory_order_relaxed);
+  if(eightBit(t.format)){auto& l=middleLast[wide];l.resource=t.resource;l.format=t.format;l.bindFrame=now;}
+  if(t.resource==middleChosen[wide].resource)middleChosen[wide].bindFrame=now;
  }
  if(!diagnostics && !foveating)return;
  std::lock_guard<std::mutex> g(statsMutex);
@@ -862,7 +872,7 @@ void frameWaited(double waitMs,double periodMs){
 bool middleTarget(int view,MiddleTarget& out){
  if(view<0||view>1)return false;
  std::lock_guard<std::mutex> g(middleMutex);
- const auto& last=middleLast[view];
+ const auto& last=middleChosen[view];
  if(!last.resource)return false;
  out=last;
  const auto it=middleStates.find(last.resource);
@@ -880,13 +890,37 @@ void executeOwn(void* queue,void* list){
 void frame(){
  if(!hooked)return;
  const uint64_t frameNumber=frameCounter.fetch_add(1,std::memory_order_relaxed)+1;
+ if(middleWidth.load(std::memory_order_relaxed)){
+  std::lock_guard<std::mutex> g(middleMutex);
+  const uint64_t ended=frameNumber-1; // the frame whose binds were just recorded
+  for(int v=0;v<2;++v){
+   auto& chosen=middleChosen[v];const auto& cand=middleLast[v];
+   const bool staleNow=chosen.resource && ended-chosen.bindFrame>=45;
+   if(staleNow!=middleStale[v] && middleStaleLogs<20){
+    ++middleStaleLogs;char msg[160]{};
+    sprintf_s(msg,"M8.55 wide view %s %s at frame %llu",v?"R":"L",staleNow?"not drawn for 45 frames (black)":"drawn again",(unsigned long long)ended);
+    log(msg);
+   }
+   middleStale[v]=staleNow;
+   if(!cand.resource || cand.bindFrame!=ended || cand.resource==chosen.resource){middleStreak[v]=0;continue;}
+   if(!chosen.resource || staleNow || ++middleStreak[v]>=30){
+    if(chosen.resource && middleSwitchLogs<20){
+     ++middleSwitchLogs;char msg[200]{};
+     sprintf_s(msg,"M8.55 wide view %s target %p -> %p at frame %llu (%s)",v?"R":"L",(void*)uintptr_t(chosen.resource),
+       (void*)uintptr_t(cand.resource),(unsigned long long)ended,staleNow?"old one not drawn":"new one last for 30 frames");
+     log(msg);
+    }
+    chosen=cand;middleStreak[v]=0;
+   }
+  }
+ }
  // M8.54: once, what the middle view's targets look like, so a wrong pick can be spotted.
  if(frameNumber==600 && middleWidth.load(std::memory_order_relaxed)){
   std::lock_guard<std::mutex> g(middleMutex);
   char msg[256]{};
   sprintf_s(msg,"M8.55 wide views %ux%u/%u: %zu targets seen, color targets %p (format %u) and %p (format %u)",
-    middleWidth.load(),middleHeight.load(),middleHeight.load()+2,middleSeen.size(),(void*)uintptr_t(middleLast[0].resource),middleLast[0].format,
-    (void*)uintptr_t(middleLast[1].resource),middleLast[1].format);
+    middleWidth.load(),middleHeight.load(),middleHeight.load()+2,middleSeen.size(),(void*)uintptr_t(middleChosen[0].resource),middleChosen[0].format,
+    (void*)uintptr_t(middleChosen[1].resource),middleChosen[1].format);
   log(msg);
   int listed=0;
   for(const auto& [resource,seen]:middleSeen){
