@@ -180,6 +180,27 @@ function Update-VRMod {
     $lua = "-- Written by Launch-BeamNG-VRS from BeamNG-VRS.ini ([Renderer] RenderScale and VRDrawDistance, [VR] Mode).`r`nlocal M = {}`r`n"
     # Extension hooks are collected per name, since several features may use the same one.
     $hooks = @{}
+    # The driver's head: BeamNG hides it in player 0's first-person render views by a
+    # per-view bit (gameplay/seatOccupants.lua, setMeshHiddenInRenderView), but the VR
+    # eye views do not carry that bit, so the head and helmet showed from the inside.
+    $lua += @"
+local headSince = 2
+local function headUpdate(dtReal)
+  headSince = headSince + (dtReal or 0)
+  if headSince < 2 then return end
+  headSince = 0
+  local manager = RenderViewManagerInstance
+  if not manager then return end
+  for _, name in ipairs({'oxrView0', 'oxrView1'}) do
+    pcall(function()
+      local view = manager:getView(name)
+      if view then view:maskSet(0) end
+    end)
+  end
+end
+
+"@
+    $hooks['onUpdate'] = @('headUpdate')
     if ($null -ne $Scale) {
         $scaleText = ([double]$Scale).ToString('0.###', $invariant)
         $lua += @"
@@ -214,7 +235,7 @@ end
 local function onClientPostStartMission() present = {} end
 
 "@
-        $hooks['onUpdate'] = @('onUpdate')
+        $hooks['onUpdate'] = @($hooks['onUpdate']) + 'onUpdate'
         $hooks['onClientPostStartMission'] = @('onClientPostStartMission')
     }
     if ($null -ne $Middle) {
