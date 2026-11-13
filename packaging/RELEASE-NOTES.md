@@ -131,7 +131,7 @@ BeamNG-VRS 0.4.4 — portable Windows x64, for BeamNG.drive 0.40.
 
 ## Install
 
-1. Download **BeamNG-VRS-0.4.3-windows-x64.zip** below.
+1. Download the **BeamNG-VRS-…-windows-x64.zip** file below.
 2. Close BeamNG and extract the whole ZIP into the game folder, beside `Bin64`.
    Extraction directly inside `Bin64` also works.
 3. Edit **BeamNG-VRS.ini** beside the CMD, then run **Launch-BeamNG-VRS.cmd**
