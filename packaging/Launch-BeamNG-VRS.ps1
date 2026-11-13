@@ -1084,7 +1084,7 @@ try {
     if ($script:VRMode -ne 'vrs' -and $script:Renderer -ne 'd3d12') {
         Write-Warning "[VR] Mode=$($script:VRMode) needs [Renderer] API=d3d12; VRS is used instead."
     } elseif ($script:VRMode -ne 'vrs') {
-        Write-Output "VR mode: $($script:VRMode) (experimental). [Foveation], [Scissor] and [LensMask] are not used in this mode."
+        Write-Output "VR mode: $($script:VRMode) (experimental). [Scissor] cuts the composed eyes' edges; [Foveation] and [LensMask] are not used in this mode."
     }
     Update-GhostingFix -UserFolder $UserFolder -GameRoot $gameRoot `
         -FixFile (Join-Path $layerDirectory 'GhostingFix.hlsl') -Enabled $script:GhostingFix

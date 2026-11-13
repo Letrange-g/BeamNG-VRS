@@ -23,6 +23,14 @@ BeamNG-VRS 0.4.4 — portable Windows x64, for BeamNG.drive 0.40.
   wide views now find, every frame, which head pose the eyes were drawn from, so
   uneven frame timing no longer shifts them by a frame.
 
+- **New: `[Scissor]` works in quad views.** The same edges `[Scissor]` cuts in
+  vrs mode (by default 30% top and bottom, 10% on the outer sides) are now cut
+  from the quad-view eyes too: the headset shows black there, as in vrs mode.
+  The wide views then cover only the kept part, with a narrower field of view
+  and fewer pixels (60% fewer rows by default) at the same sharpness, and the
+  focus view stays inside the kept part. Set `[Scissor] Enabled=false` to see
+  the full field of view again. The layer log reports it (`M8.58`).
+
 ## In 0.4.3
 
 - **Quad views (experimental, Direct3D 12).** Set `[VR] Mode=quad` in the INI.

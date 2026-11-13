@@ -349,7 +349,7 @@ int m817MessageLevel(const char* msg){
     strstr(msg,"M8.31 TURBO") || strstr(msg,"Next xrCreateApiLayerInstance") || strstr(msg,"Opt-in:") ||
     // D3D12 setup and first-use lines are flushed at once, so a crash right after still leaves them.
     strstr(msg,"M8.40 graphics") || strstr(msg,"hooks=") || strstr(msg,"foveation active") ||
-    strstr(msg,"M8.42 shading-rate image") || strstr(msg,"foveation frames") || strstr(msg,"M8.43") || strstr(msg,"M8.44") || strstr(msg,"M8.47") || strstr(msg,"M8.50") || strstr(msg,"M8.51") || strstr(msg,"M8.54") || strstr(msg,"M8.55") || strstr(msg,"M8.56") || strstr(msg,"M8.57"))return 1;
+    strstr(msg,"M8.42 shading-rate image") || strstr(msg,"foveation frames") || strstr(msg,"M8.43") || strstr(msg,"M8.44") || strstr(msg,"M8.47") || strstr(msg,"M8.50") || strstr(msg,"M8.51") || strstr(msg,"M8.54") || strstr(msg,"M8.55") || strstr(msg,"M8.56") || strstr(msg,"M8.57") || strstr(msg,"M8.58"))return 1;
  return 2;
 }
 void logLine(const char* msg) {
@@ -907,6 +907,17 @@ beamng_d3d12::Effects m843Effects(){
  e.outline=enabled("BEAMNG_VRS_DEBUG_OUTLINE");
  return e;
 }
+// M8.58 quad views: [Scissor] Enabled=true cuts the same edges from the composed eyes
+// (see beamng_triple::Cut); all zero when Scissor is off.
+const std::array<beamng_triple::Cut,2>& tripleCut(){
+ static const auto cut=[]{
+  std::array<beamng_triple::Cut,2> c{};
+  const auto e=m843Effects();
+  if(e.crop)for(int i=0;i<2;++i)c[i]={e.margins[i].top,e.margins[i].bottom,e.margins[i].left,e.margins[i].right};
+  return c;
+ }();
+ return cut;
+}
 beamng_d3d12::Foveation m842Foveation(bool gazeAvailable){
  beamng_d3d12::Foveation f{};
  f.enabled=enabled("BEAMNG_VRS_ENABLE_FEATURES");
@@ -969,7 +980,12 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateSession(XrInstance inst,con
       const bool fixed=t.middleWidth&&t.middleHeight;
       // BeamNG renders VR at 50% and upscales with FSR unless RenderScale changes it.
       const double renderScale=tripleNumber("BEAMNG_VRS_RENDER_SCALE",0.5,0.25,1);
-      const bool moved=beamng_triple::resolveWideSize(t,fw,fh,renderScale);
+      // M8.58: with [Scissor] the wide views only cover the kept part, at the same detail.
+      double keepW=1,keepH=1;beamng_triple::wideKeep(tripleCut().data(),keepW,keepH);
+      const bool moved=beamng_triple::resolveWideSize(t,fw,fh,renderScale,keepW,keepH);
+      if(keepW<1||keepH<1){const auto& c=tripleCut();char k[300]{};sprintf_s(k,sizeof(k),
+        "M8.58 quad views scissor: eyes keep %.0f%%/%.0f%% x %.0f%%/%.0f%%, wide views %.0f%% x %.0f%% of their uncut size",
+        100*(1-c[0].left-c[0].right),100*(1-c[1].left-c[1].right),100*(1-c[0].top-c[0].bottom),100*(1-c[1].top-c[1].bottom),100*keepW,100*keepH);logLine(k);}
       char m[260]{};sprintf_s(m,sizeof(m),"M8.55 wide views %ux%u (%s of the headset's %ux%u per eye)%s",t.middleWidth,t.middleHeight,
         fixed?"fixed WideWidth/WideHeight, instead":(std::to_string(int(std::lround(t.wideScale*100)))+"%").c_str(),fw,fh,
         moved?", widened so no focus-view target has the same size":"");
@@ -1166,7 +1182,10 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeEnumerateViewConfigurationViews(X
  if(XR_SUCCEEDED(r)&&views&&count&&*count>=2&&capacity>=2&&type==XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO&&tripleConfigured().enabled){
   const auto& t=tripleConfigured();
   {std::lock_guard<std::mutex> g(stateMutex);
-   for(int i=0;i<2;++i){tripleFullWidth[i]=views[i].recommendedImageRectWidth;tripleFullHeight[i]=views[i].recommendedImageRectHeight;}}
+   // M8.58: the composed eye covers only what [Scissor] keeps.
+   const auto& cut=tripleCut();
+   for(int i=0;i<2;++i){tripleFullWidth[i]=beamng_triple::scaledSize(views[i].recommendedImageRectWidth,1.0-cut[i].left-cut[i].right);
+    tripleFullHeight[i]=beamng_triple::scaledSize(views[i].recommendedImageRectHeight,1.0-cut[i].top-cut[i].bottom);}}
   for(int i=0;i<2;++i){
    views[i].recommendedImageRectWidth=beamng_triple::scaledSize(views[i].recommendedImageRectWidth,t.sharpWidth);
    views[i].recommendedImageRectHeight=beamng_triple::scaledSize(views[i].recommendedImageRectHeight,t.sharpHeight);
@@ -1250,7 +1269,10 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeLocateViews(XrSession session,con
       (unsigned long long)n,(unsigned long long)fromPrev,sumAngle/double(n%5400==0?5400:1),maxAngle);logLine(msg);if(n%5400==0){maxAngle=0;sumAngle=0;fromPrev=0;}}
    }
   }
-  std::array<XrFovf,2> full{views[0].fov,views[1].fov};
+  // M8.58: [Scissor] cuts the composed eye's edges; the focus window stays inside the rest.
+  const auto& cut=tripleCut();
+  std::array<XrFovf,2> full{angles(beamng_triple::cutTangents(tangents(views[0].fov),cut[0])),
+                            angles(beamng_triple::cutTangents(tangents(views[1].fov),cut[1]))};
   double gx[2]{},gy[2]{};uint32_t valid=0;
   if(tset.gaze&&gs.ready&&gs.gazeSpace&&d.locateSpace&&state&&(state->viewStateFlags&XR_VIEW_STATE_ORIENTATION_VALID_BIT)){
    XrSpaceLocation gaze{XR_TYPE_SPACE_LOCATION};
@@ -1288,7 +1310,9 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeLocateViews(XrSession session,con
    tripleWriteFov(autoFov,tset.middleWidth,tset.middleHeight);
    char msg[200]{};sprintf_s(msg,sizeof(msg),"M8.55 wide views FOV %s: %.1f deg horizontal for %ux%u",tset.middleFov>0?"from the INI":"auto",autoFov,tset.middleWidth,tset.middleHeight);logLine(msg);
   }
-  for(int i=0;i<2;++i)views[i].fov=angles(beamng_triple::window(tangents(full[i]),tset.sharpWidth,tset.sharpHeight,cx[i],cy[i]));
+  for(int i=0;i<2;++i)views[i].fov=angles(beamng_triple::window(tangents(full[i]),
+    beamng_triple::keptShare(tset.sharpWidth,1.0-cut[i].left-cut[i].right),
+    beamng_triple::keptShare(tset.sharpHeight,1.0-cut[i].top-cut[i].bottom),cx[i],cy[i]));
   static std::atomic<bool> logged{false};
   if(!logged.exchange(true)){char msg[240]{};sprintf_s(msg,sizeof(msg),"M8.55 quad views focus L=(%.3f,%.3f,%.3f,%.3f) rad gaze=%d",
     views[0].fov.angleLeft,views[0].fov.angleRight,views[0].fov.angleUp,views[0].fov.angleDown,int(tset.gaze));logLine(msg);}

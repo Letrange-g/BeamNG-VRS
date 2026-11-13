@@ -78,5 +78,19 @@ int main() {
  {Settings w; w.sharpWidth = 0.5; w.sharpHeight = 0.5; resolveWideSize(w, 5190, 4168, 1.0); // 2595x2084 at half: 1297.5x1042
   assert(!wideSizeClashes(w.middleWidth, w.middleHeight, 2595, 2084, 1.0));}
  {Settings w; resolveWideSize(w, 0, 0); assert(w.middleWidth == 1280 && w.middleHeight == 880);}
+ // M8.58 [Scissor] in quad views (defaults: top/bottom 0.30, outer edges 0.10, nose 0).
+ {const Cut cut[2]{{0.30, 0.30, 0.10, 0}, {0.30, 0.30, 0, 0.10}};
+  double kw = 0, kh = 0; wideKeep(cut, kw, kh);
+  assert(near(kw, 1.0, 1e-9) && near(kh, 0.40, 1e-9)); // symmetric frusta: only top/bottom shrink them
+  Settings w; resolveWideSize(w, 5190, 4168, 0.5, kw, kh);
+  assert(w.middleWidth == 1298 && w.middleHeight == 416);
+  const Tangents f{-1.2, 0.8, 1.0, -1.0};
+  const Tangents k = cutTangents(f, cut[0]);
+  assert(near(k.left, -1.0, 1e-9) && near(k.right, 0.8, 1e-9) && near(k.up, 0.4, 1e-9) && near(k.down, -0.4, 1e-9));
+  // The focus keeps its angle: 0.35 of the full height is 0.875 of the kept 0.40.
+  assert(near(keptShare(0.35, 0.40), 0.875, 1e-9) && near(keptShare(0.5, 0.40), 1.0, 1e-9));
+  const Tangents win = window(k, keptShare(0.35, 0.9), keptShare(0.35, 0.40), 0, 0.9); // gaze high up
+  assert(near(win.up - win.down, 0.35 * 2.0, 1e-9) && win.up <= k.up + 1e-9 && win.down >= k.down - 1e-9);}
+ {const Cut none[2]{}; double kw = 0, kh = 0; wideKeep(none, kw, kh); assert(kw == 1 && kh == 1);}
  return 0;
 }

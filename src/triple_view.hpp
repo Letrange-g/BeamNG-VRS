@@ -62,15 +62,18 @@ inline uint32_t scaledSize(uint32_t size, double share);
 // Sizes the wide views from WideResolution unless WideWidth/WideHeight fixed them, then
 // widens them in 8-pixel steps until no focus-view target can share their size.
 // Returns true when the size had to be changed for that.
-inline bool resolveWideSize(Settings& s, uint32_t fullWidth, uint32_t fullHeight, double renderScale = 0.5) {
+// keepWidth/keepHeight: share of the eye the wide views still cover when [Scissor] cuts
+// the edges (wideKeep), so the cut-off part costs no wide-view pixels either.
+inline bool resolveWideSize(Settings& s, uint32_t fullWidth, uint32_t fullHeight, double renderScale = 0.5,
+                            double keepWidth = 1.0, double keepHeight = 1.0) {
  if(!(s.middleWidth && s.middleHeight)) {
   if(!fullWidth || !fullHeight) { s.middleWidth = 1280; s.middleHeight = 880; }
   else {
-   const auto size = [&](uint32_t full) {
-    const double v = std::min(4096.0, std::max(256.0, double(full) * s.wideScale));
+   const auto size = [&](uint32_t full, double keep) {
+    const double v = std::min(4096.0, std::max(256.0, double(full) * s.wideScale * std::clamp(keep, 0.02, 1.0)));
     return uint32_t(std::lround(v / 2.0) * 2);
    };
-   s.middleWidth = size(fullWidth); s.middleHeight = size(fullHeight);
+   s.middleWidth = size(fullWidth, keepWidth); s.middleHeight = size(fullHeight, keepHeight);
   }
  }
  if(!fullWidth || !fullHeight) return false;
@@ -94,6 +97,32 @@ inline Tangents window(const Tangents& full, double shareX, double shareY, doubl
  cx = std::clamp(cx, full.left + halfW, full.right - halfW);
  cy = std::clamp(cy, full.down + halfH, full.up - halfH);
  return {cx - halfW, cx + halfW, cy + halfH, cy - halfH};
+}
+
+// [Scissor] in quad views: shares of each eye's tangent width/height cut from its edges.
+// The composed eye covers only the rest (the headset shows black beyond it, as the
+// M8.44 crop does in vrs mode), so the wide views and the composition skip that part.
+struct Cut { double top = 0, bottom = 0, left = 0, right = 0; };
+
+// Image rows and columns are linear in the tangent of the view angle.
+inline Tangents cutTangents(const Tangents& f, const Cut& c) {
+ const double w = f.right - f.left, h = f.up - f.down;
+ return {f.left + c.left * w, f.right - c.right * w, f.up - c.top * h, f.down + c.bottom * h};
+}
+
+// The focus window keeps its share of the FULL eye (the same angle and the same render
+// size as without the cut); as a share of the kept part that is larger.
+inline double keptShare(double share, double kept) { return std::clamp(share / std::max(kept, 0.05), 0.05, 1.0); }
+
+// A wide view's frustum is symmetric around the eye's direction, so only the cut both
+// opposite edges share shrinks it: the larger of the two eyes' kept shares.
+inline void wideKeep(const Cut cut[2], double& keepWidth, double& keepHeight) {
+ keepWidth = keepHeight = 0;
+ for(int e = 0; e < 2; ++e) {
+  keepWidth = std::max(keepWidth, 1.0 - 2.0 * std::min(cut[e].left, cut[e].right));
+  keepHeight = std::max(keepHeight, 1.0 - 2.0 * std::min(cut[e].top, cut[e].bottom));
+ }
+ keepWidth = std::clamp(keepWidth, 0.02, 1.0); keepHeight = std::clamp(keepHeight, 0.02, 1.0);
 }
 
 inline uint32_t scaledSize(uint32_t size, double share) {
