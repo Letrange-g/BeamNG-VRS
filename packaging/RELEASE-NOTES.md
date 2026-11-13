@@ -20,8 +20,8 @@ BeamNG-VRS 0.4.4 — portable Windows x64, for BeamNG.drive 0.40.
   eyes now use the same head pose as the camera, so focus and wide views move
   together. The layer log reports how much was corrected (`M8.57`).
 - **Fix: a wide view could slip against the focus view for a moment.** The
-  wide views' eye offset is now learned while your head is still and then kept,
-  so uneven frame timing no longer shifts it.
+  wide views now find, every frame, which head pose the eyes were drawn from, so
+  uneven frame timing no longer shifts them by a frame.
 
 ## In 0.4.3
 
