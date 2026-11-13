@@ -47,6 +47,17 @@ int main() {
  assert(near(coverage({-1, 1, 1, -1}, hx, hy), 1));
  assert(near(coverage({-2, 2, 1, -1}, hx, hy), 0.5));
 
+ // Auto FOV: two parallel eyes, each -1.4..1.0 wide (mirrored) and +-1 high, at 16:9.
+ {
+  const Tangents eyes[2]{{-1.4, 1.0, 1.0, -1.0}, {-1.0, 1.4, 1.0, -1.0}};
+  const Quat q[2]{};
+  const double fov = autoMiddleFov(eyes, q, q[0], 1600, 900, 0);
+  // Height needs 1.0 * 16/9 = 1.778 > width's 1.4: the height decides.
+  assert(near(std::tan(fov / 2 * 3.14159265358979323846 / 180), 16.0 / 9.0, 1e-6));
+  // Square target: the width decides; a 3% margin widens it.
+  assert(near(std::tan(autoMiddleFov(eyes, q, q[0], 1000, 1000, 0) / 2 * 3.14159265358979323846 / 180), 1.4, 1e-6));
+  assert(near(std::tan(autoMiddleFov(eyes, q, q[0], 1000, 1000) / 2 * 3.14159265358979323846 / 180), 1.4 * 1.03, 1e-6));
+ }
  // Same orientation: identity. Eye yawed 90 deg left: its forward (-z) is the middle's -x.
  float rows[3][4]{};
  relativeRotation({}, {}, rows);

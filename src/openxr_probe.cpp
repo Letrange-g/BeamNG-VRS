@@ -115,6 +115,7 @@ beamng_triple::Settings tripleSettings{};
 std::array<XrFovf,2> tripleFull{};bool tripleFullValid=false;
 std::array<uint32_t,2> tripleFullWidth{},tripleFullHeight{}; // the runtime's own recommended sizes
 beamng_triple::GazeFilter tripleGaze{};
+bool tripleFovResolved=false; // MiddleFov=auto: set once the headset's field of view is known
 struct TripleOutput { XrSwapchain swapchain{XR_NULL_HANDLE}; std::vector<uint64_t> images; uint32_t width=0,height=0; };
 TripleOutput tripleOut[2]{};bool tripleOutFailed=false;
 // Resolution is published as soon as the second matching swapchain exists;
@@ -884,7 +885,7 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateSession(XrInstance inst,con
      tfx.middleWidth=t.middleWidth;tfx.middleHeight=t.middleHeight;
      beamng_d3d12::attach(b->device,b->queue,logLine,m817Verbose(),beamng_d3d12::Foveation{},tfx);
      if(beamng_triple_d3d12::init(b->device,b->queue,logLine)){
-      {std::lock_guard<std::mutex> g(stateMutex);tripleSettings=t;tripleSession=*session;tripleGaze=beamng_triple::GazeFilter{};
+      {std::lock_guard<std::mutex> g(stateMutex);tripleSettings=t;tripleSession=*session;tripleGaze=beamng_triple::GazeFilter{};tripleFovResolved=t.middleFov>0;
        tripleFullValid=false;tripleOutFailed=false;}
       tripleActive=true;
       double hx=1,hy=1;beamng_triple::middleHalf(t,hx,hy);
@@ -892,7 +893,7 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateSession(XrInstance inst,con
         100*t.sharpWidth,100*t.sharpHeight,int(t.gaze),t.roundShape?"circle":"rectangle",
         t.middle?"on":"off (black)");
       logLine(m);
-      if(t.middle){sprintf_s(m,sizeof(m),"M8.54 middle view %ux%u fov %.0f deg (half-extent tan %.2f x %.2f)",
+      if(t.middle && t.middleFov>0){sprintf_s(m,sizeof(m),"M8.54 middle view %ux%u fov %.0f deg horizontal (half-extent tan %.2f x %.2f)",
         t.middleWidth,t.middleHeight,t.middleFov,hx,hy);logLine(m);}
      }else logLine("M8.54 triple view WARNING: compositor unavailable; the game's narrow eyes are shown as they are");
     }else beamng_d3d12::attach(b->device,b->queue,logLine,m817Verbose(),m842Foveation(d.gazeExtension),fx);
@@ -1089,6 +1090,21 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeEnumerateViewConfigurationViews(X
  }
  return r;
 }
+// M8.54 MiddleFov=auto: the launcher names a file (BEAMNG_VRS_TRIPLE_FOV_FILE) in the
+// game's settings folder; its Lua mod waits for "fov=N" there before creating the middle view.
+void tripleWriteFov(double fov){
+ std::wstring p(32768,L'\0');const DWORD n=GetEnvironmentVariableW(L"BEAMNG_VRS_TRIPLE_FOV_FILE",p.data(),DWORD(p.size()));
+ if(!n||n>=p.size()){logLine("M8.54 triple view WARNING: no middle-view FOV file named by the launcher");return;}
+ p.resize(n);
+ const std::wstring temp=p+L".tmp";
+ char text[64]{};const int len=sprintf_s(text,sizeof(text),"fov=%.3f\n",fov);
+ const HANDLE file=CreateFileW(temp.c_str(),GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
+ DWORD written=0;
+ const bool ok=file!=INVALID_HANDLE_VALUE && WriteFile(file,text,DWORD(len),&written,nullptr) && written==DWORD(len);
+ if(file!=INVALID_HANDLE_VALUE)CloseHandle(file);
+ if(!ok || !MoveFileExW(temp.c_str(),p.c_str(),MOVEFILE_REPLACE_EXISTING))
+  logLine("M8.54 triple view WARNING: middle-view FOV file not written");
+}
 // Image rows and columns are linear in the tangent of the view angle.
 void m844CropFov(XrFovf& fov,const beamng_scissor::Margins& m){
  const double l=tan(fov.angleLeft),r=tan(fov.angleRight),u=tan(fov.angleUp),dn=tan(fov.angleDown);
@@ -1130,10 +1146,24 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeLocateViews(XrSession session,con
    }
   }
   double cx[2]{},cy[2]{};
+  double autoFov=0;
   {std::lock_guard<std::mutex> g(stateMutex);
    tripleFull=full;tripleFullValid=true;
+   // MiddleFov=auto: sized once from the headset's full fields of view, facing the left eye
+   // as the Lua middle view and the compositor do. Rounded as written for the Lua side.
+   if(!tripleFovResolved && tset.middle){
+    const beamng_triple::Tangents t2[2]{tangents(full[0]),tangents(full[1])};
+    beamng_triple::Quat q[2];
+    for(int i=0;i<2;++i){const auto& o=views[i].pose.orientation;q[i]={o.x,o.y,o.z,o.w};}
+    autoFov=std::round(beamng_triple::autoMiddleFov(t2,q,q[0],tset.middleWidth,tset.middleHeight)*1000)/1000;
+    tripleSettings.middleFov=autoFov;tripleFovResolved=true;
+   }
    if(tset.gaze){tripleGaze.update(gx,gy,valid,tset.deadZone,GetTickCount64());
     for(int i=0;i<2;++i){cx[i]=tripleGaze.cx[i];cy[i]=tripleGaze.cy[i];}}
+  }
+  if(autoFov>0){
+   tripleWriteFov(autoFov);
+   char msg[200]{};sprintf_s(msg,sizeof(msg),"M8.54 middle view FOV auto: %.1f deg horizontal for %ux%u",autoFov,tset.middleWidth,tset.middleHeight);logLine(msg);
   }
   for(int i=0;i<2;++i)views[i].fov=angles(beamng_triple::window(tangents(full[i]),tset.sharpWidth,tset.sharpHeight,cx[i],cy[i]));
   static std::atomic<bool> logged{false};

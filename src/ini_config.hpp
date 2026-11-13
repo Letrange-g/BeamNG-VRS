@@ -111,7 +111,7 @@ inline Values defaults() {
  out["BEAMNG_VRS_TRIPLE_DEADZONE"] = "1.5";
  out["BEAMNG_VRS_TRIPLE_MIDDLE_WIDTH"] = "1600";
  out["BEAMNG_VRS_TRIPLE_MIDDLE_HEIGHT"] = "1152";
- out["BEAMNG_VRS_TRIPLE_MIDDLE_FOV"] = "115";
+ out["BEAMNG_VRS_TRIPLE_MIDDLE_FOV"] = "auto";
  return out;
 }
 inline void setting(Values& out, const std::string& section, const std::string& key, std::string value) {
@@ -182,7 +182,10 @@ inline void setting(Values& out, const std::string& section, const std::string& 
   number(value, 256, 4096, true);
   out[id == "tripleview.middlewidth" ? "BEAMNG_VRS_TRIPLE_MIDDLE_WIDTH" : "BEAMNG_VRS_TRIPLE_MIDDLE_HEIGHT"] = value;
  }
- else if(id == "tripleview.middlefov") { number(value, 30, 150); out["BEAMNG_VRS_TRIPLE_MIDDLE_FOV"] = value; }
+ else if(id == "tripleview.middlefov") {
+  if(lower(value) == "auto") value = "auto"; else number(value, 30, 150);
+  out["BEAMNG_VRS_TRIPLE_MIDDLE_FOV"] = value;
+ }
  // Removed (M8.49 had no effect in VR): accepted and ignored so older INIs still launch.
  else if(id == "renderer.farclip") {}
  else throw std::runtime_error("unknown section or setting");

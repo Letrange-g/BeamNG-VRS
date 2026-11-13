@@ -33,7 +33,8 @@ struct Settings {
  double feather = 0.15;     // edge blend, share of the window radius
  double deadZone = 0.03;    // tangent units (~1.7 deg) the gaze moves before the window follows
  uint32_t middleWidth = 1600, middleHeight = 1152;
- double middleFov = 115;    // horizontal field of view of the middle view, degrees (BeamNG's fov is horizontal)
+ double middleFov = 0;      // horizontal field of view of the middle view, degrees (BeamNG's fov is
+                            // horizontal); 0 = auto, from the headset (autoMiddleFov)
 };
 
 // A window of the given share of `full`, centred on (cx, cy) and slid back
@@ -82,7 +83,7 @@ struct GazeFilter {
 // takes a render view's fov as the horizontal angle and derives the vertical one from
 // the resolution (M8.54 first test: read as vertical, the periphery looked magnified).
 inline void middleHalf(const Settings& s, double& halfX, double& halfY) {
- const double fov = std::clamp(s.middleFov, 30.0, 160.0) * 3.14159265358979323846 / 180.0;
+ const double fov = std::clamp(s.middleFov > 0 ? s.middleFov : 115.0, 30.0, 160.0) * 3.14159265358979323846 / 180.0;
  halfX = std::tan(fov / 2);
  halfY = halfX * double(std::max<uint32_t>(1, s.middleHeight)) / double(std::max<uint32_t>(1, s.middleWidth));
 }
@@ -134,6 +135,31 @@ inline void relativeRotation(const Quat& middle, const Quat& eye, float rows[3][
   }
   rows[r][3] = 0;
  }
+}
+
+// MiddleFov=auto: the smallest horizontal field of view (degrees) whose middle view,
+// at the given resolution and facing `middle`, covers both eyes' full fields of view,
+// plus `margin` (share of the tangent extent). Corners are enough: a rectangle in one
+// eye's tangent plane stays a quadrilateral in the middle's, so extremes are corners.
+inline double autoMiddleFov(const Tangents full[2], const Quat eyes[2], const Quat& middle,
+                            uint32_t width, uint32_t height, double margin = 0.03) {
+ double needX = 0, needY = 0;
+ for(int e = 0; e < 2; ++e) {
+  float rows[3][4]{};
+  relativeRotation(middle, eyes[e], rows);
+  for(double tx : {full[e].left, full[e].right})
+   for(double ty : {full[e].down, full[e].up}) {
+    const double d[3]{tx, ty, -1};
+    double m[3]{};
+    for(int r = 0; r < 3; ++r) m[r] = rows[r][0] * d[0] + rows[r][1] * d[1] + rows[r][2] * d[2];
+    if(m[2] > -1e-3) return 150; // a corner at or behind 90 degrees: widest allowed
+    needX = std::max(needX, std::fabs(m[0] / -m[2]));
+    needY = std::max(needY, std::fabs(m[1] / -m[2]));
+   }
+ }
+ const double aspect = double(std::max<uint32_t>(1, width)) / double(std::max<uint32_t>(1, height));
+ const double halfX = std::max(needX, needY * aspect) * (1 + margin);
+ return std::clamp(2 * std::atan(halfX) * 180.0 / 3.14159265358979323846, 30.0, 150.0);
 }
 
 } // namespace beamng_triple

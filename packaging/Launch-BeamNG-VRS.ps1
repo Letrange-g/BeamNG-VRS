@@ -222,13 +222,23 @@ local function onClientPostStartMission() present = {} end
         # OpenXR layer finds its render targets by their size and composes it around
         # each eye's sharp window; without it the surround stays black.
         $middleW = [int]$Middle.Width; $middleH = [int]$Middle.Height
-        $middleFov = ([double]$Middle.Fov).ToString('0.##', $invariant)
+        # nil = auto: wait for the OpenXR layer's value in the settings folder.
+        $middleFov = if ($null -eq $Middle.Fov) { 'nil' } else { ([double]$Middle.Fov).ToString('0.##', $invariant) }
         $lua += @"
 -- M8.54 triple view middle view.
 local middleName = 'beamngVrsMiddleView'
 local middleW, middleH, middleFov = $middleW, $middleH, $middleFov
+local middleFovFile = '/settings/beamng_vrs_middle_fov.txt'
 local middle
 local middleWait = 0
+-- MiddleFov=auto: the OpenXR layer writes "fov=N" once it knows the headset's field of view.
+local function middleAutoFov()
+  local ok, text = pcall(readFile, middleFovFile)
+  if not ok or type(text) ~= 'string' then return nil end
+  local fov = tonumber(text:match('fov=([%d%.]+)'))
+  if fov and fov >= 30 and fov <= 150 then return fov end
+  return nil
+end
 local function middleSay(text) log('I', 'beamngVrs', 'BeamNG-VRS triple view: ' .. text) end
 -- Follows the head: the left eye's camera moved halfway to the right eye. The OpenXR
 -- layer assumes the left eye's orientation, so only the position is changed.
@@ -244,6 +254,8 @@ local function middleFollow(manager)
   if not ok then middle = nil end
 end
 local function middleCreate(manager)
+  local fov = middleFov or middleAutoFov()
+  if not fov then return end -- auto: not written yet, retried in a second
   local ok, err = pcall(function()
     middle = manager:getOrCreateView(middleName)
     middle.luaOwned = true
@@ -251,9 +263,9 @@ local function middleCreate(manager)
     middle.viewPort = RectI(0, 0, middleW, middleH)
     middle.namedTexTargetColor = middleName
     pcall(function() middle.renderEditorIcons = false end)
-    middle.fov = middleFov
+    middle.fov = fov
   end)
-  if ok then middleSay('middle view ' .. middleW .. 'x' .. middleH .. ', ' .. middleFov .. ' deg horizontal (view reports ' .. tostring(middle.fov) .. ')')
+  if ok then middleSay('middle view ' .. middleW .. 'x' .. middleH .. ', ' .. fov .. ' deg horizontal' .. (middleFov and '' or ' (auto)') .. ', view reports ' .. tostring(middle.fov))
   else middleSay('middle view not created: ' .. tostring(err)) middle = nil end
   middleFollow(manager)
 end
@@ -374,7 +386,7 @@ M.onExtensionLoaded = registerMenus
         Write-Output "VR draw distance $distanceText m; its in-game app and radial menu are added through $mod"
     }
     if ($null -ne $Scale) { Write-Output "VR render scale $scaleText applied through $mod" }
-    if ($null -ne $Middle) { Write-Output "Triple view middle view ${middleW}x${middleH} ($middleFov deg) added through $mod" }
+    if ($null -ne $Middle) { Write-Output "Triple view middle view ${middleW}x${middleH} (FOV $(if ($null -eq $Middle.Fov) { 'auto' } else { $middleFov + ' deg' })) added through $mod" }
     Enable-VRModInDatabase -UserFolder $UserFolder
 }
 
@@ -554,7 +566,6 @@ function Test-BeamNGIni {
         'tripleview.gazedeadzone' = @(0, 10, $false)
         'tripleview.middlewidth' = @(256, 4096, $true)
         'tripleview.middleheight' = @(256, 4096, $true)
-        'tripleview.middlefov' = @(30, 150, $false)
     }
     foreach ($line in ($text -split "`n")) {
         ++$lineNumber
@@ -581,7 +592,6 @@ function Test-BeamNGIni {
                 if ($id -eq 'renderer.renderscale') { $script:RenderScale = $number }
                 if ($id -eq 'tripleview.middlewidth') { $script:Middle.Width = $number }
                 if ($id -eq 'tripleview.middleheight') { $script:Middle.Height = $number }
-                if ($id -eq 'tripleview.middlefov') { $script:Middle.Fov = $number }
             } elseif ($id -eq 'foveation.shape') {
                 if (@('circle', 'square', 'ellipse') -cnotcontains $value.ToLowerInvariant()) { throw 'unsupported setting value' }
             } elseif ($id -eq 'logging.level') {
@@ -606,6 +616,9 @@ function Test-BeamNGIni {
                 elseif (@('triple', 'tripleview') -ccontains $mode) { $script:VRMode = 'triple' }
                 elseif (@('tripleblack', 'tripleviewblack') -ccontains $mode) { $script:VRMode = 'triple-black' }
                 else { throw 'invalid VR mode (use vrs, triple or triple-black)' }
+            } elseif ($id -eq 'tripleview.middlefov') {
+                # auto (default): the OpenXR layer sizes it from the headset at VR start.
+                $script:Middle.Fov = if ($value -ieq 'auto') { $null } else { Assert-IniNumber -Value $value -Low 30 -High 150 -Integer $false }
             } elseif ($id -eq 'tripleview.followgaze') {
                 if (@('0', '1', 'false', 'true') -cnotcontains $value.ToLowerInvariant()) { throw 'expected 0, 1, false or true' }
             } elseif ($id -eq 'tripleview.shape') {
@@ -633,7 +646,7 @@ try {
     $script:VRDrawDistance = [double]4000
     $script:GhostingFix = $false
     $script:VRMode = 'vrs'
-    $script:Middle = @{ Width = 1600; Height = 1152; Fov = 115 }
+    $script:Middle = @{ Width = 1600; Height = 1152; Fov = $null }
     if (-not (Test-Path -LiteralPath $iniPath -PathType Leaf)) {
         throw 'BeamNG-VRS.ini not found beside Launch-BeamNG-VRS.cmd. Extract the entire ZIP; when upgrading, move your saved INI beside the CMD.'
     }
@@ -739,6 +752,11 @@ try {
         }
         $start.EnvironmentVariables['BEAMNG_VRS_VR_DRAW_DISTANCE_FILE'] = $distanceFile
     }
+    # M8.54 MiddleFov=auto: the OpenXR layer writes the headset-sized FOV here at VR start;
+    # an old value (another headset) is removed first so the mod waits for the new one.
+    $middleFovFile = Join-Path $UserFolder 'settings\beamng_vrs_middle_fov.txt'
+    if (Test-Path -LiteralPath $middleFovFile -PathType Leaf) { Remove-Item -LiteralPath $middleFovFile -Force }
+    $start.EnvironmentVariables['BEAMNG_VRS_TRIPLE_FOV_FILE'] = $middleFovFile
     Update-VRMod -UserFolder $UserFolder -Scale $(if ($script:Renderer -eq 'd3d12') { $script:RenderScale } else { $null }) `
         -Distance $startDistance -IniDistance $script:VRDrawDistance `
         -Middle $(if ($script:Renderer -eq 'd3d12' -and $script:VRMode -eq 'triple') { $script:Middle } else { $null })
