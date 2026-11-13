@@ -305,8 +305,11 @@ local function wideCreate(manager)
         view.namedTexTargetColor = name
         pcall(function() view.renderEditorIcons = false end)
         -- The projection comes from the frustum alone (fov is only a label, as in the
-        -- game's own render/viewDemo.lua). Its angle is horizontal; the height follows the aspect.
-        view.frustum = Frustum.construct(false, math.rad(fov), wideW / h, near, far)
+        -- game's own render/viewDemo.lua). Frustum.construct takes the VERTICAL angle and
+        -- widens it by the aspect (measured: near-plane extents 0.43 x 0.295 at 0.2 m),
+        -- while fov here is horizontal, so it is converted.
+        local vertical = 2 * math.atan(math.tan(math.rad(fov) / 2) * h / wideW)
+        view.frustum = Frustum.construct(false, vertical, wideW / h, near, far)
         view.fov = fov
       end)
       if ok then
