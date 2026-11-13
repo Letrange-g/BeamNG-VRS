@@ -347,7 +347,7 @@ int m817MessageLevel(const char* msg){
     strstr(msg,"M8.31 TURBO") || strstr(msg,"Next xrCreateApiLayerInstance") || strstr(msg,"Opt-in:") ||
     // D3D12 setup and first-use lines are flushed at once, so a crash right after still leaves them.
     strstr(msg,"M8.40 graphics") || strstr(msg,"hooks=") || strstr(msg,"foveation active") ||
-    strstr(msg,"M8.42 shading-rate image") || strstr(msg,"foveation frames") || strstr(msg,"M8.43") || strstr(msg,"M8.44") || strstr(msg,"M8.47") || strstr(msg,"M8.50") || strstr(msg,"M8.51"))return 1;
+    strstr(msg,"M8.42 shading-rate image") || strstr(msg,"foveation frames") || strstr(msg,"M8.43") || strstr(msg,"M8.44") || strstr(msg,"M8.47") || strstr(msg,"M8.50") || strstr(msg,"M8.51") || strstr(msg,"M8.54"))return 1;
  return 2;
 }
 void logLine(const char* msg) {
@@ -865,6 +865,7 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL probeCreateSession(XrInstance inst,con
     char msg[200]{};sprintf_s(msg,sizeof(msg),"M8.40 graphics=D3D12 device=%p queue=%p",b->device,b->queue);logLine(msg);
     // M8.42 foveation, M8.44 FOV crop and M8.43 lens mask/outline when enabled; M8.41 report in diagnostics runs.
     auto fx=m843Effects();
+    if(tripleConfigured().enabled)fx.crop=false; // M8.54 below replaces the crop.
     if(fx.crop){
      fx.crop=false;fx.fovCrop=true;
      {std::lock_guard<std::mutex> g(stateMutex);m844Session=*session;m844Margins={fx.margins[0],fx.margins[1]};}
