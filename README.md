@@ -26,7 +26,9 @@ everything around it cheaply:
   view with a soft edge and hands the headset one full image per eye. The headset
   runtime sees a normal stereo game.
 
-![Each eye renders one wide low-resolution view plus one small sharp focus view; the headset shows them blended](docs/images/quad-views.svg)
+![Four views per frame: a wide low-resolution view for each eye, overlapping in the middle, and a small high-resolution view for each eye around where you look](docs/images/quad-views-stereo.svg)
+
+![For one eye: the wide low-resolution view plus the small sharp focus view, blended into what you see in the headset](docs/images/quad-views.svg)
 
 (How it works inside: [Technical notes](docs/TECHNICAL.md#how-quad-views-work).)
 
