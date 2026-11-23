@@ -164,7 +164,7 @@ inline void setting(Values& out, const std::string& section, const std::string& 
  // "off" leaves the game's code untouched (nothing is scanned or patched).
  else if(id == "renderer.vrdrawdistance") {
   if(lower(value) == "off") out.erase("BEAMNG_VRS_VR_DRAW_DISTANCE");
-  else { number(value, 100, 10000); out["BEAMNG_VRS_VR_DRAW_DISTANCE"] = value; }
+  else { number(value, 100, 1000000); out["BEAMNG_VRS_VR_DRAW_DISTANCE"] = value; }
  }
  // Launcher-only: patches the game's combinePass shader so each VR eye reads the shared
  // local exposure and bloom textures at its own position (BeamNG 0.40 right-eye ghosting).

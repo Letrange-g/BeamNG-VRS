@@ -173,7 +173,7 @@ try {
     [void](ConvertFrom-Json (Get-Content -LiteralPath (Join-Path $app 'app.json') -Raw))
     # The in-game choice persists while the INI value is unchanged; a changed INI value wins.
     foreach ($case in @(@('3000', "distance=1500`nini=3000`n", '1500', $true), @('5000', "distance=1500`nini=3000`n", '', $false),
-                        @('3000', "distance=99999`nini=3000`n", '', $false))) {
+                        @('3000', "distance=1500000`nini=3000`n", '', $false))) {
         Set-Content -LiteralPath $ini -Value "[Renderer]`nVRDrawDistance=$($case[0])" -Encoding UTF8
         [IO.File]::WriteAllText($distanceFile, $case[1])
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -UserFolder $userFolder

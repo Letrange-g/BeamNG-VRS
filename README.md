@@ -79,10 +79,12 @@ and map.
 - **VR draw distance.** BeamNG 0.40 draws VR out to 10000 m, further than the
   desktop's 8000 m, and no game setting changes it. BeamNG-VRS now sets it to
   **4000 m by default**, which looks almost the same and saves GPU and CPU time.
-  Change it with `[Renderer] VRDrawDistance` (100 to 10000, or `off`) in the INI,
+  Change it with `[Renderer] VRDrawDistance` (100 to 1000000, or `off`) in the INI,
   or live in game from the radial menu: **Freeroam Actions > VR draw distance**
-  (500 / 1000 / 2000 / 4000 / 6000 / Full). A "VR draw distance" UI app with a
-  slider is also available. Your in-game pick is kept for the next launch.
+  (500 / 1000 / 2000 / 4000 / 6000 / 10000 / 20000 / 50000). A "VR draw distance"
+  UI app with a slider is also available. Your in-game pick is kept for the next
+  launch. Values above 10000 m let VR see further than the game normally allows,
+  for huge maps such as BeamNG Earth; they cost more GPU and CPU time.
 
 - **Sharper picture, your choice.** BeamNG 0.40 renders VR at 50% and upscales it,
   which looks soft. Uncomment `RenderScale=1.0` under `[Renderer]` in the INI for
@@ -122,7 +124,7 @@ Windows PowerShell is included in Windows 10/11; the package adds no EXE.
 - **DrawOutline:** shows the quality-region borders for checking settings. Leave `false` for gameplay.
 - **Scissor:** crops image edges to save rendering work. Works in both VR modes, VRS and quad views (in quad views the wide views shrink to the kept part). Enabled by default; check the edges in your headset. A well-configured quad view is already cheap at the edges, so there scissor is mostly redundant; keep it only if you want every last bit of performance and don't mind the black edges.
 - **RenderScale:** Direct3D 12 VR render scale, `0.25` to `1.0`. Not set by default (game uses `0.5`); set `1.0` for the sharpest picture.
-- **VRDrawDistance:** VR draw distance in metres, `100` to `10000`. Default `4000`; `off` keeps the game's 10000 m. Also changeable in game from the radial menu.
+- **VRDrawDistance:** VR draw distance in metres, `100` to `1000000` (1000 km, in practice no limit). Default `4000`; `off` keeps the game's 10000 m; above 10000 sees further than the game itself (huge maps). Also changeable in game from the radial menu.
 - **LensMask:** skips the image corners hidden by the lenses. Enabled by default (`Size=1.15`); increase `Size` if you see black corners.
 
 If fine detail shimmers with VRS, try BeamNG's MSAA setting, or disable foveation

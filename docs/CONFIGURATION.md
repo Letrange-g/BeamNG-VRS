@@ -24,7 +24,7 @@ The release ZIP puts `BeamNG-VRS.ini` beside `Launch-BeamNG-VRS.cmd` at the extr
 | Renderer | `API` | `d3d12` | `d3d12` starts BeamNG with `-gfx d3d12`, the game's VR default since 0.40. Foveation (fixed or eye-tracked) uses D3D12 VRS Tier 2 there; scissor, lens mask and outline also work, and `AllPasses` does not apply. `vulkan` starts `-gfx vk` with the original Vulkan layer. See [Direct3D 12](#direct3d-12). |
 | Renderer | `RenderScale` | (game: `0.5`) | Direct3D 12 only: VR render scale before FSR upscaling, `0.25` to `1.0`, applied by a launcher-written Lua mod. `1.0` gives the sharpest picture; `0.67`-`0.8` is a middle ground. See [VR render scale](#direct3d-12). |
 | Renderer | `GhostingFix` | `false` | Fixes BeamNG 0.40's right-eye ghosting by lining up the shared local exposure and bloom textures with each eye. Patches a copy of the game's `combinePass` shader into the user folder. See [Ghosting fix](#ghosting-fix). |
-| Renderer | `VRDrawDistance` | `4000` | Experimental, Direct3D 12 and Vulkan: VR far distance in metres, `100` to `10000` (game: `10000`), changeable live in game. `off` leaves the game's code untouched. See [VR draw distance](#direct3d-12). |
+| Renderer | `VRDrawDistance` | `4000` | Experimental, Direct3D 12 and Vulkan: VR far distance in metres, `100` to `1000000` (game: `10000`), changeable live in game. `off` leaves the game's code untouched. See [VR draw distance](#direct3d-12). |
 | Logging | `Level` | `info` | `off`, `errors`, `info`, or `debug`. Default is brief status/errors, not verbose diagnostics. |
 | Tracking | `GracePeriodMs` | `30` | Hold the last valid gaze for this many milliseconds during temporary tracking loss (0 to 1000). |
 | Tracking | `GazeRefreshMs` | `8` | Minimum CPU gaze polling interval (2 to 50 ms). This does not measure eye-to-display latency. |
@@ -160,8 +160,11 @@ visible distance. A Lua far clip (`M8.49`) was tried and has no effect: BeamNG
 does not use frusta set from Lua for VR. A leftover `FarClip=` line is ignored with a warning.
 
 **VR draw distance (`M8.50`, experimental):** `[Renderer] VRDrawDistance=`
-(100-10000 metres, default `4000`) lowers that far distance with Direct3D 12
-and Vulkan. No setting or Lua reaches it, so when the game creates its OpenXR
+(100-1000000 metres, in practice no limit, default `4000`) lowers or raises that far distance with Direct3D 12
+and Vulkan. Above 10000 m VR sees further than the game itself allows, which
+helps on huge maps such as BeamNG Earth, where distant terrain visible on the
+desktop disappeared in VR; it costs GPU and CPU time in proportion to what comes
+into view. No setting or Lua reaches it, so when the game creates its OpenXR
 instance the OpenXR layer scans BeamNG's executable in memory for the 10000 m
 constant used by the code around the VR views (`oxrView`, `OpenXrHelper`) and
 patches those places to the configured distance. The scan runs again at every
@@ -175,9 +178,10 @@ for example after a game update.
 script in the BeamNG user folder (an app in `ui\modules\apps\BeamngVrsDrawDistance`); no hotkey is involved.
 
 - **UI app "VR draw distance":** press Esc, open the UI apps editor, add the app
-  and place it. Its slider goes from 100 to 10000 m in 100 m steps (it applies
-  0.3 s after you stop moving it); the buttons pick 500, 1000, 2000, 4000, 6000
-  or Full (10000 m).
+  and place it. Its slider goes from 100 m to 100 km on a logarithmic scale,
+  so short distances keep fine steps (rounded to 100 m; it applies 0.3 s after
+  you stop moving it); the buttons pick 500, 1000, 2000, 4000, 6000, 10k (the
+  game's own distance), 20k or 50k.
 - **Radial (quick access) menu:** Freeroam actions > **VR draw distance** offers
   the same presets, usable with a wheel in VR. The current value is highlighted.
 

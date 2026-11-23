@@ -51,9 +51,10 @@ Size=1.15 is the kept ellipse; increase it if you see black corners.
 false. Restart after changes. It can interfere with motion reprojection. Compare
 headset smoothness and frame times; set false if it worsens pacing or appearance.
 [Renderer] VRDrawDistance=4000 (default) sets the VR draw distance in metres,
-100 to 10000; BeamNG itself uses 10000 in VR. off keeps the game's distance.
+100 to 1000000; BeamNG itself uses 10000 in VR. off keeps the game's distance.
+Above 10000 sees further than the game allows (huge maps like BeamNG Earth).
 In game, the radial menu (Freeroam Actions > VR draw distance) and the
-"VR draw distance" UI app change it live: 500, 1000, 2000, 4000, 6000 or Full.
+"VR draw distance" UI app change it live: 500, 1000, 2000, 4000, 6000, 10000, 20000 or 50000.
 That choice is kept for the next start until you change the INI value.
 [Logging] Level accepts off, errors, info (default) or debug. Use off to stop
 layer log output; Diagnose-BeamNG-VRS.cmd overrides it with debug logging.

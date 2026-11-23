@@ -883,7 +883,7 @@ void m851LiveDrawDistance(){
  const char* at=strstr(text,"distance=");
  if(!at)return; // Possibly read mid-write: retried at the next poll.
  char* end=nullptr;const double distance=strtod(at+9,&end);
- if(end==at+9 || !std::isfinite(distance) || distance<100 || distance>10000)return;
+ if(end==at+9 || !std::isfinite(distance) || distance<100 || distance>1000000)return;
  // Only a complete, valid value marks this write time as handled.
  seen=a.ftLastWriteTime;
  if(distance==applied)return;

@@ -1,5 +1,14 @@
 BeamNG-VRS 0.4.4 — portable Windows x64, for BeamNG.drive 0.40.
 
+## Next release
+
+- **VR draw distance above 10 km** ([#24](https://github.com/Letrange-g/BeamNG-VRS/issues/24)).
+  `[Renderer] VRDrawDistance` now goes up to 1000000 m (1000 km, in practice no limit), so huge maps such as
+  BeamNG Earth can show the distant terrain that the desktop shows but VR cut
+  at 10 km. The radial menu and the UI app add 20000 m and 50000 m presets, and
+  the app's slider is logarithmic (100 m to 100 km). Far distances cost GPU and
+  CPU time; the default stays 4000 m.
+
 ## What's new in 0.4.4
 
 - **Fix: quad views with a focus size equal to `WideResolution`.** With
