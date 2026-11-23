@@ -4,9 +4,15 @@ Foveated rendering for **BeamNG.drive VR** (Direct3D 12 or Vulkan), plus edge cr
 Keep more detail where you look and reduce rendering work around the edges.
 Works with a fixed center or supported eye tracking.
 
-**Windows x64 · Release 0.4.3 · built for BeamNG.drive 0.40.** Performance varies by headset, GPU and scene.
+**Windows x64 · Release 0.4.5 · built for BeamNG.drive 0.40.** Performance varies by headset, GPU and scene.
 
-## What's new in 0.4.3
+## What's new in 0.4.5
+
+- **VR draw distance above 10 km.** `[Renderer] VRDrawDistance` now goes up to 1000000 m,
+  so huge maps such as BeamNG Earth show distant terrain in VR too. The radial menu adds
+  20000 and 50000 m. Default stays 4000 m.
+
+## In 0.4.3
 
 ### Quad views (experimental, Direct3D 12)
 
