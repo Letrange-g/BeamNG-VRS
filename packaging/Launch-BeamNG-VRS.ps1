@@ -78,7 +78,7 @@ angular.module('beamng.apps')
     template:
       '<div class="bngApp" style="padding: 6px 10px; color: white; box-sizing: border-box; width: 100%; height: 100%">' +
         '<div style="font-weight: bold">VR draw distance: {{ value }} m</div>' +
-        '<input type="range" min="100" max="10000" step="100" ng-model="slider" ng-change="dragged()" style="width: 100%">' +
+        '<input type="range" min="0" max="1000" step="1" ng-model="slider" ng-change="dragged()" style="width: 100%">' +
         '<div style="display: flex">' +
           '<button ng-repeat="p in presets" ng-click="pick(p.m)" style="flex: 1; margin: 1px; padding: 2px 0">{{ p.label }}</button>' +
         '</div>' +
@@ -90,21 +90,26 @@ angular.module('beamng.apps')
       var timer = null
       scope.value = 0
       scope.slider = 0
-      scope.presets = [500, 1000, 2000, 4000, 6000].map(function (m) { return { label: String(m), m: m } })
-      scope.presets.push({ label: 'Full', m: 10000 })
+      scope.presets = [500, 1000, 2000, 4000, 6000, 10000, 20000, 50000].map(function (m) {
+        return { label: m < 10000 ? String(m) : (m / 1000) + 'k', m: m }
+      })
+      // The slider is logarithmic (100 m to 100 km), so short distances keep
+      // fine steps: position 0-1000 maps to 100 * 1000^(p/1000), in 100 m steps.
+      function toMetres(p) { return Math.round(100 * Math.pow(1000, p / 1000) / 100) * 100 }
+      function toSlider(m) { return Math.round(1000 * Math.log(Math.max(100, m) / 100) / Math.log(1000)) }
       function send(m) { bngApi.engineLua('extensions.beamngVrs.setVrDrawDistance(' + Math.round(m) + ')') }
       function cancel() { if (timer) { clearTimeout(timer); timer = null } }
       // The slider only sends once it has been still for 300 ms.
       scope.dragged = function () {
-        scope.value = Number(scope.slider)
+        scope.value = toMetres(Number(scope.slider))
         cancel()
         timer = setTimeout(function () { timer = null; send(scope.value) }, 300)
       }
-      scope.pick = function (m) { cancel(); scope.slider = m; scope.value = m; send(m) }
+      scope.pick = function (m) { cancel(); scope.slider = toSlider(m); scope.value = m; send(m) }
       // A change from Lua (radial menu or another app) moves the slider, unless
       // the user is still dragging it.
       scope.$on('BeamngVrsDrawDistance', function (event, m) {
-        scope.$evalAsync(function () { if (!timer) { scope.value = m; scope.slider = m } })
+        scope.$evalAsync(function () { if (!timer) { scope.value = m; scope.slider = toSlider(m) } })
       })
       scope.$on('$destroy', cancel)
       // Ask Lua for the current value when the app opens.
@@ -148,8 +153,8 @@ function Get-VRDrawDistanceStart {
             if ($line -match '^\s*(distance|ini)\s*=\s*(\S+)\s*$') { $saved[$Matches[1]] = $Matches[2] }
         }
         try {
-            $ini = Assert-IniNumber -Value $saved['ini'] -Low 100 -High 10000 -Integer $false
-            $distance = Assert-IniNumber -Value $saved['distance'] -Low 100 -High 10000 -Integer $false
+            $ini = Assert-IniNumber -Value $saved['ini'] -Low 100 -High 1000000 -Integer $false
+            $distance = Assert-IniNumber -Value $saved['distance'] -Low 100 -High 1000000 -Integer $false
             if ($ini -eq [double]$IniDistance) { return $distance }
         } catch {}
         Remove-Item -LiteralPath $File -Force
@@ -649,13 +654,13 @@ local function wideUnload() wideDestroy(RenderViewManagerInstance) end
 local iniDistance = $iniText
 local distance = $distanceText
 local distanceFile = '/settings/beamng_vrs_vr_draw_distance.txt'
-local presets = {500, 1000, 2000, 4000, 6000, 10000}
--- Called by the UI app and the radial menu: clamps to 100-10000 m in 100 m
+local presets = {500, 1000, 2000, 4000, 6000, 10000, 20000, 50000}
+-- Called by the UI app and the radial menu: clamps to 100-1000000 m in 100 m
 -- steps, saves it for the DLL and the next launch, and tells the UI.
 local function setVrDrawDistance(m)
   m = tonumber(m)
   if not m then return end
-  m = math.floor(math.min(10000, math.max(100, m)) / 100 + 0.5) * 100
+  m = math.floor(math.min(1000000, math.max(100, m)) / 100 + 0.5) * 100
   distance = m
   -- writeFile returns nil when the file cannot be opened, and pcall catches errors.
   local ok, written = pcall(writeFile, distanceFile, 'distance=' .. m .. '\nini=' .. iniDistance .. '\n')
@@ -682,7 +687,7 @@ local function registerMenus()
   addMenuEntry({ level = '/root/sandbox/beamngVrsDrawDistance/', uniqueID = 'beamngVrsDrawDistancePresets',
     generator = function(entries)
       for i, m in ipairs(presets) do
-        local item = { title = m == 10000 and 'Full (10000 m)' or (m .. ' m'), icon = 'road', priority = i,
+        local item = { title = m == 10000 and '10000 m (game)' or (m .. ' m'), icon = 'road', priority = i,
           uniqueID = 'beamngVrsDrawDistance' .. m, onSelect = function() setVrDrawDistance(m) return {'reload'} end }
         if m == distance then item.color = '#ff6600' end
         table.insert(entries, item)
@@ -921,7 +926,7 @@ function Test-BeamNGIni {
                 $script:DisabledOpenXRLayers = @(ConvertTo-OpenXRLayerList -Value $value)
             } elseif ($id -eq 'renderer.vrdrawdistance') {
                 # off leaves the game's code untouched (an escape hatch after a game update).
-                $script:VRDrawDistance = if ($value -ieq 'off') { $null } else { Assert-IniNumber -Value $value -Low 100 -High 10000 -Integer $false }
+                $script:VRDrawDistance = if ($value -ieq 'off') { $null } else { Assert-IniNumber -Value $value -Low 100 -High 1000000 -Integer $false }
             } elseif ($id -eq 'renderer.ghostingfix') {
                 if (@('0', '1', 'false', 'true') -cnotcontains $value.ToLowerInvariant()) { throw 'expected 0, 1, false or true' }
                 $script:GhostingFix = @('1', 'true') -ccontains $value.ToLowerInvariant()

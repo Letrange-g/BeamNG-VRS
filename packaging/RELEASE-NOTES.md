@@ -1,6 +1,15 @@
-BeamNG-VRS 0.4.4 — portable Windows x64, for BeamNG.drive 0.40.
+BeamNG-VRS 0.4.5 — portable Windows x64, for BeamNG.drive 0.40.
 
-## What's new in 0.4.4
+## What's new in 0.4.5
+
+- **VR draw distance above 10 km** ([#24](https://github.com/Letrange-g/BeamNG-VRS/issues/24)).
+  `[Renderer] VRDrawDistance` now goes up to 1000000 m (1000 km, in practice no limit), so huge maps such as
+  BeamNG Earth can show the distant terrain that the desktop shows but VR cut
+  at 10 km. The radial menu and the UI app add 20000 m and 50000 m presets, and
+  the app's slider is logarithmic (100 m to 100 km). Far distances cost GPU and
+  CPU time; the default stays 4000 m.
+
+## In 0.4.4
 
 - **Fix: quad views with a focus size equal to `WideResolution`.** With
   `FocusWidth=0.25`, `FocusHeight=0.25` and the default `WideResolution=0.25`,
@@ -131,7 +140,7 @@ BeamNG-VRS 0.4.4 — portable Windows x64, for BeamNG.drive 0.40.
 
 ## Install
 
-1. Download **BeamNG-VRS-0.4.3-windows-x64.zip** below.
+1. Download **BeamNG-VRS-0.4.5-windows-x64.zip** below.
 2. Close BeamNG and extract the whole ZIP into the game folder, beside `Bin64`.
    Extraction directly inside `Bin64` also works.
 3. Edit **BeamNG-VRS.ini** beside the CMD, then run **Launch-BeamNG-VRS.cmd**
